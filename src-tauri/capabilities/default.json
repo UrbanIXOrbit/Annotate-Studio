@@ -1,0 +1,23 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for the main window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-start-dragging",
+    "core:webview:default",
+    "core:webview:allow-set-webview-zoom",
+    "shell:allow-open",
+    "notification:default",
+    "dialog:default",
+    "fs:default",
+    "fs:allow-write-file"
+  ]
+}
