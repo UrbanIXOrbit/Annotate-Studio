@@ -73,7 +73,7 @@ const WindowBody = memo(function WindowBody({
   }
   if (type === 'pdf') return <PdfWindow resourceId={id} path={filePath} title={title} active={selected} />;
   if (type === 'note') return <NoteWindow resourceId={id} path={filePath} title={title} />;
-  return <ImageWindow path={filePath} title={title} />;
+  return <ImageWindow resourceId={id} path={filePath} title={title} />;
 });
 
 function CanvasWindow({ resource }: { resource: Resource }) {

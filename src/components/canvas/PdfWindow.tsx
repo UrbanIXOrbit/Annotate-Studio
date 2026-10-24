@@ -52,7 +52,7 @@ import {
 import Popover from '@/components/ui/Popover';
 import ColorSwatches from '@/components/ui/ColorSwatches';
 import { getPdfEngine, type SharedPdfEngine } from '@/lib/pdf-engine';
-import { isTauri, readFileBytes, writeFileBytes } from '@/lib/tauri-commands';
+import { isTauri, readFileBytes, readExternalFileBytes, writeFileBytes } from '@/lib/tauri-commands';
 import { registerFlusher } from '@/lib/persist';
 import { registerPdfSaver, trackPdfSave, waitForPdfSaves } from '@/lib/pdf-saves';
 import { openExternal } from '@/lib/external';
@@ -137,6 +137,7 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
   const [engine, setEngine] = useState<SharedPdfEngine | null>(null);
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const isExternal = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.isExternal ?? false);
   const plugins = usePdfPlugins();
 
   useEffect(() => {
@@ -153,8 +154,9 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
     let cancelled = false;
     setBytes(null);
     setError(null);
-    waitForPdfSaves(path)
-      .then(() => readFileBytes(path))
+    const readFile = isExternal ? readExternalFileBytes : readFileBytes;
+    (isExternal ? Promise.resolve() : waitForPdfSaves(path))
+      .then(() => readFile(path))
       .then((data) => {
         if (cancelled) return;
         setBytes(data.slice().buffer as ArrayBuffer);
@@ -163,7 +165,7 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, isExternal]);
 
   if (error) {
     return (

@@ -41,6 +41,8 @@ export interface Resource {
   z: number;
   minimized: boolean;
   maximized: boolean;
+  /** For Books Manager: indicates file is external to workspace */
+  isExternal?: boolean;
 }
 
 export interface Workspace {
@@ -99,6 +101,7 @@ export interface OpenOptions {
   center?: { x: number; y: number };
   focusExisting?: boolean;
   near?: string;
+  isExternal?: boolean;
 }
 
 export interface CardInput {
@@ -260,6 +263,7 @@ function migrateResource(raw: unknown, index: number): Resource | null {
     z: index + 1,
     minimized: data.minimized === true || data.state === 'minimized',
     maximized: data.maximized === true || wasFullscreen,
+    isExternal: data.isExternal === true,
   };
 }
 
@@ -610,6 +614,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         z: topZ(resources) + 1,
         minimized: false,
         maximized: false,
+        isExternal: options.isExternal ?? false,
       };
       commitResources([...resources.map((r) => (r.maximized ? { ...r, maximized: false } : r)), resource]);
       set({ selectedId: id });
