@@ -6067,3 +6067,821 @@ input[type='checkbox'] {
   font-size: 12px;
   cursor: pointer;
 }
+
+
+/* ───────────────────────────────────────────────────────────────
+   Books Manager
+   Floating card panels over the app background, matching the
+   Library tab design language.
+   ─────────────────────────────────────────────────────────────── */
+
+.books-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 22px 26px 26px;
+}
+
+.books-header {
+  margin-bottom: 16px;
+}
+
+.books-search {
+  max-width: 320px;
+}
+
+/* Panel layout */
+.books-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, 285px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.books-layout.with-details {
+  grid-template-columns: minmax(215px, 265px) minmax(0, 1fr) minmax(255px, 320px);
+}
+
+@media (max-width: 1080px) {
+  .books-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .books-layout.with-details {
+    grid-template-columns: 200px minmax(0, 1fr) 240px;
+  }
+}
+
+.books-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.books-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.books-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 10px 11px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.books-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.books-panel-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.books-start {
+  grid-column: 2 / -1;
+}
+
+/* Slim scrollbars inside panels */
+.folder-tree-list::-webkit-scrollbar,
+.book-file-body::-webkit-scrollbar,
+.file-details-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.folder-tree-list::-webkit-scrollbar-thumb,
+.book-file-body::-webkit-scrollbar-thumb,
+.file-details-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.folder-tree-list::-webkit-scrollbar-thumb:hover,
+.book-file-body::-webkit-scrollbar-thumb:hover,
+.file-details-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Empty states inside panels */
+.books-panel-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.books-panel-empty svg {
+  opacity: 0.55;
+  margin-bottom: 4px;
+}
+
+.books-panel-empty h4 {
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.books-panel-empty p {
+  max-width: 250px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── Library tree panel ─────────────────────────────────────── */
+
+.book-tree {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.folder-tree-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* One visual group per project */
+.project-node {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 4px;
+}
+
+/* Project rows are the roots of the tree; like folder rows they double as
+   drop targets, so they carry a transparent border for the drop outline */
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 5px 5px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  position: relative;
+}
+
+.project-row:hover {
+  background: var(--bg-elevated);
+}
+
+.project-row.selected {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--primary-border);
+}
+
+/* A folder inside this project is selected — keep the root subtly marked */
+.project-row.contains-selection .project-name {
+  color: var(--primary);
+}
+
+.project-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin: 0 3px;
+}
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Folder rows ────────────────────────────────────────────── */
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 5px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  position: relative;
+}
+
+.folder-row:hover {
+  background: var(--bg-elevated);
+}
+
+.folder-row.selected {
+  background: var(--primary-soft);
+}
+
+.folder-chevron {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.folder-chevron:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
+.folder-chevron:disabled {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.folder-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 2px;
+}
+
+.folder-main svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.folder-row.selected .folder-main svg {
+  color: var(--primary);
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-count {
+  height: 17px;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.folder-row.selected .folder-count,
+.project-row.selected .folder-count {
+  background: var(--primary-soft-strong);
+  color: var(--primary);
+}
+
+.folder-edit-input {
+  flex: 1;
+  min-width: 0;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.folder-new {
+  display: flex;
+  gap: 6px;
+  padding: 3px 5px 3px 25px;
+}
+
+/* ── Files panel ────────────────────────────────────────────── */
+
+.book-file-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.book-file-list .books-panel-header {
+  padding-left: 12px;
+}
+
+.book-file-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 10px 0;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.book-file-selection .book-file-selection-spacer {
+  flex: 1;
+}
+
+.book-file-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.book-file {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.book-file:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.book-file.selected {
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+}
+
+.book-file-checkbox {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.book-file-checkbox input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.book-file-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.book-file-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.book-file-name {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.book-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.book-file-ext {
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+}
+
+.book-file.selected .book-file-ext {
+  background: var(--primary-soft-strong);
+  color: var(--primary);
+}
+
+.book-file-tag {
+  height: 17px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 550;
+  display: inline-flex;
+  align-items: center;
+}
+
+.book-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.book-file-actions .icon-btn,
+.row-menu {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.book-file:hover .book-file-actions .icon-btn,
+.book-file:focus-within .book-file-actions .icon-btn,
+.book-file:hover .row-menu,
+.book-file:focus-within .row-menu,
+.row-menu.menu-open {
+  opacity: 1;
+}
+
+.book-file-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Row menu (shared trigger for dropdowns) ────────────────── */
+
+.row-menu {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
+
+.project-row:hover .row-menu,
+.project-row.selected .row-menu,
+.folder-row:hover .row-menu {
+  opacity: 1;
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  min-width: 195px;
+  padding: 5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  animation: dropdown-in 0.12s ease;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.dropdown-item svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.dropdown-item:hover {
+  background: var(--bg-elevated);
+}
+
+.dropdown-item.danger,
+.dropdown-item.danger svg {
+  color: var(--danger);
+}
+
+.dropdown-item.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 5px 4px;
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── File details panel ─────────────────────────────────────── */
+
+.book-file-details {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.file-details-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.file-details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.file-details-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.file-details-label svg {
+  color: var(--text-muted);
+}
+
+.file-details-value {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.file-details-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.file-details-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-details-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 23px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.file-details-tag-remove {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.file-details-tag-remove:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.file-details-tag-input {
+  display: flex;
+  gap: 6px;
+}
+
+.file-details-tag-input .input {
+  flex: 1;
+}
+
+.file-details-notes {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.file-details-notes-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-details-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.file-details-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.file-details-row .label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.file-details-row .value {
+  text-align: right;
+  word-break: break-word;
+}
+
+/* ── Utilities used by the books tab ────────────────────────── */
+
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Books drag & drop ───────────────────────────────────────── */
+
+/* Row being dragged */
+.book-file.dragging {
+  opacity: 0.45;
+}
+
+/* Files on the cut clipboard await a paste/move */
+.book-file.cut {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+/* Drop targets: folder rows, project rows */
+.folder-row.drop-target {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+
+.folder-row.drop-target .folder-main svg,
+.folder-row.drop-target .folder-name {
+  color: var(--primary);
+}
+
+.folder-row.drop-target .folder-count,
+.project-row.drop-target .folder-count {
+  background: var(--primary-soft-strong);
+  color: var(--primary);
+}
+
+.project-row.drop-target {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+
+.project-row.drop-target .project-name {
+  color: var(--primary);
+}
+
+/* Alt/Option held — dropping copies instead of moving */
+.folder-row.drop-target.drop-copy,
+.project-row.drop-target.drop-copy {
+  box-shadow: inset 0 0 0 1.5px var(--success);
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-card));
+}
+
+.folder-row.drop-target.drop-copy .folder-main svg,
+.folder-row.drop-target.drop-copy .folder-name,
+.project-row.drop-target.drop-copy .project-name {
+  color: var(--success);
+}
+
+/* The files panel accepts drops into the folder it is showing */
+.book-file-body.drop-target {
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+
+.book-file-body.drop-target.drop-copy {
+  outline-color: var(--success);
+  background: color-mix(in srgb, var(--success) 5%, transparent);
+}
+
+/* Pill used as the drag image for multi-file drags */
+.books-drag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: var(--primary-text);
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}

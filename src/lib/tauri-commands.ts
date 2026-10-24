@@ -259,3 +259,22 @@ export const checkOllama = (endpoint?: string) => call<boolean>('check_ollama', 
 
 export const exportData = (outputPath: string) => call<number>('export_data', { outputPath });
 export const importData = (archivePath: string) => call<number>('import_data', { archivePath });
+
+// Books Manager - Virtual File System
+export interface ExternalFileRef {
+  path: string;
+  name: string;
+  extension: string;
+  size: number;
+  modified_at: string;
+}
+
+export const importExternalFiles = (paths: string[]) => call<ExternalFileRef[]>('import_external_files', { paths });
+export const loadBooksState = () => call<unknown>('load_books_state');
+export const saveBooksState = (state: unknown) => call<void>('save_books_state', { state });
+export const openExternalFile = (path: string) => call<void>('open_external_file', { path });
+export const revealExternalFile = (path: string) => call<void>('reveal_external_file', { path });
+
+export async function readExternalFileBytes(path: string): Promise<Uint8Array> {
+  return toBytes(await call<unknown>('read_external_file_bytes', { path }));
+}

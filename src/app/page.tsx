@@ -20,6 +20,7 @@ const ExamsTab = dynamic(() => import('@/components/study/exams/ExamsTab'), { ss
 const PomodoroTab = dynamic(() => import('@/components/study/PomodoroTab'), { ssr: false });
 const MotivationTab = dynamic(() => import('@/components/study/MotivationTab'), { ssr: false });
 const SettingsTab = dynamic(() => import('@/components/study/SettingsTab'), { ssr: false });
+const BooksTab = dynamic(() => import('@/components/study/BooksTab'), { ssr: false });
 
 export default function Home() {
   useAppEngines();
@@ -45,6 +46,7 @@ export default function Home() {
                 {view === 'pomodoro' && <PomodoroTab />}
                 {view === 'motivation' && <MotivationTab />}
                 {view === 'settings' && <SettingsTab />}
+                {view === 'books' && <BooksTab />}
               </div>
             )}
           </div>

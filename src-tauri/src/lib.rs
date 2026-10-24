@@ -9,7 +9,7 @@ pub mod state;
 pub mod storage;
 pub mod text;
 
-use commands::{ai, backup, data, files, flashcards};
+use commands::{ai, backup, books, data, files, flashcards};
 use paths::Workspace;
 use state::AppState;
 use tauri::Manager;
@@ -85,6 +85,12 @@ pub fn run() {
             ai::check_ollama,
             backup::export_data,
             backup::import_data,
+            books::import_external_files,
+            books::load_books_state,
+            books::save_books_state,
+            books::open_external_file,
+            books::reveal_external_file,
+            books::read_external_file_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Annotate Studio");

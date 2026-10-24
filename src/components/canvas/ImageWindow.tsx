@@ -2,8 +2,9 @@
 
 import React, { memo, useEffect, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import { readFileBytes } from '@/lib/tauri-commands';
+import { readFileBytes, readExternalFileBytes } from '@/lib/tauri-commands';
 import { cn, extensionOf } from '@/lib/utils';
+import { activeWorkspace, useCanvas } from '@/store/canvas';
 
 const MIME: Record<string, string> = {
   png: 'image/png',
@@ -16,17 +17,19 @@ const MIME: Record<string, string> = {
   avif: 'image/avif',
 };
 
-function ImageWindow({ path, title }: { path: string; title: string }) {
+function ImageWindow({ path, resourceId, title }: { path: string; resourceId: string; title: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actualSize, setActualSize] = useState(false);
+  const isExternal = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.isExternal ?? false);
 
   useEffect(() => {
     let objectUrl: string | null = null;
     let cancelled = false;
     setUrl(null);
     setError(null);
-    readFileBytes(path)
+    const readFile = isExternal ? readExternalFileBytes : readFileBytes;
+    readFile(path)
       .then((bytes) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: MIME[extensionOf(path)] ?? 'application/octet-stream' }));
@@ -37,7 +40,7 @@ function ImageWindow({ path, title }: { path: string; title: string }) {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path]);
+  }, [path, isExternal]);
 
   if (error) {
     return (
