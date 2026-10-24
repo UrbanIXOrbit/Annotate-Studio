@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ArrowLeftRight, ArrowRight, Trash2, Type, X } from 'lucide-react';
-import { useActiveWorkspace, useCanvas, type Resource } from '@/store/canvas';
+import { activeWorkspace, hiddenResourceIds, useActiveWorkspace, useCanvas, type Resource } from '@/store/canvas';
 import { useConnectUi } from '@/store/connect';
 import { getLiveRect, useLiveRectVersion } from '@/lib/live-rects';
 import {
@@ -82,7 +82,8 @@ export default function ConnectorLayer({ clientToWorld }: Props) {
   useLiveRectVersion();
 
   const zoom = workspace.view.zoom;
-  const visible = workspace.resources.filter((r) => !r.minimized);
+  const tuckedAway = hiddenResourceIds(workspace);
+  const visible = workspace.resources.filter((r) => !r.minimized && !tuckedAway.has(r.id));
   if (visible.some((r) => r.maximized)) return null;
 
   const boxes = new Map<string, Box>(visible.map((r) => [r.id, boxOf(r)]));
@@ -102,7 +103,7 @@ export default function ConnectorLayer({ clientToWorld }: Props) {
       const candidates = useCanvas
         .getState()
         .workspaces.find((w) => w.id === useCanvas.getState().activeWorkspaceId)
-        ?.resources.filter((r) => !r.minimized)
+        ?.resources.filter((r) => !r.minimized && !hiddenResourceIds(useCanvas.getState().workspaces.find((w) => w.id === useCanvas.getState().activeWorkspaceId)!).has(r.id))
         .map((r) => ({ ...r, ...boxOf(r) }));
       return candidates ? hitTestBox(candidates, world, fromId) : null;
     };

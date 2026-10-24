@@ -96,3 +96,35 @@ export function orderNotes<T extends NoteLike>(files: T[], options: NoteOrderOpt
       return time(b) - time(a) || collator.compare(noteLabel(a.name), noteLabel(b.name));
     });
 }
+
+// ───────── several cards at once ─────────
+
+/** What a card contributes to a note: its quote, where it came from, and the reader's own comment. */
+export interface CardClip {
+  text: string;
+  comment: string;
+  source?: { title: string; page: number };
+}
+
+/**
+ * A group of cards as one block of a note, in the order given. Quotes keep their book and page, comments sit
+ * under their quote, and a card that is only a thought of your own appears as a plain paragraph.
+ */
+export function formatCardsClip(cards: CardClip[], kind: ClipKind, heading?: string): string {
+  const parts: string[] = [];
+  if (heading?.trim()) parts.push(kind === 'markdown' ? `### ${escapeMarkdown(heading.trim())}` : heading.trim());
+  for (const card of cards) {
+    const text = card.text.replace(/\r\n?/g, '\n').trim();
+    const comment = card.comment.replace(/\r\n?/g, '\n').trim();
+    if (!text && !comment) continue;
+    const piece: string[] = [];
+    if (text) {
+      if (card.source) piece.push(formatClip({ text, title: card.source.title, page: card.source.page }, kind));
+      else if (kind === 'text') piece.push(`\u201C${text}\u201D`);
+      else piece.push(escapeMarkdown(text).split('\n').map((line) => (line ? `> ${line}` : '>')).join('\n'));
+    }
+    if (comment) piece.push(kind === 'markdown' ? escapeMarkdown(comment) : comment);
+    parts.push(piece.join('\n\n'));
+  }
+  return parts.join('\n\n');
+}

@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { Map as MapIcon, X } from 'lucide-react';
-import { useActiveWorkspace, useCanvas, visibleWorldRect } from '@/store/canvas';
+import { hiddenResourceIds, useActiveWorkspace, useCanvas, visibleWorldRect } from '@/store/canvas';
 import { cn } from '@/lib/utils';
 
 const WIDTH = 196;
@@ -24,7 +24,10 @@ export default function Minimap() {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const dragLayout = useRef<MinimapLayout | null>(null);
 
-  const visible = useMemo(() => workspace.resources.filter((r) => !r.minimized), [workspace.resources]);
+  const visible = useMemo(() => {
+    const tuckedAway = hiddenResourceIds(workspace);
+    return workspace.resources.filter((r) => !r.minimized && !tuckedAway.has(r.id));
+  }, [workspace]);
   const view = workspace.view;
   const viewRect = visibleWorldRect(view, viewport);
 

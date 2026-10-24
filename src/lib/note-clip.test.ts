@@ -91,3 +91,32 @@ test('equal dates fall back to a natural name order', () => {
   const same = [file('Note 10.md', '2026-01-01T00:00:00Z'), file('Note 2.md', '2026-01-01T00:00:00Z'), file('Note 1.md', 'not a date')];
   assert.deepEqual(orderNotes(same).map((f) => f.name), ['Note 2.md', 'Note 10.md', 'Note 1.md']);
 });
+
+import { formatCardsClip } from './note-clip.ts';
+
+test('cards become one note section with a heading, quotes, sources and comments', () => {
+  const clip = formatCardsClip(
+    [
+      { text: 'First passage.', comment: 'Why it matters', source: { title: 'Book A.pdf', page: 3 } },
+      { text: '', comment: 'A thought of my own' },
+      { text: 'Second passage.', comment: '', source: { title: 'Book A.pdf', page: 9 } },
+    ],
+    'markdown',
+    'Needs assessment',
+  );
+  assert.equal(
+    clip,
+    '### Needs assessment\n\n> First passage.\n>\n> \u2014 *Book A*, p. 3\n\nWhy it matters\n\nA thought of my own\n\n> Second passage.\n>\n> \u2014 *Book A*, p. 9',
+  );
+});
+
+test('empty cards are skipped and plain-text notes get plain formatting', () => {
+  const clip = formatCardsClip([{ text: '', comment: '' }, { text: 'Quote', comment: 'Mine', source: { title: 'B.pdf', page: 1 } }, { text: 'No source', comment: '' }], 'text', 'Topic');
+  assert.equal(clip, 'Topic\n\n\u201CQuote\u201D\n\u2014 B, p. 1\n\nMine\n\n\u201CNo source\u201D');
+  assert.equal(formatCardsClip([], 'markdown'), '');
+});
+
+test('a quote without a source is still a block quote, and markdown in comments is escaped', () => {
+  const clip = formatCardsClip([{ text: 'Own words *here*', comment: '# not a heading' }], 'markdown');
+  assert.equal(clip, '> Own words \\*here\\*\n\n\\# not a heading');
+});

@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { loadCanvasState, saveCanvasState } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
+import { addMembers, bucketByColor, bucketBySource, colorName, defaultGroupColor, defaultGroupTitle, hiddenIds, migrateGroups, nextGroupColor, reconcileMembership, removeMembers, type Group } from '@/lib/groups';
+import { autoSides, chainPairs, type Placement } from '@/lib/arrange';
+import { bookLabel } from '@/lib/note-clip';
 import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
 import { clamp, uid } from '@/lib/utils';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
@@ -45,6 +48,8 @@ export interface Workspace {
   name: string;
   resources: Resource[];
   connectors: Connector[];
+  /** Named frames around related cards. */
+  groups: Group[];
   view: CanvasView;
 }
 
@@ -122,6 +127,8 @@ export interface CanvasStore {
   /** Where you were in each PDF (page, scroll position, zoom, pen settings), keyed by file path. */
   pdfViews: Record<string, PdfViewState>;
   selectedId: string | null;
+  /** Every selected window; `selectedId` is the one you touched last. */
+  selectedIds: string[];
   selectedConnectorId: string | null;
   locked: boolean;
   viewport: { width: number; height: number };
@@ -146,6 +153,25 @@ export interface CanvasStore {
   updateConnector: (id: string, patch: Partial<Omit<Connector, 'id'>>) => void;
   removeConnector: (id: string) => void;
   selectConnector: (id: string | null) => void;
+  toggleSelect: (id: string) => void;
+  selectMany: (ids: string[], additive?: boolean) => void;
+  selectAllCards: () => void;
+  /** Move several windows at once (one undo step). `reconcile` lets dropped cards join or leave groups. */
+  placeResources: (positions: Placement, options?: { reconcile?: boolean }) => void;
+  closeResources: (ids: string[]) => void;
+  setCardsColor: (ids: string[], color: string) => void;
+  createGroup: (ids: string[], title?: string) => string | null;
+  ungroup: (groupId: string) => void;
+  renameGroup: (groupId: string, title: string) => void;
+  setGroupColor: (groupId: string, color: string) => void;
+  toggleGroupCollapsed: (groupId: string) => void;
+  addToGroup: (groupId: string, ids: string[]) => void;
+  removeFromGroups: (ids: string[]) => void;
+  /** Make one group per book (or per colour) from `ids`, or from every card. Returns how many were made. */
+  groupBy: (by: 'book' | 'colour', ids?: string[]) => number;
+  /** Link the cards in the given order with connectors. Returns how many were added. */
+  chainResources: (orderedIds: string[], loop?: boolean) => number;
+  unchainResources: (ids: string[]) => number;
   updateResource: (id: string, patch: Partial<Resource>, record?: boolean) => void;
   patchResourceIn: (workspaceId: string, id: string, patch: Partial<Resource>) => void;
   setResourceRect: (id: string, rect: Partial<Rect>) => void;
@@ -169,7 +195,7 @@ export function activeWorkspace(state: Pick<CanvasStore, 'workspaces' | 'activeW
 }
 
 function newWorkspace(name: string, id: string = uid()): Workspace {
-  return { id, name, resources: [], connectors: [], view: { ...DEFAULT_VIEW } };
+  return { id, name, resources: [], connectors: [], groups: [], view: { ...DEFAULT_VIEW } };
 }
 
 function finiteOr(value: unknown, fallback: number): number {
@@ -288,11 +314,12 @@ export function migrateCanvasState(raw: unknown): { workspaces: Workspace[]; act
           name: typeof w.name === 'string' && w.name.trim() ? w.name : `Workspace ${index + 1}`,
           resources,
           connectors: migrateConnectors(w.connectors, new Set(resources.map((r) => r.id)), uid),
+          groups: migrateGroups(w.groups, new Set(resources.map((r) => r.id)), uid),
           view: migrateView(w.view ?? w.canvasView),
         };
       });
   } else if (Array.isArray(data.resources)) {
-    workspaces = [{ id: 'default', name: 'Default Workspace', resources: migrateResources(data.resources), connectors: [], view: migrateView(data.view) }];
+    workspaces = [{ id: 'default', name: 'Default Workspace', resources: migrateResources(data.resources), connectors: [], groups: [], view: migrateView(data.view) }];
   }
   const unique = new Map<string, Workspace>();
   for (const workspace of workspaces) if (!unique.has(workspace.id)) unique.set(workspace.id, workspace);
@@ -408,6 +435,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
     activeWorkspaceId: 'default',
     pdfViews: {},
     selectedId: null,
+    selectedIds: [],
     selectedConnectorId: null,
     locked: false,
     viewport: { width: 1200, height: 800 },
@@ -673,11 +701,149 @@ export const useCanvas = create<CanvasStore>((set, get) => {
     select: (id) => {
       if (get().selectedId !== id || get().selectedConnectorId !== null) set({ selectedId: id, selectedConnectorId: null });
     },
+    toggleSelect: (id) => {
+      const existing = new Set(active().resources.map((r) => r.id));
+      if (!existing.has(id)) return;
+      const current = get().selectedIds.filter((other) => existing.has(other));
+      const next = current.includes(id) ? current.filter((other) => other !== id) : [...current, id];
+      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
+    },
+    selectMany: (ids, additive = false) => {
+      const existing = new Set(active().resources.map((r) => r.id));
+      const base = additive ? get().selectedIds.filter((other) => existing.has(other)) : [];
+      const next = [...new Set([...base, ...ids.filter((id) => existing.has(id))])];
+      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
+    },
+    selectAllCards: () => {
+      const workspace = active();
+      const hidden = hiddenIds(workspace.groups, new Set(workspace.resources.map((r) => r.id)));
+      get().selectMany(workspace.resources.filter((r) => r.type === 'card' && !r.minimized && !hidden.has(r.id)).map((r) => r.id));
+    },
+    placeResources: (positions, options) => {
+      const resources = active().resources;
+      let changed = false;
+      const next = resources.map((r) => {
+        const target = positions[r.id];
+        if (!target || (target.x === r.x && target.y === r.y)) return r;
+        changed = true;
+        return { ...r, x: Math.round(target.x), y: Math.round(target.y) };
+      });
+      if (!changed) return;
+      commitResources(next);
+      if (options?.reconcile) {
+        const boxes = new Map(next.filter((r) => !r.minimized).map((r) => [r.id, { x: r.x, y: r.y, width: r.width, height: r.height }]));
+        const groups = reconcileMembership(active().groups, boxes, new Set(Object.keys(positions)));
+        if (groups !== active().groups) updateActive((w) => ({ ...w, groups }));
+      }
+    },
+    closeResources: (ids) => {
+      const closing = new Set(ids);
+      const resources = active().resources;
+      if (!resources.some((r) => closing.has(r.id))) return;
+      commitResources(resources.filter((r) => !closing.has(r.id)));
+      const remaining = get().selectedIds.filter((id) => !closing.has(id));
+      set({ selectedIds: remaining, selectedId: remaining.length > 0 ? remaining[remaining.length - 1] : null });
+    },
+    setCardsColor: (ids, color) => {
+      const chosen = new Set(ids);
+      const resources = active().resources;
+      if (!resources.some((r) => chosen.has(r.id) && r.type === 'card' && r.color !== color)) return;
+      commitResources(resources.map((r) => (chosen.has(r.id) && r.type === 'card' ? { ...r, color } : r)));
+    },
+    createGroup: (ids, title) => {
+      const workspace = active();
+      const byId = new Map(workspace.resources.map((r) => [r.id, r]));
+      const members = [...new Set(ids)].filter((id) => byId.has(id));
+      if (members.length === 0) return null;
+      const info = members.map((id) => ({ id, color: byId.get(id)!.color, source: byId.get(id)!.source?.title }));
+      const group: Group = {
+        id: uid(),
+        title: title?.trim() || defaultGroupTitle(info, workspace.groups.length),
+        color: defaultGroupColor(info, workspace.groups),
+        members,
+        collapsed: false,
+      };
+      updateActive((w) => ({ ...w, groups: [...removeMembers(w.groups, members), group] }));
+      return group.id;
+    },
+    ungroup: (groupId) => updateActive((w) => ({ ...w, groups: w.groups.filter((group) => group.id !== groupId) })),
+    renameGroup: (groupId, title) => {
+      const clean = title.trim().slice(0, 80);
+      if (!clean) return;
+      updateActive((w) => ({ ...w, groups: w.groups.map((group) => (group.id === groupId ? { ...group, title: clean } : group)) }));
+    },
+    setGroupColor: (groupId, color) => updateActive((w) => ({ ...w, groups: w.groups.map((group) => (group.id === groupId ? { ...group, color } : group)) })),
+    toggleGroupCollapsed: (groupId) => {
+      const group = active().groups.find((candidate) => candidate.id === groupId);
+      if (!group) return;
+      updateActive((w) => ({ ...w, groups: w.groups.map((candidate) => (candidate.id === groupId ? { ...candidate, collapsed: !candidate.collapsed } : candidate)) }));
+      if (!group.collapsed) {
+        const hiding = new Set(group.members);
+        const remaining = get().selectedIds.filter((id) => !hiding.has(id));
+        set({ selectedIds: remaining, selectedId: remaining.length > 0 ? remaining[remaining.length - 1] : null });
+      }
+    },
+    addToGroup: (groupId, ids) => {
+      if (!active().groups.some((group) => group.id === groupId)) return;
+      const existing = new Set(active().resources.map((r) => r.id));
+      updateActive((w) => ({ ...w, groups: addMembers(w.groups, groupId, ids.filter((id) => existing.has(id))) }));
+    },
+    removeFromGroups: (ids) => updateActive((w) => ({ ...w, groups: removeMembers(w.groups, ids) })),
+    groupBy: (by, ids) => {
+      const workspace = active();
+      const hidden = hiddenIds(workspace.groups, new Set(workspace.resources.map((r) => r.id)));
+      const wanted = ids ? new Set(ids) : null;
+      const cards = workspace.resources.filter((r) => r.type === 'card' && !r.minimized && !hidden.has(r.id) && (!wanted || wanted.has(r.id)));
+      const info = cards.map((r) => ({ id: r.id, color: r.color, source: r.source?.title }));
+      const buckets =
+        by === 'book'
+          ? bucketBySource(info).map((bucket) => ({ title: bookLabel(bucket.source), color: undefined as string | undefined, ids: bucket.ids }))
+          : bucketByColor(info).map((bucket) => ({ title: colorName(bucket.color), color: bucket.color, ids: bucket.ids }));
+      const worthy = buckets.filter((bucket) => bucket.ids.length >= 2);
+      if (worthy.length === 0) return 0;
+      let groups = workspace.groups;
+      const made: Group[] = [];
+      for (const bucket of worthy) {
+        groups = removeMembers(groups, bucket.ids);
+        const members = info.filter((card) => bucket.ids.includes(card.id));
+        made.push({
+          id: uid(),
+          title: bucket.title,
+          color: bucket.color ?? defaultGroupColor(members, [...groups, ...made]) ?? nextGroupColor(groups),
+          members: bucket.ids,
+          collapsed: false,
+        });
+      }
+      updateActive((w) => ({ ...w, groups: [...groups, ...made] }));
+      return made.length;
+    },
+    chainResources: (orderedIds, loop = false) => {
+      const workspace = active();
+      const byId = new Map(workspace.resources.map((r) => [r.id, r]));
+      const pairs = chainPairs(orderedIds.filter((id) => byId.has(id)), loop);
+      const connectors = [...workspace.connectors];
+      let added = 0;
+      for (const [from, to] of pairs) {
+        if (connectors.some((c) => c.from === from && c.to === to)) continue;
+        connectors.push({ id: uid(), from, to, ...autoSides(byId.get(from)!, byId.get(to)!), arrow: true });
+        added += 1;
+      }
+      if (added > 0) updateActive((w) => ({ ...w, connectors }));
+      return added;
+    },
+    unchainResources: (ids) => {
+      const chosen = new Set(ids);
+      const before = active().connectors;
+      const after = before.filter((c) => !(chosen.has(c.from) && chosen.has(c.to)));
+      if (after.length === before.length) return 0;
+      updateActive((w) => ({ ...w, connectors: after }));
+      return before.length - after.length;
+    },
     closeResource: (id) => {
       const resources = active().resources;
       if (!resources.some((r) => r.id === id)) return;
       commitResources(resources.filter((r) => r.id !== id));
-      if (get().selectedId === id) set({ selectedId: null });
+      set({ selectedIds: get().selectedIds.filter((other) => other !== id), ...(get().selectedId === id ? { selectedId: null } : {}) });
     },
     toggleMinimize: (id) => {
       const resources = active().resources;
@@ -823,4 +989,23 @@ useCanvas.subscribe((state, previous) => {
 
 export function useActiveWorkspace(): Workspace {
   return useCanvas((state) => activeWorkspace(state));
+}
+
+/**
+ * `selectedId` is set in many places (opening, focusing, closing...). This keeps `selectedIds` in step:
+ * selecting something outside the current selection replaces it; clearing clears it; clicking a member of a
+ * multi-selection leaves the selection intact so the group can be dragged.
+ */
+useCanvas.subscribe((state, previous) => {
+  if (state.selectedId === previous.selectedId && state.activeWorkspaceId === previous.activeWorkspaceId) return;
+  if (state.selectedId === null) {
+    if (state.selectedIds.length > 0) useCanvas.setState({ selectedIds: [] });
+  } else if (!state.selectedIds.includes(state.selectedId)) {
+    useCanvas.setState({ selectedIds: [state.selectedId] });
+  }
+});
+
+/** Windows tucked away because their group is collapsed. */
+export function hiddenResourceIds(workspace: Workspace): Set<string> {
+  return hiddenIds(workspace.groups, new Set(workspace.resources.map((r) => r.id)));
 }

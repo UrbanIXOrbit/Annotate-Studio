@@ -4,17 +4,22 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { FilePlus2, ImagePlus, LayoutGrid, Lock, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
 import CanvasWindow from './CanvasWindow';
 import ConnectorLayer from './ConnectorLayer';
+import GroupLayer from './GroupLayer';
+import SelectionToolbar from './SelectionToolbar';
+import CardsNoteHost from './CardsNoteHost';
 import Minimap from './Minimap';
 import MinimizedDock from './MinimizedDock';
 import { openContextMenu } from '@/components/ui/ContextMenu';
-import { activeWorkspace, screenToWorld, useActiveWorkspace, useCanvas, type CanvasStore } from '@/store/canvas';
+import { activeWorkspace, hiddenResourceIds, screenToWorld, useActiveWorkspace, useCanvas, type CanvasStore } from '@/store/canvas';
 import { useApp } from '@/store/app';
+import { toast } from '@/store/toast';
 import { useConnectUi } from '@/store/connect';
 import { webviewZoomFactor } from '@/store/settings';
 import { isTauri } from '@/lib/tauri-commands';
 import { createNewNote, importBrowserFiles, importPaths, pickAndImport } from '@/lib/workspace-actions';
 import { cn, isEditableTarget, isModalOpen } from '@/lib/utils';
 import { dispatchWindowKey, isContentWindow, setContentWindow } from '@/lib/window-keys';
+import { closeSelectedCards, groupSelection, nudgeSelection, ungroupSelection } from '@/lib/group-actions';
 
 function gridStep(zoom: number): number {
   let step = 24 * zoom;
@@ -197,6 +202,16 @@ export default function CanvasViewport() {
         else handled = false;
       } else if ((key === 'delete' || key === 'backspace') && !mod && state.selectedConnectorId) {
         state.removeConnector(state.selectedConnectorId);
+      } else if (mod && !event.altKey && key === 'a') {
+        state.selectAllCards();
+      } else if (mod && !event.altKey && key === 'g') {
+        if (event.shiftKey) ungroupSelection();
+        else groupSelection();
+      } else if ((key === 'delete' || key === 'backspace') && !mod && state.selectedIds.length > 0) {
+        closeSelectedCards();
+      } else if (!mod && !event.altKey && state.selectedIds.length > 0 && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
+        const step = event.shiftKey ? 40 : 8;
+        nudgeSelection(key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0, key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0);
       } else if (mod && event.altKey && key === 'n') void createNewNote();
       else handled = false;
       if (handled) event.preventDefault();
@@ -283,12 +298,51 @@ export default function CanvasViewport() {
     if (startPan(event)) event.stopPropagation();
   };
 
+  /** Shift + drag on empty canvas draws a rectangle and selects every window it touches. */
+  const startMarquee = (event: React.PointerEvent) => {
+    const element = containerRef.current;
+    if (!element) return;
+    event.preventDefault();
+    const bounds = element.getBoundingClientRect();
+    const origin = { x: event.clientX, y: event.clientY };
+    const keep = useCanvas.getState().selectedIds;
+    let moved = false;
+    const hits = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const w1 = clientToWorld(Math.min(a.x, b.x), Math.min(a.y, b.y));
+      const w2 = clientToWorld(Math.max(a.x, b.x), Math.max(a.y, b.y));
+      const workspace = activeWorkspace(useCanvas.getState());
+      const hidden = hiddenResourceIds(workspace);
+      return workspace.resources
+        .filter((r) => !r.minimized && !r.maximized && !hidden.has(r.id) && r.x < w2.x && r.x + r.width > w1.x && r.y < w2.y && r.y + r.height > w1.y)
+        .map((r) => r.id);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!moved && Math.hypot(e.clientX - origin.x, e.clientY - origin.y) < 4) return;
+      moved = true;
+      setMarquee({ x0: origin.x - bounds.left, y0: origin.y - bounds.top, x1: e.clientX - bounds.left, y1: e.clientY - bounds.top });
+      useCanvas.getState().selectMany([...keep, ...hits(origin, { x: e.clientX, y: e.clientY })]);
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      setMarquee(null);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+  };
+
   const onPointerDown = (event: React.PointerEvent) => {
     if (event.button === 1) {
       startPan(event);
       return;
     }
     if (event.button !== 0 || !isBackground(event.target)) return;
+    if (event.shiftKey && !locked) {
+      startMarquee(event);
+      return;
+    }
     setContentWindow(null);
     useCanvas.getState().select(null);
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur();
@@ -318,6 +372,22 @@ export default function CanvasViewport() {
       { label: 'Import PDF…', icon: <FilePlus2 size={13} />, onSelect: () => void pickAndImport('pdf', world) },
       { label: 'Import image…', icon: <ImagePlus size={13} />, onSelect: () => void pickAndImport('image', world) },
       'separator',
+      { label: 'Select all cards', shortcut: 'Ctrl+A', onSelect: () => state.selectAllCards() },
+      {
+        label: 'Group cards by book',
+        onSelect: () => {
+          const made = state.groupBy('book');
+          toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per book` : 'No two cards share a book yet');
+        },
+      },
+      {
+        label: 'Group cards by colour',
+        onSelect: () => {
+          const made = state.groupBy('colour');
+          toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per colour` : 'No two cards share a colour yet');
+        },
+      },
+      'separator',
       { label: 'Fit all windows', icon: <LayoutGrid size={13} />, shortcut: 'Shift+1', onSelect: () => state.fitToContent() },
       { label: 'Reset zoom', shortcut: 'Ctrl+0', onSelect: () => state.resetZoom() },
       {
@@ -334,6 +404,8 @@ export default function CanvasViewport() {
   };
 
   const step = gridStep(view.zoom);
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const hidden = useMemo(() => hiddenResourceIds(workspace), [workspace]);
 
   return (
     <div
@@ -368,10 +440,13 @@ export default function CanvasViewport() {
         style={{ backgroundSize: `${step}px ${step}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
       />
       <div ref={worldRef} className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
+        <GroupLayer />
         <ConnectorLayer clientToWorld={clientToWorld} />
-        {workspace.resources.map((resource) => (
-          <CanvasWindow key={resource.id} resource={resource} />
-        ))}
+        {workspace.resources
+          .filter((resource) => !hidden.has(resource.id))
+          .map((resource) => (
+            <CanvasWindow key={resource.id} resource={resource} />
+          ))}
       </div>
 
       {hydrated && visible.length === 0 && (
@@ -406,6 +481,14 @@ export default function CanvasViewport() {
         </button>
       )}
 
+      {marquee && (
+        <div
+          className="marquee"
+          style={{ left: Math.min(marquee.x0, marquee.x1), top: Math.min(marquee.y0, marquee.y1), width: Math.abs(marquee.x1 - marquee.x0), height: Math.abs(marquee.y1 - marquee.y0) }}
+        />
+      )}
+      <SelectionToolbar containerRef={containerRef} />
+      <CardsNoteHost />
       {!maximized && <Minimap />}
       <MinimizedDock />
 

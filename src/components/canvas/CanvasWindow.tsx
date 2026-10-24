@@ -27,6 +27,7 @@ import { renameFile } from '@/lib/workspace-actions';
 import { baseName, copyText, cn, stripExtension } from '@/lib/utils';
 import { setContentWindow } from '@/lib/window-keys';
 import { setLiveRect } from '@/lib/live-rects';
+import { dragWindows } from '@/lib/drag-windows';
 import { openCardSource } from '@/lib/card-actions';
 import { toast } from '@/store/toast';
 import PdfWindow from './PdfWindow';
@@ -77,16 +78,34 @@ const WindowBody = memo(function WindowBody({
 
 function CanvasWindow({ resource }: { resource: Resource }) {
   const selected = useCanvas((state) => state.selectedId === resource.id);
+  const inSelection = useCanvas((state) => state.selectedIds.length > 1 && state.selectedIds.includes(resource.id));
   const maximizedView = useCanvas((state) => (resource.maximized ? activeWorkspace(state).view : null));
   const maximizedViewport = useCanvas((state) => (resource.maximized ? state.viewport : null));
   const frameRef = useRef<HTMLDivElement>(null);
   const [interaction, setInteraction] = useState<'dragging' | 'resizing' | null>(null);
 
-  const activate = useCallback(() => {
-    const state = useCanvas.getState();
-    if (state.selectedId !== resource.id) state.select(resource.id);
-    state.bringToFront(resource.id);
-  }, [resource.id]);
+  const activate = useCallback(
+    (event?: React.PointerEvent) => {
+      const state = useCanvas.getState();
+      const target = event?.target as Element | undefined;
+      // Ctrl/Cmd/Shift-click adds or removes a window from the selection. Only on cards and on a window's title bar,
+      // and never inside text fields, so typing and selecting PDF text keep working as before.
+      const toggles = !!event && event.button === 0 && (event.ctrlKey || event.metaKey || event.shiftKey);
+      const interactive = target?.closest?.('textarea, input, select, a, [contenteditable="true"], .cm-editor');
+      if (toggles && !interactive && (resource.type === 'card' || target?.closest?.('.cw-titlebar'))) {
+        state.toggleSelect(resource.id);
+        state.bringToFront(resource.id);
+        return;
+      }
+      const inMulti = state.selectedIds.length > 1 && state.selectedIds.includes(resource.id);
+      // Clicking a member of a multi-selection keeps the selection so the whole set can be dragged.
+      if (inMulti) {
+        if (state.selectedId !== resource.id) useCanvas.setState({ selectedId: resource.id });
+      } else if (state.selectedId !== resource.id) state.select(resource.id);
+      state.bringToFront(resource.id);
+    },
+    [resource.id, resource.type],
+  );
 
   const startDrag = (event: React.PointerEvent<HTMLElement>) => {
     setContentWindow(null);
@@ -96,6 +115,25 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     if (!frame) return;
     event.preventDefault();
     const handle = event.currentTarget;
+    const selection = useCanvas.getState().selectedIds;
+    if (selection.length > 1 && selection.includes(resource.id)) {
+      const plain = !(event.ctrlKey || event.metaKey || event.shiftKey);
+      dragWindows({
+        ids: [resource.id, ...selection.filter((id) => id !== resource.id)],
+        start: { x: event.clientX, y: event.clientY },
+        zoom: currentZoom(),
+        handle,
+        pointerId: event.pointerId,
+        reconcile: true,
+        onMoveStart: () => setInteraction('dragging'),
+        onFinish: (moved) => {
+          setInteraction(null);
+          // A plain click (no drag) on one member narrows the selection to it.
+          if (!moved && plain) useCanvas.getState().select(resource.id);
+        },
+      });
+      return;
+    }
     handle.setPointerCapture(event.pointerId);
     const zoom = currentZoom();
     const start = { x: event.clientX, y: event.clientY };
@@ -121,7 +159,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
       handle.removeEventListener('pointercancel', onEnd);
       if (!moved) return;
       setInteraction(null);
-      useCanvas.getState().setResourceRect(resource.id, next);
+      useCanvas.getState().placeResources({ [resource.id]: next }, { reconcile: true });
       setLiveRect(resource.id, null);
     };
     handle.addEventListener('pointermove', onMove);
@@ -247,6 +285,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         'cw',
         `cw-${resource.type}`,
         selected && 'cw-selected',
+        inSelection && 'cw-multi',
         resource.maximized && 'cw-maximized',
         resource.minimized && 'cw-minimized',
         interaction && `cw-${interaction}`,

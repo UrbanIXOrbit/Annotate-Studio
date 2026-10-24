@@ -15,9 +15,12 @@ interface Props {
   onClose: () => void;
   onPickNote: (path: string) => void;
   onPickNew: () => void;
+  /** The "also highlight in the PDF" choice only makes sense when copying from a PDF. */
+  showHighlight?: boolean;
+  title?: string;
 }
 
-function PickerBody({ onPickNote, onPickNew }: Pick<Props, 'onPickNote' | 'onPickNew'>) {
+function PickerBody({ onPickNote, onPickNew, showHighlight = true, title = 'Copy to note' }: Pick<Props, 'onPickNote' | 'onPickNew' | 'showHighlight' | 'title'>) {
   const files = useLibrary((state) => state.files);
   const resources = useCanvas((state) => activeWorkspace(state).resources);
   const lastNote = useSettings((state) => state.noteClip.lastNote);
@@ -52,7 +55,7 @@ function PickerBody({ onPickNote, onPickNew }: Pick<Props, 'onPickNote' | 'onPic
 
   return (
     <div className="note-picker" onKeyDown={onKeyDown}>
-      <div className="note-pick-head">Copy to note</div>
+      <div className="note-pick-head">{title}</div>
       <div className="note-pick-search">
         <Search size={14} />
         <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes…" aria-label="Search notes" dir="auto" />
@@ -84,18 +87,20 @@ function PickerBody({ onPickNote, onPickNew }: Pick<Props, 'onPickNote' | 'onPic
       <button type="button" className="note-pick-new" onClick={onPickNew}>
         <FilePlus2 size={14} /> New note…
       </button>
-      <label className="note-pick-toggle">
-        <input type="checkbox" checked={highlight} onChange={(event) => updateNoteClip({ highlight: event.target.checked })} /> Also highlight it in the PDF
-      </label>
+      {showHighlight && (
+        <label className="note-pick-toggle">
+          <input type="checkbox" checked={highlight} onChange={(event) => updateNoteClip({ highlight: event.target.checked })} /> Also highlight it in the PDF
+        </label>
+      )}
     </div>
   );
 }
 
 /** Chooser shown from the PDF selection menu: pick the note the selected text is copied into. */
-export default function NoteClipPicker({ anchorRef, open, onClose, onPickNote, onPickNew }: Props) {
+export default function NoteClipPicker({ anchorRef, open, onClose, onPickNote, onPickNew, showHighlight, title }: Props) {
   return (
     <Popover anchorRef={anchorRef} open={open} onClose={onClose} width={320} className="note-picker-popover">
-      <PickerBody onPickNote={onPickNote} onPickNew={onPickNew} />
+      <PickerBody onPickNote={onPickNote} onPickNew={onPickNew} showHighlight={showHighlight} title={title} />
     </Popover>
   );
 }
