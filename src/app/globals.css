@@ -7164,3 +7164,83 @@ input[type='checkbox'] {
   box-shadow: var(--shadow-md);
   pointer-events: none;
 }
+
+/* ─── Book windows (epub, mobi, azw3, fb2, cbz via foliate-js) ─── */
+
+.cw-book .cw-icon {
+  color: #d97706;
+}
+
+.book-window {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.book-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--pdf-bg);
+}
+
+.book-viewport > foliate-view {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.book-progress {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-primary);
+  padding: 0 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.book-progress-loc {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.book-chapter {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.book-toc {
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.book-toc-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-toc-entry:hover {
+  background: var(--bg-elevated);
+}
+
+/* The selection menu floats over the window, positioned in viewport coordinates. */
+.book-float-menu-holder {
+  position: fixed;
+  z-index: 40;
+  translate: -50% 0;
+}

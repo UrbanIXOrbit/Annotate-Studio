@@ -2,6 +2,7 @@
 
 import React, { memo, useCallback, useRef, useState } from 'react';
 import {
+  BookOpen,
   Copy,
   FileText,
   Image as ImageIcon,
@@ -31,6 +32,7 @@ import { dragWindows } from '@/lib/drag-windows';
 import { openCardSource } from '@/lib/card-actions';
 import { toast } from '@/store/toast';
 import PdfWindow from './PdfWindow';
+import BookWindow from './BookWindow';
 import NoteWindow from './NoteWindow';
 import ImageWindow from './ImageWindow';
 import CardWindow from './CardWindow';
@@ -44,6 +46,7 @@ const TYPE_ICONS = {
   note: <NotebookPen size={14} />,
   image: <ImageIcon size={14} />,
   card: <StickyNote size={14} />,
+  book: <BookOpen size={14} />,
 };
 
 function currentZoom(): number {
@@ -72,6 +75,7 @@ const WindowBody = memo(function WindowBody({
     return <div className="cw-empty">This window has no file attached.</div>;
   }
   if (type === 'pdf') return <PdfWindow resourceId={id} path={filePath} title={title} active={selected} />;
+  if (type === 'book') return <BookWindow resourceId={id} path={filePath} title={title} />;
   if (type === 'note') return <NoteWindow resourceId={id} path={filePath} title={title} />;
   return <ImageWindow resourceId={id} path={filePath} title={title} />;
 });
@@ -238,7 +242,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     const items: MenuEntry[] = [{ label: 'Rename…', icon: <Pencil size={13} />, onSelect: rename }];
     if (isCard && resource.source) {
       const source = resource.source;
-      items.push({ label: `Go to page ${source.page}`, icon: <ArrowUpRight size={13} />, onSelect: () => openCardSource(source) });
+      items.push({ label: source.cfi ? 'Go to source' : `Go to page ${source.page}`, icon: <ArrowUpRight size={13} />, onSelect: () => openCardSource(source) });
     }
     if (!isCard) {
       items.push(

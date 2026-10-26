@@ -9,6 +9,7 @@ pub enum FileType {
     Markdown,
     Text,
     Image,
+    Book,
     Document,
     Unknown,
 }
@@ -20,6 +21,7 @@ impl FileType {
             "md" | "markdown" | "mdx" => FileType::Markdown,
             "txt" | "text" => FileType::Text,
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" => FileType::Image,
+            "epub" | "mobi" | "azw3" | "azw" | "fb2" | "cbz" => FileType::Book,
             "docx" | "odt" => FileType::Document,
             _ => FileType::Unknown,
         }
@@ -110,9 +112,11 @@ mod tests {
         assert_eq!(FileType::from_extension("md"), FileType::Markdown);
         assert_eq!(FileType::from_extension("jpeg"), FileType::Image);
         assert_eq!(FileType::from_extension("docx"), FileType::Document);
+        assert_eq!(FileType::from_extension("epub"), FileType::Book);
         assert_eq!(FileType::from_extension("exe"), FileType::Unknown);
         assert_eq!(FileType::Markdown.default_dir(), NOTES_DIR);
         assert_eq!(FileType::Pdf.default_dir(), DOCUMENTS_DIR);
+        assert_eq!(FileType::Book.default_dir(), DOCUMENTS_DIR);
     }
 
     #[test]

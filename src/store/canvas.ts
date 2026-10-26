@@ -5,17 +5,22 @@ import { addMembers, bucketByColor, bucketBySource, colorName, defaultGroupColor
 import { autoSides, chainPairs, type Placement } from '@/lib/arrange';
 import { bookLabel } from '@/lib/note-clip';
 import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
+import { mergeBookView, migrateBookViews, pruneBookViews, removeBookView, renameBookView, type BookViewState } from '@/lib/book-view';
 import { clamp, uid } from '@/lib/utils';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
-export type ResourceType = 'pdf' | 'note' | 'image' | 'card';
+export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book';
 
 export interface CardSource {
   filePath: string;
   title: string;
   /** 1-based page the quote was taken from. */
   page: number;
+  /** Books only: CFI anchor of the quote, so "go to source" lands on the exact paragraph. */
+  cfi?: string;
+  /** True when the source is opened directly from outside the workspace. */
+  isExternal?: boolean;
 }
 
 export interface CanvasView {
@@ -76,6 +81,7 @@ export const DEFAULT_SIZES: Record<ResourceType, { width: number; height: number
   note: { width: 680, height: 560 },
   image: { width: 560, height: 440 },
   card: { width: 320, height: 200 },
+  book: { width: 660, height: 840 },
 };
 
 const MIN_CARD_WIDTH = 240;
@@ -129,6 +135,8 @@ export interface CanvasStore {
   activeWorkspaceId: string;
   /** Where you were in each PDF (page, scroll position, zoom, pen settings), keyed by file path. */
   pdfViews: Record<string, PdfViewState>;
+  /** Where you were in each e-book (CFI anchor), keyed by file path. */
+  bookViews: Record<string, BookViewState>;
   selectedId: string | null;
   /** Every selected window; `selectedId` is the one you touched last. */
   selectedIds: string[];
@@ -187,6 +195,7 @@ export interface CanvasStore {
   minimizeAll: () => void;
   arrange: (layout: ArrangeLayout) => void;
   setPdfView: (path: string, patch: Partial<Omit<PdfViewState, 'updatedAt'>>) => void;
+  setBookView: (path: string, patch: Partial<Omit<BookViewState, 'updatedAt'>>) => void;
   replaceFilePath: (oldPath: string, newPath: string, title?: string) => void;
   closeByFilePath: (path: string) => void;
   undo: () => void;
@@ -216,7 +225,7 @@ export function toWorkspaceRelative(path: string): string {
 }
 
 function isResourceType(value: unknown): value is ResourceType {
-  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card';
+  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book';
 }
 
 function migrateResource(raw: unknown, index: number): Resource | null {
@@ -243,6 +252,8 @@ function migrateResource(raw: unknown, index: number): Resource | null {
           filePath: toWorkspaceRelative(rawSource.filePath.trim()),
           title: typeof rawSource.title === 'string' && rawSource.title.trim() ? rawSource.title : 'PDF',
           page: Math.max(1, Math.round(finiteOr(rawSource.page, 1))),
+          cfi: typeof rawSource.cfi === 'string' ? rawSource.cfi : undefined,
+          isExternal: rawSource.isExternal === true,
         }
       : undefined;
   const color = type === 'card' && typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color) ? data.color : undefined;
@@ -305,7 +316,12 @@ function migrateResources(rawList: unknown): Resource[] {
   return normalized.map((r) => (r.maximized && r.id !== topMaximized ? { ...r, maximized: false } : r));
 }
 
-export function migrateCanvasState(raw: unknown): { workspaces: Workspace[]; activeWorkspaceId: string; pdfViews: Record<string, PdfViewState> } {
+export function migrateCanvasState(raw: unknown): {
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  pdfViews: Record<string, PdfViewState>;
+  bookViews: Record<string, BookViewState>;
+} {
   const data = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   let workspaces: Workspace[] = [];
   if (Array.isArray(data.workspaces)) {
@@ -331,7 +347,7 @@ export function migrateCanvasState(raw: unknown): { workspaces: Workspace[]; act
   if (workspaces.length === 0) workspaces = [newWorkspace('Default Workspace', 'default')];
   const requested = typeof data.activeWorkspaceId === 'string' ? data.activeWorkspaceId : '';
   const activeWorkspaceId = workspaces.some((w) => w.id === requested) ? requested : workspaces[0].id;
-  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, toWorkspaceRelative) };
+  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, toWorkspaceRelative), bookViews: migrateBookViews(data.bookViews, toWorkspaceRelative) };
 }
 
 function topZ(resources: Resource[]): number {
@@ -403,7 +419,12 @@ function placeWindow(
   return { x, y };
 }
 
-const saver = createSaver<{ workspaces: Workspace[]; activeWorkspaceId: string; pdfViews: Record<string, PdfViewState> }>(
+const saver = createSaver<{
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  pdfViews: Record<string, PdfViewState>;
+  bookViews: Record<string, BookViewState>;
+}>(
   (value) => saveCanvasState({ version: 2, ...value }),
   500,
 );
@@ -438,6 +459,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
     workspaces: [newWorkspace('Default Workspace', 'default')],
     activeWorkspaceId: 'default',
     pdfViews: {},
+    bookViews: {},
     selectedId: null,
     selectedIds: [],
     selectedConnectorId: null,
@@ -925,6 +947,13 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       const views = isDefaultView(next) ? removePdfView(current, path) : pruneViews({ ...current, [path]: next });
       set({ pdfViews: views });
     },
+    setBookView: (path, patch) => {
+      if (!path) return;
+      const current = get().bookViews;
+      const next = mergeBookView(current[path], patch, Date.now());
+      if (next === current[path]) return;
+      set({ bookViews: pruneBookViews({ ...current, [path]: next }) });
+    },
     replaceFilePath: (oldPath, newPath, title) => {
       const rename = (resources: Resource[]) =>
         resources.some((r) => r.filePath === oldPath || r.source?.filePath === oldPath)
@@ -942,6 +971,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         past: state.past.map(rename),
         future: state.future.map(rename),
         pdfViews: renamePdfView(state.pdfViews, oldPath, newPath),
+        bookViews: renameBookView(state.bookViews, oldPath, newPath),
       }));
     },
     closeByFilePath: (path) => {
@@ -955,7 +985,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         const selectedExists = activeWorkspace({ workspaces, activeWorkspaceId: state.activeWorkspaceId }).resources.some(
           (r) => r.id === state.selectedId,
         );
-        return { workspaces, pdfViews: removePdfView(state.pdfViews, path), past: [], future: [], selectedId: selectedExists ? state.selectedId : null };
+        return { workspaces, pdfViews: removePdfView(state.pdfViews, path), bookViews: removeBookView(state.bookViews, path), past: [], future: [], selectedId: selectedExists ? state.selectedId : null };
       });
     },
 
@@ -988,8 +1018,19 @@ export const useCanvas = create<CanvasStore>((set, get) => {
 
 useCanvas.subscribe((state, previous) => {
   if (!state.hydrated || !previous.hydrated) return;
-  if (state.workspaces === previous.workspaces && state.activeWorkspaceId === previous.activeWorkspaceId && state.pdfViews === previous.pdfViews) return;
-  saver.schedule({ workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId, pdfViews: state.pdfViews });
+  if (
+    state.workspaces === previous.workspaces &&
+    state.activeWorkspaceId === previous.activeWorkspaceId &&
+    state.pdfViews === previous.pdfViews &&
+    state.bookViews === previous.bookViews
+  )
+    return;
+  saver.schedule({
+    workspaces: state.workspaces,
+    activeWorkspaceId: state.activeWorkspaceId,
+    pdfViews: state.pdfViews,
+    bookViews: state.bookViews,
+  });
 });
 
 export function useActiveWorkspace(): Workspace {

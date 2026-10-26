@@ -1,7 +1,7 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Document' | 'Unknown';
+export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Book' | 'Document' | 'Unknown';
 
 export interface StudyFile {
   id: string;
@@ -278,3 +278,8 @@ export const revealExternalFile = (path: string) => call<void>('reveal_external_
 export async function readExternalFileBytes(path: string): Promise<Uint8Array> {
   return toBytes(await call<unknown>('read_external_file_bytes', { path }));
 }
+
+export const readBookAnnotationSet = (path: string, isExternal: boolean) =>
+  call<unknown>('read_book_annotation_set', { path, isExternal });
+export const writeBookAnnotationSet = (path: string, isExternal: boolean, annotationSet: unknown) =>
+  call<void>('write_book_annotation_set', { path, isExternal, annotationSet });

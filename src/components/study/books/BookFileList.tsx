@@ -29,7 +29,7 @@ import { openExternalFile, revealExternalFile } from '@/lib/tauri-commands';
 import { useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
 import { cn, formatBytes } from '@/lib/utils';
-import { IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
+import { BOOK_EXTENSIONS, IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
 
 const DOC_EXTENSIONS = ['docx', 'doc', 'odt', 'epub', 'mobi', 'rtf'];
 
@@ -106,7 +106,7 @@ function FileRow({
 
   const handleOpenOnCanvas = () => {
     const ext = file.extension.toLowerCase();
-    let type: 'pdf' | 'image' | 'note' | null = null;
+    let type: 'pdf' | 'image' | 'note' | 'book' | null = null;
 
     if (ext === 'pdf') {
       type = 'pdf';
@@ -114,10 +114,12 @@ function FileRow({
       type = 'image';
     } else if (NOTE_EXTENSIONS.includes(ext)) {
       type = 'note';
+    } else if (BOOK_EXTENSIONS.includes(ext)) {
+      type = 'book';
     }
 
     if (!type) {
-      alert('This file type cannot be opened on the canvas. Only PDFs, images, and text notes are supported.');
+      alert('This file type cannot be opened on the canvas. Only PDFs, e-books, images, and text notes are supported.');
       return;
     }
 

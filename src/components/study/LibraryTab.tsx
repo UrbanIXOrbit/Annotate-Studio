@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BookOpen,
   BookOpenCheck,
   ExternalLink,
   FileImage,
@@ -38,7 +39,7 @@ import {
 } from '@/lib/workspace-actions';
 import { cn, formatBytes, formatRelativeTime, stripExtension } from '@/lib/utils';
 
-type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'documents';
+type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'books' | 'documents';
 type Sort = 'recent' | 'modified' | 'name' | 'size';
 
 const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
@@ -46,6 +47,7 @@ const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
   { id: 'pdf', label: 'PDFs', types: ['Pdf'] },
   { id: 'notes', label: 'Notes', types: ['Markdown', 'Text'] },
   { id: 'images', label: 'Images', types: ['Image'] },
+  { id: 'books', label: 'Books', types: ['Book'] },
   { id: 'documents', label: 'Documents', types: ['Document'] },
 ];
 
@@ -54,6 +56,7 @@ const TYPE_META: Record<FileType, { label: string; icon: React.ReactNode; tone: 
   Markdown: { label: 'Note', icon: <NotebookPen size={26} />, tone: 'tone-blue' },
   Text: { label: 'Text', icon: <FileType2 size={26} />, tone: 'tone-slate' },
   Image: { label: 'Image', icon: <FileImage size={26} />, tone: 'tone-green' },
+  Book: { label: 'Book', icon: <BookOpen size={26} />, tone: 'tone-amber' },
   Document: { label: 'Doc', icon: <FileType2 size={26} />, tone: 'tone-violet' },
   Unknown: { label: 'File', icon: <FileText size={26} />, tone: 'tone-slate' },
 };

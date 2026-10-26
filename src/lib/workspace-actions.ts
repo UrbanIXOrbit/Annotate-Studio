@@ -12,6 +12,7 @@ import {
   type StudyFile,
 } from './tauri-commands';
 import { extractPdfText, type ExtractedPdfText } from './pdf-engine';
+import { BOOK_EXTENSIONS, extractBookText } from './book-engine';
 import { baseName, extensionOf, stripExtension } from './utils';
 import { useApp } from '@/store/app';
 import { useCanvas, type OpenOptions, type ResourceType } from '@/store/canvas';
@@ -21,6 +22,7 @@ import { useNotes } from '@/store/notes';
 import { useSettings } from '@/store/settings';
 import { toast } from '@/store/toast';
 
+export { BOOK_EXTENSIONS };
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'];
 export const NOTE_EXTENSIONS = ['md', 'markdown', 'mdx', 'txt', 'text'];
 export const DOCUMENT_EXTENSIONS = ['docx', 'odt'];
@@ -31,6 +33,8 @@ export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): Re
       return 'pdf';
     case 'Image':
       return 'image';
+    case 'Book':
+      return 'book';
     case 'Markdown':
     case 'Text':
       return 'note';
@@ -39,6 +43,7 @@ export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): Re
       if (ext === 'pdf') return 'pdf';
       if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
       if (NOTE_EXTENSIONS.includes(ext)) return 'note';
+      if (BOOK_EXTENSIONS.includes(ext)) return 'book';
       return null;
     }
   }
@@ -73,7 +78,7 @@ export async function importPaths(paths: string[], at?: { x: number; y: number }
     files.forEach((file) => useLibrary.getState().upsert(file));
     openImported(files.filter((file) => resourceTypeFor(file)), at);
     const skipped = paths.length - files.length;
-    if (skipped > 0) toast.warning(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`, 'Only PDFs, images and text notes are supported.');
+    if (skipped > 0) toast.warning(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`, 'Only PDFs, e-books, images and text notes are supported.');
     return files;
   } catch (error) {
     toast.error('Import failed', error);
@@ -86,7 +91,8 @@ export async function importBrowserFiles(files: File[], at?: { x: number; y: num
   for (const file of files) {
     const ext = extensionOf(file.name);
     const isNote = NOTE_EXTENSIONS.includes(ext);
-    const supported = ext === 'pdf' || IMAGE_EXTENSIONS.includes(ext) || isNote || file.type.startsWith('image/');
+    const isBook = BOOK_EXTENSIONS.includes(ext);
+    const supported = ext === 'pdf' || isBook || IMAGE_EXTENSIONS.includes(ext) || isNote || file.type.startsWith('image/');
     if (!supported) {
       toast.warning('Unsupported file', file.name);
       continue;
@@ -117,7 +123,7 @@ export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'any', at?:
         ? [{ name: 'Images', extensions: IMAGE_EXTENSIONS }]
         : kind === 'note'
           ? [{ name: 'Notes', extensions: NOTE_EXTENSIONS }]
-          : [{ name: 'Study files', extensions: ['pdf', ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS] }];
+          : [{ name: 'Study files', extensions: ['pdf', ...BOOK_EXTENSIONS, ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS] }];
   const selection = await open({ multiple: true, filters });
   if (!selection) return;
   const paths = Array.isArray(selection) ? selection : [selection];
@@ -260,6 +266,11 @@ export async function readDocumentText(path: string, maxChars = 40_000): Promise
     const bytes = await readFileBytes(path);
     const extracted: ExtractedPdfText = await extractPdfText(bytes, maxChars);
     return { name, text: extracted.text, pageCount: extracted.pageCount, truncated: extracted.truncated };
+  }
+  if (BOOK_EXTENSIONS.includes(ext)) {
+    const bytes = await readFileBytes(path);
+    const extracted = await extractBookText(bytes, baseName(path), maxChars);
+    return { name, text: extracted.text, truncated: extracted.truncated };
   }
   if (IMAGE_EXTENSIONS.includes(ext)) {
     return { name, text: '', truncated: false };

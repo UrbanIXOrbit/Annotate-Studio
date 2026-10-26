@@ -1,10 +1,206 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::fs::{self, OpenOptions};
+use std::io::{Cursor, Read, Write};
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::state::AppState;
-use crate::storage::{read_json, write_json};
+use crate::storage::{read_json, write_atomic, write_json};
+
+const EPUB_ANNOTATIONS_PATH: &str = "META-INF/annotations.json";
+const MAX_ANNOTATION_SET_BYTES: usize = 10 * 1024 * 1024;
+
+fn book_sidecar_path(workspace: &Path, book_path: &Path) -> Result<PathBuf, String> {
+    let identity = book_path
+        .canonicalize()
+        .unwrap_or_else(|_| book_path.to_path_buf());
+    let digest = Sha256::digest(identity.to_string_lossy().as_bytes());
+    let file_name = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(workspace
+        .join("book-annotations")
+        .join(format!("{file_name}.json")))
+}
+
+fn is_epub(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"))
+}
+
+fn validate_annotation_set(value: &Value) -> Result<(), String> {
+    if value.get("type").and_then(Value::as_str) != Some("AnnotationSet")
+        || !value.get("items").is_some_and(Value::is_array)
+    {
+        return Err("The book annotation set has an unsupported format.".into());
+    }
+    Ok(())
+}
+
+fn read_epub_annotation_set(full: &Path) -> Result<Option<Value>, String> {
+    let bytes =
+        fs::read(full).map_err(|error| format!("Could not read {}: {error}", full.display()))?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| format!("This EPUB archive could not be read: {error}"))?;
+    let mut file = match archive.by_name(EPUB_ANNOTATIONS_PATH) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Could not locate embedded EPUB annotations: {error}"
+            ))
+        }
+    };
+    if file.size() as usize > MAX_ANNOTATION_SET_BYTES {
+        return Err("The EPUB annotation set is too large to read.".into());
+    }
+    let mut json = String::new();
+    file.read_to_string(&mut json)
+        .map_err(|error| format!("Could not read embedded EPUB annotations: {error}"))?;
+    let value: Value = serde_json::from_str(&json)
+        .map_err(|error| format!("The embedded EPUB annotation set is invalid: {error}"))?;
+    validate_annotation_set(&value)?;
+    Ok(Some(value))
+}
+
+fn write_epub_annotation_file(
+    full: &Path,
+    annotation_json: &[u8],
+    is_external: bool,
+) -> Result<(), String> {
+    let full = full
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve {}: {error}", full.display()))?;
+    let bytes =
+        fs::read(&full).map_err(|error| format!("Could not read {}: {error}", full.display()))?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.clone()))
+        .map_err(|error| format!("This EPUB archive could not be read: {error}"))?;
+    let mut output = Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut output);
+        for index in 0..archive.len() {
+            let file = archive.by_index(index).map_err(|error| error.to_string())?;
+            if file.name() == EPUB_ANNOTATIONS_PATH {
+                continue;
+            }
+            writer
+                .raw_copy_file(file)
+                .map_err(|error| error.to_string())?;
+        }
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer
+            .start_file(EPUB_ANNOTATIONS_PATH, options)
+            .map_err(|error| error.to_string())?;
+        writer
+            .write_all(annotation_json)
+            .map_err(|error| format!("Could not write EPUB annotations: {error}"))?;
+        writer.finish().map_err(|error| error.to_string())?;
+    }
+    let updated = output.into_inner();
+    match write_atomic(&full, &updated) {
+        Ok(()) => Ok(()),
+        Err(atomic_error) if is_external => {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .open(&full)
+                .map_err(|error| format!("Could not save external EPUB atomically ({atomic_error}) or open it for direct writing: {error}"))?;
+            let write_result = file
+                .set_len(0)
+                .and_then(|()| file.write_all(&updated))
+                .and_then(|()| file.sync_all());
+            if let Err(write_error) = write_result {
+                let restore_result = file
+                    .set_len(0)
+                    .and_then(|()| file.write_all(&bytes))
+                    .and_then(|()| file.sync_all());
+                return match restore_result {
+                    Ok(()) => Err(format!("Could not save external EPUB directly ({write_error}); the original book was restored. Atomic save error: {atomic_error}")),
+                    Err(restore_error) => Err(format!("Could not save external EPUB ({write_error}) or restore its original contents ({restore_error}). Atomic save error: {atomic_error}")),
+                };
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }?;
+    let expected: Value = serde_json::from_slice(annotation_json)
+        .map_err(|error| format!("Could not verify serialized EPUB annotations: {error}"))?;
+    match read_epub_annotation_set(&full)? {
+        Some(saved) if saved == expected => Ok(()),
+        Some(_) => Err(
+            "The EPUB was written, but its saved annotations did not match the requested set."
+                .into(),
+        ),
+        None => Err(
+            "The EPUB was written, but its embedded annotations could not be found afterward."
+                .into(),
+        ),
+    }
+}
+
+#[tauri::command(async)]
+pub fn read_book_annotation_set(
+    state: State<'_, AppState>,
+    path: String,
+    is_external: bool,
+) -> Result<Option<Value>, String> {
+    let full = if is_external {
+        PathBuf::from(path)
+    } else {
+        state.workspace.resolve_user_file(&path)?
+    };
+    if !full.is_file() {
+        return Err(format!("Book file not found: {}", full.display()));
+    }
+    if !is_epub(&full) {
+        let sidecar = book_sidecar_path(state.workspace.root(), &full)?;
+        if !sidecar.exists() {
+            return Ok(None);
+        }
+        let contents = fs::read(&sidecar)
+            .map_err(|error| format!("Could not read book annotations: {error}"))?;
+        if contents.len() > MAX_ANNOTATION_SET_BYTES {
+            return Err("The book annotation set is too large to read.".into());
+        }
+        let value: Value = serde_json::from_slice(&contents)
+            .map_err(|error| format!("The book annotation set is invalid: {error}"))?;
+        validate_annotation_set(&value)?;
+        return Ok(Some(value));
+    }
+    read_epub_annotation_set(&full)
+}
+
+#[tauri::command(async)]
+pub fn write_book_annotation_set(
+    state: State<'_, AppState>,
+    path: String,
+    is_external: bool,
+    annotation_set: Value,
+) -> Result<(), String> {
+    validate_annotation_set(&annotation_set)?;
+    let annotation_json = serde_json::to_vec_pretty(&annotation_set)
+        .map_err(|error| format!("Could not serialize book annotations: {error}"))?;
+    if annotation_json.len() > MAX_ANNOTATION_SET_BYTES {
+        return Err("The book annotation set is too large to save.".into());
+    }
+    let full = if is_external {
+        PathBuf::from(path)
+    } else {
+        state.workspace.resolve_user_file(&path)?
+    };
+    if !full.is_file() {
+        return Err(format!("Book file not found: {}", full.display()));
+    }
+    if !is_epub(&full) {
+        let sidecar = book_sidecar_path(state.workspace.root(), &full)?;
+        return write_atomic(&sidecar, &annotation_json);
+    }
+    write_epub_annotation_file(&full, &annotation_json, is_external)
+}
 
 /// Reference to an external file (not in workspace)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,8 +422,8 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_import_external_files() {
+    #[test]
+    fn test_import_external_files() {
         let temp_dir = TempDir::new().unwrap();
 
         // Create test files
@@ -242,7 +438,7 @@ mod tests {
             file2.to_string_lossy().into_owned(),
         ];
 
-        let result = import_external_files(paths).await;
+        let result = import_external_files(paths);
         assert!(result.is_ok());
 
         let refs = result.unwrap();
@@ -256,32 +452,89 @@ mod tests {
         assert_eq!(refs[1].extension, "txt");
     }
 
-    #[tokio::test]
-    async fn test_import_skips_non_existent() {
+    #[test]
+    fn test_import_skips_non_existent() {
         let result = import_external_files(vec![
             "/non/existent/file.pdf".to_string(),
             "/another/missing.txt".to_string(),
-        ])
-        .await;
+        ]);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_import_skips_directories() {
+    #[test]
+    fn test_import_skips_directories() {
         let temp_dir = TempDir::new().unwrap();
         let paths = vec![temp_dir.path().to_string_lossy().into_owned()];
 
-        let result = import_external_files(paths).await;
+        let result = import_external_files(paths);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_open_external_file_not_found() {
-        let result = open_external_file("/non/existent/file.pdf".to_string()).await;
+    #[test]
+    fn test_open_external_file_not_found() {
+        let result = open_external_file("/non/existent/file.pdf".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("File not found"));
+    }
+
+    #[test]
+    fn test_write_epub_annotations_preserves_book_and_embeds_set() {
+        let temp_dir = TempDir::new().unwrap();
+        let epub_path = temp_dir.path().join("book.epub");
+        {
+            let file = fs::File::create(&epub_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            writer
+                .start_file(
+                    "mimetype",
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Stored),
+                )
+                .unwrap();
+            writer.write_all(b"application/epub+zip").unwrap();
+            writer
+                .start_file(
+                    "OEBPS/chapter.xhtml",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer.write_all(b"<html>book content</html>").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let set = serde_json::json!({
+            "type": "AnnotationSet",
+            "items": [{
+                "id": "urn:uuid:test-annotation",
+                "target": {
+                    "source": "chapter.xhtml",
+                    "selector": [{ "type": "annotateStudio:CFISelector", "value": "epubcfi(/6/2[chapter]!/4/1:0)" }]
+                },
+                "body": { "value": "A saved passage", "highlight": "solid" }
+            }]
+        });
+        write_epub_annotation_file(&epub_path, &serde_json::to_vec(&set).unwrap(), false).unwrap();
+
+        let file = fs::File::open(&epub_path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        assert_eq!(archive.by_index(0).unwrap().name(), "mimetype");
+        let mut chapter = String::new();
+        archive
+            .by_name("OEBPS/chapter.xhtml")
+            .unwrap()
+            .read_to_string(&mut chapter)
+            .unwrap();
+        assert_eq!(chapter, "<html>book content</html>");
+        let mut embedded = String::new();
+        archive
+            .by_name(EPUB_ANNOTATIONS_PATH)
+            .unwrap()
+            .read_to_string(&mut embedded)
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&embedded).unwrap(), set);
+        assert_eq!(read_epub_annotation_set(&epub_path).unwrap(), Some(set));
     }
 }

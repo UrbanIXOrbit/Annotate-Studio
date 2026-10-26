@@ -91,6 +91,8 @@ pub fn run() {
             books::open_external_file,
             books::reveal_external_file,
             books::read_external_file_bytes,
+            books::read_book_annotation_set,
+            books::write_book_annotation_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Annotate Studio");

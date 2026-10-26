@@ -371,7 +371,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("annotate-same-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let a = dir.join("Physics.md");
-        let b = dir.join("physics.md");
+        // Case differs on case-sensitive filesystems only; APFS treats the two as one file,
+        // so distinctness is checked with a different name instead.
+        let b = dir.join("other.md");
         std::fs::write(&a, b"a").unwrap();
         std::fs::write(&b, b"b").unwrap();
         assert!(same_file(&a, &a));
