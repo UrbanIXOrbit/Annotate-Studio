@@ -5,11 +5,14 @@ import {
   BookOpen,
   Copy,
   FileText,
+  Film,
+  Headphones,
   Image as ImageIcon,
   Maximize2,
   Minimize2,
   Minus,
   NotebookPen,
+  Newspaper,
   Pencil,
   ScanSearch,
   StickyNote,
@@ -36,6 +39,9 @@ import BookWindow from './BookWindow';
 import NoteWindow from './NoteWindow';
 import ImageWindow from './ImageWindow';
 import CardWindow from './CardWindow';
+import AudiobookWindow from './AudiobookWindow';
+import VideoWindow from './VideoWindow';
+import ArticleWindow from './ArticleWindow';
 import AiActionsButton from './AiActionsButton';
 
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -47,6 +53,9 @@ const TYPE_ICONS = {
   image: <ImageIcon size={14} />,
   card: <StickyNote size={14} />,
   book: <BookOpen size={14} />,
+  audiobook: <Headphones size={14} />,
+  video: <Film size={14} />,
+  article: <Newspaper size={14} />,
 };
 
 function currentZoom(): number {
@@ -71,6 +80,9 @@ const WindowBody = memo(function WindowBody({
   selected: boolean;
 }) {
   if (type === 'card') return <CardWindow id={id} />;
+  if (type === 'audiobook') return <AudiobookWindow resourceId={id} />;
+  if (type === 'video') return <VideoWindow resourceId={id} />;
+  if (type === 'article') return <ArticleWindow resourceId={id} />;
   if (!filePath) {
     return <div className="cw-empty">This window has no file attached.</div>;
   }
@@ -316,7 +328,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
           {resource.title}
         </span>
         <div className="cw-actions" data-no-drag>
-          {resource.filePath && resource.type !== 'image' && (
+          {resource.filePath && resource.type !== 'image' && resource.type !== 'audiobook' && resource.type !== 'video' && (
             <AiActionsButton path={resource.filePath} title={resource.title} resourceId={resource.id} />
           )}
           {resource.type !== 'card' && (

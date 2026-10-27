@@ -66,6 +66,10 @@ npm run app:build
 
 The installer appears in `src-tauri/target/release/bundle/`.
 
+## Optional video conversion
+
+The canvas video player first uses the operating system's built-in WebView codecs. If a file is not supported, the app can convert it to H.264/AAC MP4 with FFmpeg. FFmpeg is **not bundled**, so it does not increase the installer size. To enable conversion, install FFmpeg on `PATH` or place an FFmpeg binary at `<Annotate Studio data directory>/tools/ffmpeg` (`ffmpeg.exe` on Windows). The data directory is `%LOCALAPPDATA%/annotate-studio` on Windows, `~/Library/Application Support/annotate-studio` on macOS, or `~/.local/share/annotate-studio` on Linux. The binary needs the input decoders and H.264/AAC encoders (`libx264` and `aac`). Converted files are saved under `documents/converted-videos`.
+
 ## Troubleshooting
 
 | You see | What it means | Fix |

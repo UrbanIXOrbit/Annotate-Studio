@@ -8,6 +8,7 @@ import {
   FileImage,
   FileText,
   FileType2,
+  Film,
   FolderOpen,
   Layers,
   MoreHorizontal,
@@ -39,7 +40,7 @@ import {
 } from '@/lib/workspace-actions';
 import { cn, formatBytes, formatRelativeTime, stripExtension } from '@/lib/utils';
 
-type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'books' | 'documents';
+type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'books' | 'videos' | 'documents';
 type Sort = 'recent' | 'modified' | 'name' | 'size';
 
 const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
@@ -48,6 +49,7 @@ const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
   { id: 'notes', label: 'Notes', types: ['Markdown', 'Text'] },
   { id: 'images', label: 'Images', types: ['Image'] },
   { id: 'books', label: 'Books', types: ['Book'] },
+  { id: 'videos', label: 'Videos', types: ['Video'] },
   { id: 'documents', label: 'Documents', types: ['Document'] },
 ];
 
@@ -57,6 +59,7 @@ const TYPE_META: Record<FileType, { label: string; icon: React.ReactNode; tone: 
   Text: { label: 'Text', icon: <FileType2 size={26} />, tone: 'tone-slate' },
   Image: { label: 'Image', icon: <FileImage size={26} />, tone: 'tone-green' },
   Book: { label: 'Book', icon: <BookOpen size={26} />, tone: 'tone-amber' },
+  Video: { label: 'Video', icon: <Film size={26} />, tone: 'tone-violet' },
   Document: { label: 'Doc', icon: <FileType2 size={26} />, tone: 'tone-violet' },
   Unknown: { label: 'File', icon: <FileText size={26} />, tone: 'tone-slate' },
 };

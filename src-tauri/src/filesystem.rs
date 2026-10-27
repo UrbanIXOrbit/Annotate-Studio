@@ -10,6 +10,7 @@ pub enum FileType {
     Text,
     Image,
     Book,
+    Video,
     Document,
     Unknown,
 }
@@ -22,6 +23,7 @@ impl FileType {
             "txt" | "text" => FileType::Text,
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" => FileType::Image,
             "epub" | "mobi" | "azw3" | "azw" | "fb2" | "cbz" => FileType::Book,
+            "mp4" | "m4v" | "mov" | "webm" | "ogv" | "ogg" | "avi" | "mkv" | "3gp" | "wmv" | "flv" | "mpeg" | "mpg" => FileType::Video,
             "docx" | "odt" => FileType::Document,
             _ => FileType::Unknown,
         }
@@ -113,6 +115,7 @@ mod tests {
         assert_eq!(FileType::from_extension("jpeg"), FileType::Image);
         assert_eq!(FileType::from_extension("docx"), FileType::Document);
         assert_eq!(FileType::from_extension("epub"), FileType::Book);
+        assert_eq!(FileType::from_extension("mkv"), FileType::Video);
         assert_eq!(FileType::from_extension("exe"), FileType::Unknown);
         assert_eq!(FileType::Markdown.default_dir(), NOTES_DIR);
         assert_eq!(FileType::Pdf.default_dir(), DOCUMENTS_DIR);

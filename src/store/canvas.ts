@@ -10,7 +10,22 @@ import { clamp, uid } from '@/lib/utils';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
-export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book';
+export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book' | 'audiobook' | 'video' | 'article';
+
+export interface ArticleHighlight {
+  id: string;
+  text: string;
+  prefix: string;
+  suffix: string;
+  color: string;
+  createdAt: string;
+}
+
+export interface AudioTrack {
+  path: string;
+  title: string;
+  mediaType: string;
+}
 
 export interface CardSource {
   filePath: string;
@@ -35,6 +50,9 @@ export interface Resource {
   title: string;
   filePath?: string;
   content?: string;
+  articleUrl?: string;
+  articleHighlights?: ArticleHighlight[];
+  tracks?: AudioTrack[];
   /** Cards only: where the quote came from, accent colour, and the reader's own comment. */
   source?: CardSource;
   color?: string;
@@ -82,6 +100,9 @@ export const DEFAULT_SIZES: Record<ResourceType, { width: number; height: number
   image: { width: 560, height: 440 },
   card: { width: 320, height: 200 },
   book: { width: 660, height: 840 },
+  audiobook: { width: 560, height: 360 },
+  video: { width: 720, height: 480 },
+  article: { width: 760, height: 880 },
 };
 
 const MIN_CARD_WIDTH = 240;
@@ -98,6 +119,9 @@ export interface OpenResourceInput {
   title: string;
   filePath?: string;
   content?: string;
+  articleUrl?: string;
+  articleHighlights?: ArticleHighlight[];
+  tracks?: AudioTrack[];
   width?: number;
   height?: number;
 }
@@ -225,7 +249,7 @@ export function toWorkspaceRelative(path: string): string {
 }
 
 function isResourceType(value: unknown): value is ResourceType {
-  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book';
+  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book' || value === 'audiobook' || value === 'video' || value === 'article';
 }
 
 function migrateResource(raw: unknown, index: number): Resource | null {
@@ -244,7 +268,34 @@ function migrateResource(raw: unknown, index: number): Resource | null {
   const baseW = wasFullscreen && previous ? previous.width : data.width ?? size.width;
   const baseH = wasFullscreen && previous ? previous.height : data.height ?? size.height;
   const filePath = typeof data.filePath === 'string' && data.filePath.trim() ? toWorkspaceRelative(data.filePath.trim()) : undefined;
-  const content = typeof data.content === 'string' ? data.content : undefined;
+  const rawArticle = data.article && typeof data.article === 'object' ? data.article as Record<string, unknown> : null;
+  const content = typeof data.content === 'string'
+    ? data.content
+    : typeof rawArticle?.content === 'string'
+      ? rawArticle.content
+      : typeof rawArticle?.html === 'string'
+        ? rawArticle.html
+        : undefined;
+  const savedArticleUrl = data.articleUrl ?? rawArticle?.url;
+  const articleUrl = typeof savedArticleUrl === 'string' && /^https?:\/\//i.test(savedArticleUrl) ? savedArticleUrl : undefined;
+  const rawHighlights = data.articleHighlights ?? rawArticle?.highlights;
+  const articleHighlights = Array.isArray(rawHighlights)
+    ? rawHighlights.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+        .filter((item) => typeof item.id === 'string' && typeof item.text === 'string')
+        .map((item) => ({
+          id: item.id as string,
+          text: item.text as string,
+          prefix: typeof item.prefix === 'string' ? item.prefix : '',
+          suffix: typeof item.suffix === 'string' ? item.suffix : '',
+          color: typeof item.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(item.color) ? item.color : '#ffe066',
+          createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date(0).toISOString(),
+        }))
+    : undefined;
+  const tracks = type === 'audiobook' && Array.isArray(data.tracks)
+    ? data.tracks.filter((track): track is Record<string, unknown> => !!track && typeof track === 'object')
+        .filter((track) => typeof track.path === 'string' && typeof track.title === 'string' && typeof track.mediaType === 'string')
+        .map((track) => ({ path: toWorkspaceRelative(track.path as string), title: track.title as string, mediaType: track.mediaType as string }))
+    : undefined;
   const rawSource = data.source && typeof data.source === 'object' ? (data.source as Record<string, unknown>) : null;
   const source: CardSource | undefined =
     type === 'card' && rawSource && typeof rawSource.filePath === 'string' && rawSource.filePath.trim()
@@ -261,9 +312,12 @@ function migrateResource(raw: unknown, index: number): Resource | null {
   return {
     id: typeof data.id === 'string' && data.id ? data.id : uid(),
     type,
-    title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Untitled',
+    title: typeof data.title === 'string' && data.title.trim() ? data.title : (typeof rawArticle?.title === 'string' && rawArticle.title.trim() ? rawArticle.title : 'Untitled'),
     filePath,
-    content: type === 'note' || type === 'card' ? content : undefined,
+    content: type === 'note' || type === 'card' || type === 'article' ? content : undefined,
+    articleUrl,
+    articleHighlights: type === 'article' ? articleHighlights : undefined,
+    tracks,
     source,
     color,
     note,
@@ -593,8 +647,11 @@ export const useCanvas = create<CanvasStore>((set, get) => {
 
     openResource: (input, options = {}) => {
       const resources = active().resources;
-      if (options.focusExisting !== false && input.filePath) {
-        const existing = resources.find((r) => r.filePath === input.filePath);
+      if (options.focusExisting !== false && (input.filePath || input.articleUrl)) {
+        const existing = resources.find(
+          (r) => (input.filePath !== undefined && r.filePath === input.filePath) ||
+            (input.type === 'article' && r.type === 'article' && r.articleUrl === input.articleUrl),
+        );
         if (existing) {
           get().focusResource(existing.id);
           return existing.id;
@@ -631,6 +688,9 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         title: input.title,
         filePath: input.filePath,
         content: input.content,
+        articleUrl: input.articleUrl,
+        articleHighlights: input.articleHighlights,
+        tracks: input.tracks,
         ...position,
         ...size,
         z: topZ(resources) + 1,

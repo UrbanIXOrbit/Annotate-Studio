@@ -1,7 +1,7 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Book' | 'Document' | 'Unknown';
+export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Book' | 'Video' | 'Document' | 'Unknown';
 
 export interface StudyFile {
   id: string;
@@ -162,6 +162,11 @@ export async function writeFileBytes(target: WriteTarget, data: Uint8Array | Arr
 }
 
 export const getDataDir = () => call<string>('get_data_dir');
+export interface FetchedWebPage {
+  url: string;
+  html: string;
+}
+export const fetchWebPage = (url: string) => call<FetchedWebPage>('fetch_web_page', { url });
 export const loadCanvasState = () => call<unknown>('load_canvas_state');
 export const saveCanvasState = (canvas: unknown) => call<void>('save_canvas_state', { canvas });
 export const loadSettings = () => call<unknown>('load_settings');
@@ -278,6 +283,18 @@ export const revealExternalFile = (path: string) => call<void>('reveal_external_
 export async function readExternalFileBytes(path: string): Promise<Uint8Array> {
   return toBytes(await call<unknown>('read_external_file_bytes', { path }));
 }
+
+export const allowVideoAsset = (path: string, isExternal: boolean) => call<string>('allow_video_asset', { path, isExternal });
+export interface VideoPlayerInfo {
+  id: string;
+  name: string;
+}
+export const listVideoPlayers = () => call<VideoPlayerInfo[]>('list_video_players');
+export const openVideoWithPlayer = (path: string, isExternal: boolean, playerId: string) =>
+  call<void>('open_video_with_player', { path, isExternal, playerId });
+export const isFfmpegAvailable = () => call<boolean>('is_ffmpeg_available');
+export const convertVideoForPlayback = (path: string, isExternal: boolean) =>
+  call<StudyFile>('convert_video_for_playback', { path, isExternal });
 
 export const readBookAnnotationSet = (path: string, isExternal: boolean) =>
   call<unknown>('read_book_annotation_set', { path, isExternal });

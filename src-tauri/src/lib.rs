@@ -9,7 +9,7 @@ pub mod state;
 pub mod storage;
 pub mod text;
 
-use commands::{ai, backup, books, data, files, flashcards};
+use commands::{ai, backup, books, data, files, flashcards, video, web_articles};
 use paths::Workspace;
 use state::AppState;
 use tauri::Manager;
@@ -93,6 +93,13 @@ pub fn run() {
             books::read_external_file_bytes,
             books::read_book_annotation_set,
             books::write_book_annotation_set,
+            video::allow_video_asset,
+            video::open_video_in_system_player,
+            video::list_video_players,
+            video::open_video_with_player,
+            video::is_ffmpeg_available,
+            video::convert_video_for_playback,
+            web_articles::fetch_web_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Annotate Studio");

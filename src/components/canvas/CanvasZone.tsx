@@ -5,13 +5,16 @@ import {
   Bot,
   Columns3,
   FilePlus2,
+  Film,
   Grid2x2,
+  Headphones,
   ImagePlus,
   LayoutDashboard,
   Lock,
   Maximize,
   Minus,
   NotebookPen,
+  Newspaper,
   Plus,
   Redo2,
   Rows3,
@@ -24,13 +27,14 @@ import Popover from '@/components/ui/Popover';
 import { MenuList } from '@/components/ui/ContextMenu';
 import { useActiveWorkspace, useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
-import { createNewNote, pickAndImport } from '@/lib/workspace-actions';
+import { addWebArticle, createNewNote, pickAndImport } from '@/lib/workspace-actions';
 import { cn } from '@/lib/utils';
 
 function ArrangeMenu({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const canvas = useCanvas.getState;
+
   return (
     <>
       <button
@@ -73,7 +77,6 @@ function CanvasToolbar() {
   const zoom = workspace.view.zoom;
   const hasWindows = workspace.resources.some((r) => !r.minimized);
   const canvas = useCanvas.getState;
-
   return (
     <div className="canvas-toolbar">
       <WorkspaceSwitcher />
@@ -89,6 +92,18 @@ function CanvasToolbar() {
       <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('image')} title="Import image">
         <ImagePlus size={14} />
         <span className="toolbar-label">Image</span>
+      </button>
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('audiobook')} title="Add audiobook">
+        <Headphones size={14} />
+        <span className="toolbar-label">Audio</span>
+      </button>
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('video')} title="Add video">
+        <Film size={14} />
+        <span className="toolbar-label">Video</span>
+      </button>
+      <button type="button" className="toolbar-btn" onClick={() => void addWebArticle()} title="Add web article">
+        <Newspaper size={14} />
+        <span className="toolbar-label">Article</span>
       </button>
       <div className="toolbar-divider" />
       <ArrangeMenu disabled={!hasWindows} />

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { BookOpen, FileText, Image as ImageIcon, NotebookPen, StickyNote, X } from 'lucide-react';
+import { BookOpen, FileText, Film, Headphones, Image as ImageIcon, Newspaper, NotebookPen, StickyNote, X } from 'lucide-react';
 import { useActiveWorkspace, useCanvas } from '@/store/canvas';
 
 const ICONS = {
@@ -10,6 +10,9 @@ const ICONS = {
   image: <ImageIcon size={13} />,
   card: <StickyNote size={13} />,
   book: <BookOpen size={13} />,
+  audiobook: <Headphones size={13} />,
+  video: <Film size={13} />,
+  article: <Newspaper size={13} />,
 };
 
 export default function MinimizedDock() {

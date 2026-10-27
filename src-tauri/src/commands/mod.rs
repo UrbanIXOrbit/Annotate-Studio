@@ -3,4 +3,6 @@ pub mod backup;
 pub mod books;
 pub mod data;
 pub mod files;
+pub mod video;
+pub mod web_articles;
 pub mod flashcards;

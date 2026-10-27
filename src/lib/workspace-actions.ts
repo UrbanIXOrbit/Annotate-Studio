@@ -15,8 +15,8 @@ import { extractPdfText, type ExtractedPdfText } from './pdf-engine';
 import { BOOK_EXTENSIONS, extractBookText } from './book-engine';
 import { baseName, extensionOf, stripExtension } from './utils';
 import { useApp } from '@/store/app';
-import { useCanvas, type OpenOptions, type ResourceType } from '@/store/canvas';
-import { confirmDialog } from '@/store/dialogs';
+import { useCanvas, type AudioTrack, type OpenOptions, type ResourceType } from '@/store/canvas';
+import { confirmDialog, promptDialog } from '@/store/dialogs';
 import { resolveWikiLink, useLibrary } from '@/store/library';
 import { useNotes } from '@/store/notes';
 import { useSettings } from '@/store/settings';
@@ -26,6 +26,14 @@ export { BOOK_EXTENSIONS };
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'];
 export const NOTE_EXTENSIONS = ['md', 'markdown', 'mdx', 'txt', 'text'];
 export const DOCUMENT_EXTENSIONS = ['docx', 'odt'];
+export const AUDIO_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'm4b', 'aac', 'wav', 'ogg', 'opus', 'flac', 'webm', 'aiff', 'aif'];
+export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg', 'avi', 'mkv', '3gp', 'wmv', 'flv', 'mpeg', 'mpg'];
+
+const AUDIO_MEDIA_TYPES: Record<string, string> = {
+  mp3: 'audio/mpeg', mp4: 'audio/mp4', m4a: 'audio/mp4', m4b: 'audio/mp4', aac: 'audio/aac',
+  wav: 'audio/wav', ogg: 'audio/ogg', opus: 'audio/ogg; codecs=opus', flac: 'audio/flac',
+  webm: 'audio/webm', aiff: 'audio/aiff', aif: 'audio/aiff',
+};
 
 export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): ResourceType | null {
   switch (file.file_type) {
@@ -44,6 +52,7 @@ export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): Re
       if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
       if (NOTE_EXTENSIONS.includes(ext)) return 'note';
       if (BOOK_EXTENSIONS.includes(ext)) return 'book';
+      if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
       return null;
     }
   }
@@ -64,6 +73,30 @@ export function openFileOnCanvas(file: StudyFile, options: OpenOptions = {}): st
   return id;
 }
 
+export async function addWebArticle(at?: { x: number; y: number }): Promise<string | null> {
+  const url = await promptDialog({
+    title: 'Add web article',
+    label: 'Article URL',
+    placeholder: 'https://example.com/article',
+    confirmLabel: 'Open article',
+    validate: (value) => {
+      try {
+        const parsed = new URL(value.trim());
+        return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? null : 'Enter an HTTP or HTTPS web address.';
+      } catch {
+        return 'Enter a valid web address.';
+      }
+    },
+  });
+  if (!url?.trim()) return null;
+  const parsed = new URL(url.trim());
+  const id = useCanvas.getState().openResource(
+    { type: 'article', title: parsed.hostname, articleUrl: parsed.href },
+    { at, focusExisting: true },
+  );
+  return id;
+}
+
 function openImported(files: StudyFile[], at?: { x: number; y: number }) {
   files.forEach((file, index) => {
     const offset = index * 40;
@@ -78,7 +111,7 @@ export async function importPaths(paths: string[], at?: { x: number; y: number }
     files.forEach((file) => useLibrary.getState().upsert(file));
     openImported(files.filter((file) => resourceTypeFor(file)), at);
     const skipped = paths.length - files.length;
-    if (skipped > 0) toast.warning(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`, 'Only PDFs, e-books, images and text notes are supported.');
+    if (skipped > 0) toast.warning(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`, 'Only PDFs, e-books, images, videos and text notes are supported.');
     return files;
   } catch (error) {
     toast.error('Import failed', error);
@@ -110,7 +143,7 @@ export async function importBrowserFiles(files: File[], at?: { x: number; y: num
   return imported;
 }
 
-export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'any', at?: { x: number; y: number }) {
+export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'audiobook' | 'video' | 'any', at?: { x: number; y: number }) {
   if (!isTauri()) {
     toast.warning('Importing files requires the desktop app');
     return;
@@ -123,10 +156,35 @@ export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'any', at?:
         ? [{ name: 'Images', extensions: IMAGE_EXTENSIONS }]
         : kind === 'note'
           ? [{ name: 'Notes', extensions: NOTE_EXTENSIONS }]
-          : [{ name: 'Study files', extensions: ['pdf', ...BOOK_EXTENSIONS, ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS] }];
+          : kind === 'audiobook'
+            ? [{ name: 'Audio files', extensions: AUDIO_EXTENSIONS }]
+            : kind === 'video'
+              ? [{ name: 'Video files', extensions: VIDEO_EXTENSIONS }]
+            : [{ name: 'Study files', extensions: ['pdf', ...BOOK_EXTENSIONS, ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS, ...VIDEO_EXTENSIONS] }];
   const selection = await open({ multiple: true, filters });
   if (!selection) return;
   const paths = Array.isArray(selection) ? selection : [selection];
+  if (kind === 'audiobook') {
+    const tracks: AudioTrack[] = paths.map((path) => {
+      const title = path.split(/[\\/]/).pop() || 'Audio track';
+      const ext = extensionOf(title);
+      return { path, title, mediaType: AUDIO_MEDIA_TYPES[ext] ?? 'application/octet-stream' };
+    });
+    if (tracks.length > 0) {
+      useCanvas.getState().openResource(
+        { type: 'audiobook', title: tracks.length === 1 ? tracks[0].title : stripExtension(tracks[0].title), filePath: tracks[0].path, tracks },
+        { at, isExternal: true, focusExisting: false },
+      );
+    }
+    return;
+  }
+  if (kind === 'video') {
+    for (const path of paths) {
+      const title = path.split(/[\\/]/).pop() || 'Video';
+      useCanvas.getState().openResource({ type: 'video', title, filePath: path }, { at, isExternal: true, focusExisting: false });
+    }
+    return;
+  }
   await importPaths(paths, at);
 }
 

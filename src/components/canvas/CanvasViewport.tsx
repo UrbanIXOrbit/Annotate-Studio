@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FilePlus2, ImagePlus, LayoutGrid, Lock, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
+import { FilePlus2, Film, Headphones, ImagePlus, LayoutGrid, Lock, Newspaper, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
 import CanvasWindow from './CanvasWindow';
 import ConnectorLayer from './ConnectorLayer';
 import GroupLayer from './GroupLayer';
@@ -16,7 +16,7 @@ import { toast } from '@/store/toast';
 import { useConnectUi } from '@/store/connect';
 import { webviewZoomFactor } from '@/store/settings';
 import { isTauri } from '@/lib/tauri-commands';
-import { createNewNote, importBrowserFiles, importPaths, pickAndImport } from '@/lib/workspace-actions';
+import { addWebArticle, createNewNote, importBrowserFiles, importPaths, pickAndImport } from '@/lib/workspace-actions';
 import { cn, isEditableTarget, isModalOpen } from '@/lib/utils';
 import { dispatchWindowKey, isContentWindow, setContentWindow } from '@/lib/window-keys';
 import { closeSelectedCards, groupSelection, nudgeSelection, ungroupSelection } from '@/lib/group-actions';
@@ -371,6 +371,9 @@ export default function CanvasViewport() {
       },
       { label: 'Import PDF…', icon: <FilePlus2 size={13} />, onSelect: () => void pickAndImport('pdf', world) },
       { label: 'Import image…', icon: <ImagePlus size={13} />, onSelect: () => void pickAndImport('image', world) },
+      { label: 'Add audiobook…', icon: <Headphones size={13} />, onSelect: () => void pickAndImport('audiobook', world) },
+      { label: 'Add video…', icon: <Film size={13} />, onSelect: () => void pickAndImport('video', world) },
+      { label: 'Add web article…', icon: <Newspaper size={13} />, onSelect: () => void addWebArticle(world) },
       'separator',
       { label: 'Select all cards', shortcut: 'Ctrl+A', onSelect: () => state.selectAllCards() },
       {
@@ -453,7 +456,7 @@ export default function CanvasViewport() {
         <div className="canvas-empty">
           <LayoutGrid size={40} strokeWidth={1.4} />
           <h2>Your study canvas</h2>
-          <p>Bring your PDFs, notes and images together and arrange them freely.</p>
+          <p>Bring your PDFs, notes and media together and arrange them freely.</p>
           <div className="canvas-empty-actions">
             <button type="button" className="btn btn-primary" onClick={() => void pickAndImport('pdf')}>
               <FilePlus2 size={15} /> Import PDF
@@ -463,6 +466,15 @@ export default function CanvasViewport() {
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void pickAndImport('image')}>
               <ImagePlus size={15} /> Image
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => void pickAndImport('audiobook')}>
+              <Headphones size={15} /> Audiobook
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => void pickAndImport('video')}>
+              <Film size={15} /> Video
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => void addWebArticle()}>
+              <Newspaper size={15} /> Web article
             </button>
           </div>
           <ul className="canvas-hints">
