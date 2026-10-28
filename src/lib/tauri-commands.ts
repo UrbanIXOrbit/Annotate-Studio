@@ -162,6 +162,16 @@ export async function writeFileBytes(target: WriteTarget, data: Uint8Array | Arr
 }
 
 export const getDataDir = () => call<string>('get_data_dir');
+export interface SavedExternalRecording {
+  path: string;
+  name: string;
+}
+export const startAudioRecording = (directory: string, name: string) =>
+  call<string>('start_audio_recording', { directory, name });
+export const setAudioRecordingPaused = (paused: boolean) =>
+  call<void>('set_audio_recording_paused', { paused });
+export const stopAudioRecording = (saveAs?: string) =>
+  call<SavedExternalRecording>('stop_audio_recording', { saveAs: saveAs || null });
 export interface FetchedWebPage {
   url: string;
   html: string;

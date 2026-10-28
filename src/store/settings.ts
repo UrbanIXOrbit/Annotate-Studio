@@ -46,6 +46,8 @@ export interface PersistedSettings {
   chatLayout: ChatLayout;
   recentFiles: Record<string, number>;
   noteClip: NoteClipSettings;
+  /** User-selected folder where microphone recordings are stored outside the app workspace. */
+  recordingFolder: string;
 }
 
 export const DEFAULT_SETTINGS: PersistedSettings = {
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   chatLayout: { dockedHeight: 320, detached: false, x: 120, y: 90, width: 420, height: 560 },
   recentFiles: {},
   noteClip: { lastNote: '', highlight: true },
+  recordingFolder: '',
 };
 
 interface SettingsStore extends PersistedSettings {
@@ -174,6 +177,7 @@ function sanitize(raw: unknown): PersistedSettings {
       lastNote: typeof clipRaw.lastNote === 'string' ? clipRaw.lastNote.slice(0, 1000) : defaults.noteClip.lastNote,
       highlight: bool(clipRaw.highlight, defaults.noteClip.highlight),
     },
+    recordingFolder: typeof data.recordingFolder === 'string' ? data.recordingFolder.slice(0, 4000) : defaults.recordingFolder,
   };
 }
 
@@ -189,6 +193,7 @@ function snapshot(state: SettingsStore): PersistedSettings {
     chatLayout: state.chatLayout,
     recentFiles: state.recentFiles,
     noteClip: state.noteClip,
+    recordingFolder: state.recordingFolder,
   };
 }
 

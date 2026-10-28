@@ -9,6 +9,7 @@ import {
   Headphones,
   Image as ImageIcon,
   Maximize2,
+  Mic,
   Minimize2,
   Minus,
   NotebookPen,
@@ -42,6 +43,7 @@ import CardWindow from './CardWindow';
 import AudiobookWindow from './AudiobookWindow';
 import VideoWindow from './VideoWindow';
 import ArticleWindow from './ArticleWindow';
+import RecorderWindow from './RecorderWindow';
 import AiActionsButton from './AiActionsButton';
 
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -56,6 +58,7 @@ const TYPE_ICONS = {
   audiobook: <Headphones size={14} />,
   video: <Film size={14} />,
   article: <Newspaper size={14} />,
+  recorder: <Mic size={14} />,
 };
 
 function currentZoom(): number {
@@ -83,6 +86,7 @@ const WindowBody = memo(function WindowBody({
   if (type === 'audiobook') return <AudiobookWindow resourceId={id} />;
   if (type === 'video') return <VideoWindow resourceId={id} />;
   if (type === 'article') return <ArticleWindow resourceId={id} />;
+  if (type === 'recorder') return <RecorderWindow resourceId={id} />;
   if (!filePath) {
     return <div className="cw-empty">This window has no file attached.</div>;
   }

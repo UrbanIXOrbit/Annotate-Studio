@@ -6,3 +6,4 @@ pub mod files;
 pub mod video;
 pub mod web_articles;
 pub mod flashcards;
+pub mod recordings;

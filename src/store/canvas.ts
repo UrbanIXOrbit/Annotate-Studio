@@ -10,7 +10,7 @@ import { clamp, uid } from '@/lib/utils';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
-export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book' | 'audiobook' | 'video' | 'article';
+export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book' | 'audiobook' | 'video' | 'article' | 'recorder';
 
 export interface ArticleHighlight {
   id: string;
@@ -103,6 +103,7 @@ export const DEFAULT_SIZES: Record<ResourceType, { width: number; height: number
   audiobook: { width: 560, height: 360 },
   video: { width: 720, height: 480 },
   article: { width: 760, height: 880 },
+  recorder: { width: 560, height: 360 },
 };
 
 const MIN_CARD_WIDTH = 240;
@@ -249,7 +250,7 @@ export function toWorkspaceRelative(path: string): string {
 }
 
 function isResourceType(value: unknown): value is ResourceType {
-  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book' || value === 'audiobook' || value === 'video' || value === 'article';
+  return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book' || value === 'audiobook' || value === 'video' || value === 'article' || value === 'recorder';
 }
 
 function migrateResource(raw: unknown, index: number): Resource | null {

@@ -9,7 +9,7 @@ pub mod state;
 pub mod storage;
 pub mod text;
 
-use commands::{ai, backup, books, data, files, flashcards, video, web_articles};
+use commands::{ai, backup, books, data, files, flashcards, recordings, video, web_articles};
 use paths::Workspace;
 use state::AppState;
 use tauri::Manager;
@@ -37,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(app_state)
+        .manage(recordings::AudioRecorderState::default())
         .invoke_handler(tauri::generate_handler![
             files::list_workspace_files,
             files::stat_workspace_file,
@@ -100,6 +101,9 @@ pub fn run() {
             video::is_ffmpeg_available,
             video::convert_video_for_playback,
             web_articles::fetch_web_page,
+            recordings::start_audio_recording,
+            recordings::set_audio_recording_paused,
+            recordings::stop_audio_recording,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Annotate Studio");

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FilePlus2, Film, Headphones, ImagePlus, LayoutGrid, Lock, Newspaper, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
+import { FilePlus2, Film, Headphones, ImagePlus, LayoutGrid, Lock, Mic, Newspaper, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
 import CanvasWindow from './CanvasWindow';
 import ConnectorLayer from './ConnectorLayer';
 import GroupLayer from './GroupLayer';
@@ -372,6 +372,7 @@ export default function CanvasViewport() {
       { label: 'Import PDF…', icon: <FilePlus2 size={13} />, onSelect: () => void pickAndImport('pdf', world) },
       { label: 'Import image…', icon: <ImagePlus size={13} />, onSelect: () => void pickAndImport('image', world) },
       { label: 'Add audiobook…', icon: <Headphones size={13} />, onSelect: () => void pickAndImport('audiobook', world) },
+      { label: 'Record audio…', icon: <Mic size={13} />, onSelect: () => state.openResource({ type: 'recorder', title: 'New recording' }, { at: world }) },
       { label: 'Add video…', icon: <Film size={13} />, onSelect: () => void pickAndImport('video', world) },
       { label: 'Add web article…', icon: <Newspaper size={13} />, onSelect: () => void addWebArticle(world) },
       'separator',
@@ -469,6 +470,9 @@ export default function CanvasViewport() {
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void pickAndImport('audiobook')}>
               <Headphones size={15} /> Audiobook
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => useCanvas.getState().openResource({ type: 'recorder', title: 'New recording' })}>
+              <Mic size={15} /> Record audio
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void pickAndImport('video')}>
               <Film size={15} /> Video

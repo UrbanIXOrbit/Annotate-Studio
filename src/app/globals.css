@@ -2082,6 +2082,153 @@ input[type='checkbox'] {
   font-size: 10px;
 }
 
+.recorder-window {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg-card);
+}
+
+.recorder-heading,
+.recorder-status-row,
+.recorder-folder,
+.recorder-folder-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.recorder-heading {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.recorder-name-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recorder-name-label input {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.recorder-name-label input:focus {
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+
+.recorder-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 78px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.recorder-wave span {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: height 0.16s ease;
+}
+
+.recorder-wave.is-recording span {
+  background: var(--primary);
+  animation: recorder-wave 0.8s ease-in-out infinite alternate;
+}
+
+.recorder-wave.is-recording span:nth-child(3n) { animation-delay: -0.45s; }
+.recorder-wave.is-recording span:nth-child(4n) { animation-delay: -0.2s; }
+.recorder-wave.is-recording span:nth-child(5n) { animation-delay: -0.65s; }
+
+@keyframes recorder-wave {
+  from { height: 6px; }
+  to { height: 58px; }
+}
+
+.recorder-status-row {
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.recorder-live {
+  color: var(--danger);
+}
+
+.recorder-live::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  content: '';
+}
+
+.recorder-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recorder-folder {
+  min-width: 0;
+  padding-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recorder-folder span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recorder-folder button {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.recorder-folder-note {
+  color: var(--success);
+  font-size: 11px;
+}
+
+.recorder-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .video-window {
   display: flex;
   flex: 1;

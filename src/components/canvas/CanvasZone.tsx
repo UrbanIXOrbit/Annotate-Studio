@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Lock,
   Maximize,
+  Mic,
   Minus,
   NotebookPen,
   Newspaper,
@@ -96,6 +97,10 @@ function CanvasToolbar() {
       <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('audiobook')} title="Add audiobook">
         <Headphones size={14} />
         <span className="toolbar-label">Audio</span>
+      </button>
+      <button type="button" className="toolbar-btn" onClick={() => useCanvas.getState().openResource({ type: 'recorder', title: 'New recording' })} title="Record audio">
+        <Mic size={14} />
+        <span className="toolbar-label">Record</span>
       </button>
       <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('video')} title="Add video">
         <Film size={14} />
