@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FilePlus2, Film, Headphones, ImagePlus, LayoutGrid, Lock, Mic, Newspaper, NotebookPen, StickyNote, Unlock, Upload } from 'lucide-react';
+import { FilePlus2, Film, Headphones, ImagePlus, LayoutGrid, Lock, Mic, Newspaper, NotebookPen, Sparkles, StickyNote, Unlock, Upload } from 'lucide-react';
 import CanvasWindow from './CanvasWindow';
 import ConnectorLayer from './ConnectorLayer';
 import GroupLayer from './GroupLayer';
+import AlignmentGuides from './AlignmentGuides';
 import SelectionToolbar from './SelectionToolbar';
 import CardsNoteHost from './CardsNoteHost';
 import Minimap from './Minimap';
@@ -17,12 +18,13 @@ import { useConnectUi } from '@/store/connect';
 import { webviewZoomFactor } from '@/store/settings';
 import { isTauri } from '@/lib/tauri-commands';
 import { addWebArticle, createNewNote, importBrowserFiles, importPaths, pickAndImport } from '@/lib/workspace-actions';
+import { LAYOUT } from '@/lib/layout';
 import { cn, isEditableTarget, isModalOpen } from '@/lib/utils';
 import { dispatchWindowKey, isContentWindow, setContentWindow } from '@/lib/window-keys';
-import { closeSelectedCards, groupSelection, nudgeSelection, ungroupSelection } from '@/lib/group-actions';
+import { closeSelectedCards, groupSelection, nudgeSelection, tidyWorkspace, ungroupSelection } from '@/lib/group-actions';
 
 function gridStep(zoom: number): number {
-  let step = 24 * zoom;
+  let step = LAYOUT.gap * zoom;
   while (step < 12) step *= 4;
   return step;
 }
@@ -207,6 +209,8 @@ export default function CanvasViewport() {
       } else if (mod && !event.altKey && key === 'g') {
         if (event.shiftKey) ungroupSelection();
         else groupSelection();
+      } else if (mod && !event.altKey && key === 'l') {
+        tidyWorkspace();
       } else if ((key === 'delete' || key === 'backspace') && !mod && state.selectedIds.length > 0) {
         closeSelectedCards();
       } else if (!mod && !event.altKey && state.selectedIds.length > 0 && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
@@ -359,6 +363,8 @@ export default function CanvasViewport() {
     if (!isBackground(event.target)) return;
     const world = clientToWorld(event.clientX, event.clientY);
     const state = useCanvas.getState();
+    const byId = new Map(activeWorkspace(state).resources.map((r) => [r.id, r]));
+    const selectedCards = state.selectedIds.filter((id) => byId.get(id)?.type === 'card');
     openContextMenu(event, [
       { label: 'New note here', icon: <NotebookPen size={13} />, shortcut: 'Double-click', onSelect: () => void createNewNote({ at: world }) },
       {
@@ -377,15 +383,35 @@ export default function CanvasViewport() {
       { label: 'Add web article…', icon: <Newspaper size={13} />, onSelect: () => void addWebArticle(world) },
       'separator',
       { label: 'Select all cards', shortcut: 'Ctrl+A', onSelect: () => state.selectAllCards() },
+      { label: 'Tidy workspace', icon: <Sparkles size={13} />, shortcut: 'Ctrl+Shift+L', onSelect: () => tidyWorkspace() },
+      ...(selectedCards.length > 0
+        ? [
+            {
+              label: `Group ${selectedCards.length} selected card${selectedCards.length === 1 ? '' : 's'} by book`,
+              onSelect: () => {
+                const made = state.groupBy('book', selectedCards);
+                toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per book` : 'No two selected cards share a book yet');
+              },
+            },
+            {
+              label: `Group ${selectedCards.length} selected card${selectedCards.length === 1 ? '' : 's'} by colour`,
+              onSelect: () => {
+                const made = state.groupBy('colour', selectedCards);
+                toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per colour` : 'No two selected cards share a colour yet');
+              },
+            },
+            'separator' as const,
+          ]
+        : []),
       {
-        label: 'Group cards by book',
+        label: 'Group all cards by book',
         onSelect: () => {
           const made = state.groupBy('book');
           toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per book` : 'No two cards share a book yet');
         },
       },
       {
-        label: 'Group cards by colour',
+        label: 'Group all cards by colour',
         onSelect: () => {
           const made = state.groupBy('colour');
           toast.info(made > 0 ? `Made ${made} group${made === 1 ? '' : 's'}, one per colour` : 'No two cards share a colour yet');
@@ -451,6 +477,7 @@ export default function CanvasViewport() {
           .map((resource) => (
             <CanvasWindow key={resource.id} resource={resource} />
           ))}
+        <AlignmentGuides />
       </div>
 
       {hydrated && visible.length === 0 && (

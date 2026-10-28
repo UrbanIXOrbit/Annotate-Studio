@@ -7,6 +7,7 @@ import { bookLabel } from '@/lib/note-clip';
 import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
 import { mergeBookView, migrateBookViews, pruneBookViews, removeBookView, renameBookView, type BookViewState } from '@/lib/book-view';
 import { clamp, uid } from '@/lib/utils';
+import { LAYOUT } from '@/lib/layout';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
@@ -447,7 +448,7 @@ function placeWindow(
   view: Rect,
 ): { x: number; y: number } {
   const visible = resources.filter((r) => !r.minimized);
-  const gap = 24;
+  const gap = LAYOUT.gap;
   const free = (x: number, y: number) =>
     !visible.some((r) => intersects(r, { x: x - gap / 2, y: y - gap / 2, width: size.width + gap, height: size.height + gap }));
   const inView = (x: number, y: number) =>
@@ -467,11 +468,43 @@ function placeWindow(
   if (best) return best;
   let x = Math.round(center.x - size.width / 2);
   let y = Math.round(center.y - size.height / 2);
-  for (let attempt = 0; attempt < 12 && visible.some((r) => Math.abs(r.x - x) < 24 && Math.abs(r.y - y) < 24); attempt += 1) {
-    x += 36;
-    y += 36;
+  for (let attempt = 0; attempt < 12 && visible.some((r) => Math.abs(r.x - x) < LAYOUT.gap && Math.abs(r.y - y) < LAYOUT.gap); attempt += 1) {
+    x += LAYOUT.unit;
+    y += LAYOUT.unit;
   }
   return { x, y };
+}
+
+/** Lands a new window in the cascade column beside `anchor`: it stacks below
+ * what is already there, wraps to a fresh column once that slot is full, and
+ * nudges itself out of any overlap. Reused for every window type so opening a
+ * run of items keeps them in tidy columns instead of scattering. */
+function placeBesideAnchor(
+  resources: Resource[],
+  anchor: Resource,
+  size: { width: number; height: number },
+): { x: number; y: number } {
+  const gap = LAYOUT.gap;
+  const live = resources.filter((r) => !r.minimized);
+  const inSlot = (x: number) =>
+    live.filter((r) => r.id !== anchor.id && !r.maximized && Math.abs(r.x - x) < gap);
+  let x = anchor.x + anchor.width + LAYOUT.columnGap;
+  let members = inSlot(x);
+  let attempts = 0;
+  while (members.length >= LAYOUT.maxColumn && attempts < 20) {
+    x = Math.max(...members.map((r) => r.x + r.width)) + LAYOUT.columnGap;
+    members = inSlot(x);
+    attempts += 1;
+  }
+  const y = members.length === 0 ? anchor.y : Math.max(...members.map((member) => member.y + member.height)) + gap;
+  // Nudge downwards out of overlapping windows, like card placement does.
+  let top = y;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const blocker = live.find((r) => !r.maximized && intersects(r, { x: x - gap / 2, y: top - gap / 2, width: size.width + gap, height: size.height + gap }));
+    if (!blocker || blocker.id === anchor.id) break;
+    top = blocker.y + blocker.height + gap;
+  }
+  return { x: Math.round(x), y: Math.round(top) };
 }
 
 const saver = createSaver<{
@@ -668,7 +701,11 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         height: Math.max(MIN_WINDOW_HEIGHT, Math.round(input.height ?? Math.min(defaults.height, visible.height - margin * 2))),
       };
       let center = options.center ?? screenToWorld(view, { x: viewport.width / 2, y: viewport.height / 2 });
-      const anchor = options.near ? resources.find((r) => r.id === options.near) : undefined;
+      // Cascade from what the user is working with: an explicitly requested
+      // anchor, else the last-touched selection, so new windows open beside the
+      // context instead of dropping into the middle of the view.
+      const anchorId = options.near ?? get().selectedId ?? get().selectedIds.at(-1) ?? null;
+      const anchor = anchorId ? resources.find((r) => r.id === anchorId && !r.maximized) ?? undefined : undefined;
       if (anchor && !options.center) {
         center = { x: anchor.x + anchor.width + 32 + size.width / 2, y: anchor.y + size.height / 2 };
       }
@@ -676,7 +713,9 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         ? { x: Math.round(options.at.x), y: Math.round(options.at.y) }
         : options.center
           ? { x: Math.round(center.x - size.width / 2), y: Math.round(center.y - size.height / 2) }
-          : placeWindow(resources, center, size, visible);
+          : anchor
+            ? placeBesideAnchor(resources, anchor, size)
+            : placeWindow(resources, center, size, visible);
       const keep = 140 / view.zoom;
       const position = {
         x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),

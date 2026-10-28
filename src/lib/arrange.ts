@@ -20,6 +20,7 @@ export type Order = 'position' | 'page' | 'color' | 'title' | 'selection';
 export type Spacing = 'tight' | 'normal' | 'roomy';
 export type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 
+/** Spacing presets for the arrange panel, multiples of the shared rhythm. */
 export const GAPS: Record<Spacing, number> = { tight: 16, normal: 36, roomy: 72 };
 const FLOW_WIDTH = 1500;
 

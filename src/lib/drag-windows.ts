@@ -1,8 +1,10 @@
-import { activeWorkspace, useCanvas } from '@/store/canvas';
+import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
 import { setLiveRect } from '@/lib/live-rects';
+import { planDragDelta, snapToUnit } from '@/lib/layout';
+import { useAlignmentGuides } from '@/store/guides';
 
 export function snapValue(value: number, enabled: boolean): number {
-  return enabled ? Math.round(value / 20) * 20 : Math.round(value);
+  return snapToUnit(value, enabled);
 }
 
 export interface DragWindowsOptions {
@@ -32,6 +34,11 @@ export function dragWindows(options: DragWindowsOptions): void {
     .map((id) => workspace.resources.find((r) => r.id === id))
     .filter((r): r is NonNullable<typeof r> => r !== undefined && !r.maximized);
   if (targets.length === 0) return;
+  const hidden = hiddenResourceIds(workspace);
+  const movedIds = new Set(targets.map((r) => r.id));
+  const others = workspace.resources.filter(
+    (r) => !movedIds.has(r.id) && !r.minimized && !r.maximized && !hidden.has(r.id),
+  );
   const anchor = targets[0];
   const frames = new Map(targets.map((r) => [r.id, document.querySelector<HTMLElement>(`[data-window-id="${r.id}"]`)]));
   handle.setPointerCapture(pointerId);
@@ -47,10 +54,9 @@ export function dragWindows(options: DragWindowsOptions): void {
       moved = true;
       options.onMoveStart?.();
     }
-    delta = {
-      x: snapValue(anchor.x + dx / zoom, event.shiftKey) - anchor.x,
-      y: snapValue(anchor.y + dy / zoom, event.shiftKey) - anchor.y,
-    };
+    const plan = planDragDelta(targets, others, dx / zoom, dy / zoom, event.shiftKey, zoom);
+    delta = { x: plan.offsetX, y: plan.offsetY };
+    useAlignmentGuides.getState().set(plan.guides);
     for (const r of targets) {
       const x = r.x + delta.x;
       const y = r.y + delta.y;
@@ -64,6 +70,7 @@ export function dragWindows(options: DragWindowsOptions): void {
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', finish);
     handle.removeEventListener('pointercancel', finish);
+    useAlignmentGuides.getState().set([]);
     if (moved) {
       const positions = Object.fromEntries(targets.map((r) => [r.id, { x: r.x + delta.x, y: r.y + delta.y }]));
       useCanvas.getState().placeResources(positions, { reconcile: options.reconcile });

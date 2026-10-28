@@ -33,6 +33,8 @@ import { baseName, copyText, cn, stripExtension } from '@/lib/utils';
 import { setContentWindow } from '@/lib/window-keys';
 import { setLiveRect } from '@/lib/live-rects';
 import { dragWindows } from '@/lib/drag-windows';
+import { planDragDelta } from '@/lib/layout';
+import { useAlignmentGuides } from '@/store/guides';
 import { openCardSource } from '@/lib/card-actions';
 import { toast } from '@/store/toast';
 import PdfWindow from './PdfWindow';
@@ -63,10 +65,6 @@ const TYPE_ICONS = {
 
 function currentZoom(): number {
   return activeWorkspace(useCanvas.getState()).view.zoom;
-}
-
-function snap(value: number, enabled: boolean): number {
-  return enabled ? Math.round(value / 20) * 20 : Math.round(value);
 }
 
 const WindowBody = memo(function WindowBody({
@@ -108,11 +106,14 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     (event?: React.PointerEvent) => {
       const state = useCanvas.getState();
       const target = event?.target as Element | undefined;
-      // Ctrl/Cmd/Shift-click adds or removes a window from the selection. Only on cards and on a window's title bar,
-      // and never inside text fields, so typing and selecting PDF text keep working as before.
+      // Ctrl/Cmd/Shift-click adds or removes any window from the selection —
+      // not just cards — building a set to arrange or group. Clicks that land
+      // on controls (buttons, fields, links, the note editor) and on PDF page
+      // content (where click-drag selects text) keep their original meaning;
+      // a window's title bar always toggles.
       const toggles = !!event && event.button === 0 && (event.ctrlKey || event.metaKey || event.shiftKey);
-      const interactive = target?.closest?.('textarea, input, select, a, [contenteditable="true"], .cm-editor');
-      if (toggles && !interactive && (resource.type === 'card' || target?.closest?.('.cw-titlebar'))) {
+      const interactive = target?.closest?.('button, textarea, input, select, a, [contenteditable="true"], .cm-editor, .pdf-page');
+      if (toggles && !interactive) {
         state.toggleSelect(resource.id);
         state.bringToFront(resource.id);
         return;
@@ -158,6 +159,9 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     const zoom = currentZoom();
     const start = { x: event.clientX, y: event.clientY };
     const origin = { x: resource.x, y: resource.y };
+    const others = activeWorkspace(useCanvas.getState()).resources.filter(
+      (candidate) => candidate.id !== resource.id && !candidate.minimized && !candidate.maximized,
+    );
     let next = origin;
     let moved = false;
 
@@ -169,7 +173,9 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         moved = true;
         setInteraction('dragging');
       }
-      next = { x: snap(origin.x + dx / zoom, e.shiftKey), y: snap(origin.y + dy / zoom, e.shiftKey) };
+      const plan = planDragDelta([resource], others, dx / zoom, dy / zoom, e.shiftKey, zoom);
+      next = { x: origin.x + plan.offsetX, y: origin.y + plan.offsetY };
+      useAlignmentGuides.getState().set(plan.guides);
       frame.style.transform = `translate(${next.x}px, ${next.y}px)`;
       setLiveRect(resource.id, { ...next, width: resource.width, height: resource.height });
     };
@@ -177,6 +183,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onEnd);
       handle.removeEventListener('pointercancel', onEnd);
+      useAlignmentGuides.getState().set([]);
       if (!moved) return;
       setInteraction(null);
       useCanvas.getState().placeResources({ [resource.id]: next }, { reconcile: true });

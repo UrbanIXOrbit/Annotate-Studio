@@ -4,6 +4,7 @@ import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
 import { useCardsClip } from '@/store/cards-clip';
 import { toast } from '@/store/toast';
 import { alignItems, distributeItems, orderItems, planLayout, type AlignMode, type Layout, type Order, type Sortable, type Spacing } from '@/lib/arrange';
+import { planTidy, planOverlapTidy } from '@/lib/tidy';
 import type { Group } from '@/lib/groups';
 import type { CardClip } from '@/lib/note-clip';
 import type { MenuEntry } from '@/components/ui/ContextMenu';
@@ -182,4 +183,56 @@ export function nudgeSelection(dx: number, dy: number): void {
   const positions: Record<string, { x: number; y: number }> = {};
   for (const item of itemsFor(ids)) positions[item.id] = { x: item.x + dx, y: item.y + dy };
   useCanvas.getState().placeResources(positions);
+}
+
+// ───────── tidying ─────────
+
+/** Links between windows in `ids` (ordered pairs of both ends' ids). */
+function linksAmong(ids: string[]): [string, string][] {
+  const wanted = new Set(ids);
+  return activeWorkspace(useCanvas.getState()).connectors
+    .filter((c) => wanted.has(c.from) && wanted.has(c.to))
+    .map((c) => [c.from, c.to] as [string, string]);
+}
+
+/** Tidy the selection with the group- and link-aware planner: explicit intent,
+ * so the whole selection is arranged (not just overlapping items). */
+export function tidySelection(): void {
+  const ids = selectedItemIds();
+  const items = itemsFor(ids);
+  if (items.length < 2) {
+    toast.info('Select at least two items to tidy');
+    return;
+  }
+  const workspace = activeWorkspace(useCanvas.getState());
+  useCanvas.getState().placeResources(planTidy(items, workspace.groups, linksAmong(ids)));
+  toast.success(`Tidied ${items.length} item${items.length === 1 ? '' : 's'}`, 'Groups and links stayed together');
+}
+
+/** Conservative workspace tidy (recommendation 6): only overlapping windows
+ * are re-arranged — everything with a reasonable spot stays untouched — while
+ * expanded groups and linked chains move as blocks. */
+export function tidyWorkspace(): void {
+  const state = useCanvas.getState();
+  const workspace = activeWorkspace(state);
+  const hidden = hiddenResourceIds(workspace);
+  const items: Sortable[] = workspace.resources
+    .filter((r) => !r.minimized && !r.maximized && !hidden.has(r.id))
+    .map((r) => ({ id: r.id, x: r.x, y: r.y, width: r.width, height: r.height, title: r.title, color: r.color, source: r.source?.title, page: r.source?.page }));
+  if (items.length < 2) {
+    toast.info('Nothing to tidy yet');
+    return;
+  }
+  const ids = items.map((item) => item.id);
+  const tidy = planOverlapTidy(items, workspace.groups, linksAmong(ids));
+  const moved = Object.entries(tidy).filter(([id, spot]) => {
+    const item = items.find((candidate) => candidate.id === id)!;
+    return spot.x !== item.x || spot.y !== item.y;
+  }).length;
+  if (moved === 0) {
+    toast.info('Nothing to tidy', 'No overlapping windows — your spacing already works');
+    return;
+  }
+  state.placeResources(tidy);
+  toast.success(`Untangled ${moved} window${moved === 1 ? '' : 's'}`, 'Only overlaps were moved; groups and links stayed together');
 }

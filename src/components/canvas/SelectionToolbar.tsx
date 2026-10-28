@@ -14,6 +14,7 @@ import {
   LayoutGrid,
   Link2,
   NotebookPen,
+  Sparkles,
   Trash2,
   Ungroup,
   Unlink2,
@@ -24,7 +25,7 @@ import { getLiveRect, useLiveRectVersion } from '@/lib/live-rects';
 import { boundsOf, type AlignMode } from '@/lib/arrange';
 import { CARD_COLORS } from '@/lib/cards';
 import { colorName } from '@/lib/groups';
-import { alignIds, chainIds, closeSelectedCards, distributeIds, groupSelection, requestSendToNote, ungroupSelection, unchainIds } from '@/lib/group-actions';
+import { alignIds, chainIds, closeSelectedCards, distributeIds, groupSelection, requestSendToNote, tidySelection, ungroupSelection, unchainIds } from '@/lib/group-actions';
 import { openContextMenu, type MenuEntry } from '@/components/ui/ContextMenu';
 import ArrangePanel from './ArrangePanel';
 import { cn } from '@/lib/utils';
@@ -102,6 +103,14 @@ export default function SelectionToolbar({ containerRef }: { containerRef: RefOb
       )}
       <button type="button" className="sel-btn" title="Chain these cards with arrows" onClick={(event) => openContextMenu(event, chainMenu)}>
         <Link2 size={ICON} /> <span>Chain</span>
+      </button>
+      <button
+        type="button"
+        className="sel-btn"
+        title="Tidy: arrange the selection on the layout rhythm, keeping groups together"
+        onClick={tidySelection}
+      >
+        <Sparkles size={ICON} /> <span>Tidy</span>
       </button>
       <button ref={arrangeButton} type="button" className={cn('sel-btn', arrangeOpen && 'active')} title="Arrange as a grid, row, column or flow" onClick={() => setArrangeOpen((open) => !open)}>
         <LayoutGrid size={ICON} /> <span>Arrange</span>

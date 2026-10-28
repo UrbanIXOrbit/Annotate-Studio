@@ -1,11 +1,12 @@
 import type { Box, Point } from './connectors.ts';
+import { LAYOUT } from './layout.ts';
 
 export const CARD_WIDTH = 320;
 export const CARD_MIN_HEIGHT = 150;
 export const CARD_MAX_HEIGHT = 420;
 export const CARD_COLORS = ['#FFCD45', '#F97316', '#E44234', '#22C55E', '#3B82F6', '#8B5CF6'];
 
-const COLUMN_GAP = 48;
+const COLUMN_GAP = LAYOUT.columnGap;
 const CARD_GAP = 40;
 
 export interface PlacementItem extends Box {

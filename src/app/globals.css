@@ -37,6 +37,9 @@
   --selection-match: color-mix(in srgb, var(--primary) 12%, transparent);
   --active-line: color-mix(in srgb, var(--text-primary) 3%, transparent);
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
+  /* Punchier cousin of --primary for highlights that must stand out from
+   * primary-filled UI — canvas alignment guides, picker check states. */
+  --accent: color-mix(in srgb, var(--primary) 78%, black);
 
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -1621,6 +1624,39 @@ input[type='checkbox'] {
   will-change: transform;
 }
 
+/* Alignment guides shown while a window's edges or centre line up with others.
+   Sits above the windows (their z-index grows with the stack) so the lines stay
+   visible over content. */
+.canvas-guides {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 990000;
+  pointer-events: none;
+}
+
+.canvas-guide {
+  position: absolute;
+  pointer-events: none;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+/* Vertical line: explicit height, because top+bottom insets collapse inside the
+   zero-height canvas world. */
+.canvas-guide-x {
+  top: -40000px;
+  height: 80000px;
+  width: 1px;
+}
+
+/* Horizontal line. */
+.canvas-guide-y {
+  left: -40000px;
+  width: 80000px;
+  height: 1px;
+}
+
 .canvas-empty {
   position: absolute;
   top: 50%;
@@ -1873,6 +1909,24 @@ input[type='checkbox'] {
 
 .cw-selected {
   box-shadow: var(--shadow-lg);
+}
+
+/* Windows picked into a multi-selection (Shift/Ctrl+click) get the accent
+   border so the set reads at a glance; only the border colour changes, so the
+   layout never shifts by a pixel. */
+.cw-multi {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-lg);
+}
+
+.cw-multi .cw-titlebar {
+  border-bottom-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* The member the pointer is on (or last clicked) sits on top of the set: soft
+   accent ring over the accent border. */
+.cw-selected.cw-multi {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent), var(--shadow-lg);
 }
 
 .cw-maximized {
