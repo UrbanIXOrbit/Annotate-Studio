@@ -5,8 +5,8 @@ import { useBooks, type BookFile } from '@/store/books';
 import { RowMenu } from './RowMenu';
 import {
   beginBooksDrag,
-  createDragBadge,
-  endBooksDrag,
+  booksClickSuppressed,
+  isBooksDragBlockedTarget,
   useBooksDropTarget,
 } from './dnd';
 import {
@@ -65,22 +65,19 @@ function FileRow({
   const { updateFile, removeFiles, selectedFileIds, setSelectedFiles, copyToClipboard, cutToClipboard } = useBooks();
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
-  const [dragging, setDragging] = useState(false);
 
   // Row-scoped actions operate on the whole selection when this row is part of it
   const effectiveIds = selected && selectedFileIds.includes(file.id) ? selectedFileIds : [file.id];
 
-  const handleDragStart = (event: React.DragEvent) => {
+  const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
+    if (isBooksDragBlockedTarget(event.target as Element)) return;
     const ids = selected && selectedFileIds.length > 1 ? selectedFileIds : [file.id];
     if (!selected) setSelectedFiles([file.id]);
-    const badge = ids.length > 1 ? createDragBadge(`${ids.length} files`) : undefined;
-    beginBooksDrag(event.dataTransfer, { kind: 'files', fileIds: ids }, badge);
-    setDragging(true);
-  };
-
-  const handleDragEnd = () => {
-    endBooksDrag();
-    setDragging(false);
+    beginBooksDrag(
+      event,
+      { kind: 'files', fileIds: ids },
+      ids.length > 1 ? `${ids.length} files` : file.name,
+    );
   };
 
   const handleRename = () => {
@@ -140,10 +137,8 @@ function FileRow({
 
   return (
     <div
-      className={cn('book-file', selected && 'selected', dragging && 'dragging', cut && 'cut')}
-      draggable={!editing}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      className={cn('book-file', selected && 'selected', cut && 'cut')}
+      onPointerDown={editing ? undefined : handleDragStart}
     >
       {editing ? (
         <input
@@ -244,10 +239,13 @@ function FileRow({
 interface BookFileListProps {
   projectId: string;
   searchQuery: string;
+  /** Project ids the search spans; null searches this list's project only. */
+  searchProjectIds: string[] | null;
 }
 
-export function BookFileList({ projectId, searchQuery }: BookFileListProps) {
+export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookFileListProps) {
   const {
+    projects,
     folders,
     selectedFolderId,
     selectedFileIds,
@@ -269,18 +267,35 @@ export function BookFileList({ projectId, searchQuery }: BookFileListProps) {
   const [importing, setImporting] = useState(false);
 
   const files = searchQuery
-    ? searchFiles(searchQuery, projectId)
+    ? searchFiles(searchQuery, searchProjectIds ?? projectId)
     : getProjectFiles(projectId, selectedFolderId);
 
   const activeFolder = selectedFolderId ? folders[selectedFolderId] : null;
-  const title = searchQuery ? 'Search results' : activeFolder ? activeFolder.name : 'All files';
+  const activeProjectName = projects.find((p) => p.id === projectId)?.name ?? 'Search results';
+  // The search header names its scope so it's obvious what results belong to.
+  const scopeName = (scopeIds: string[] | null): string => {
+    if (scopeIds === null) return activeProjectName;
+    if (scopeIds.length === 1) {
+      return projects.find((p) => p.id === scopeIds[0])?.name ?? 'Search results';
+    }
+    const isEveryProject = scopeIds.length > 0 && scopeIds.length === projects.length;
+    if (isEveryProject) return 'All projects';
+    return `${scopeIds.length} projects`;
+  };
+  const title = searchQuery
+    ? searchProjectIds === null
+      ? `Search · ${activeProjectName}`
+      : `Search · ${scopeName(searchProjectIds)}`
+    : activeFolder
+      ? activeFolder.name
+      : 'All files';
   const allSelected = files.length > 0 && selectedFileIds.length === files.length;
   const cutIds = clipboard?.mode === 'cut' ? new Set(clipboard.fileIds) : null;
 
   // The files panel is itself a drop target: dropping here moves (or, with
   // Alt/Option, copies) into the folder currently being viewed. Search
   // results span folders, so drops are disabled while searching.
-  const bodyDrop = useBooksDropTarget({
+  const bodyDropRef = useBooksDropTarget<HTMLDivElement>({
     accepts: () => !searchQuery,
     onDrop: (payload, mode) => {
       if (payload.kind === 'files') {
@@ -416,12 +431,9 @@ export function BookFileList({ projectId, searchQuery }: BookFileListProps) {
       )}
 
       <div
-        className={cn(
-          'book-file-body',
-          bodyDrop.isActive && 'drop-target',
-          bodyDrop.isActive && bodyDrop.mode === 'copy' && 'drop-copy',
-        )}
-        {...bodyDrop.handlers}
+        ref={bodyDropRef}
+        data-books-drop=""
+        className="book-file-body"
       >
         {files.length === 0 && !searchQuery && (
           <div className="books-panel-empty">
@@ -439,7 +451,10 @@ export function BookFileList({ projectId, searchQuery }: BookFileListProps) {
           <div className="books-panel-empty">
             <FileSearch size={36} strokeWidth={1.4} />
             <h4>No files found</h4>
-            <p>Nothing matches “{searchQuery}” in this project.</p>
+            <p>
+              Nothing matches “{searchQuery}” in{' '}
+              {searchProjectIds === null ? 'this project' : 'the selected search scope'}.
+            </p>
           </div>
         )}
 
@@ -451,7 +466,9 @@ export function BookFileList({ projectId, searchQuery }: BookFileListProps) {
               file={file}
               selected={selected}
               cut={!!cutIds && cutIds.has(file.id)}
-              onSelectRow={() => setSelectedFiles(selected && selectedFileIds.length === 1 ? [] : [file.id])}
+              onSelectRow={() => {
+                if (!booksClickSuppressed()) setSelectedFiles(selected && selectedFileIds.length === 1 ? [] : [file.id]);
+              }}
               onToggleCheck={() => toggleFileSelection(file.id)}
             />
           );

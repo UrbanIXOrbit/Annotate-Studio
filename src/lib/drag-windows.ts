@@ -2,9 +2,35 @@ import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
 import { setLiveRect } from '@/lib/live-rects';
 import { planDragDelta, snapToUnit } from '@/lib/layout';
 import { useAlignmentGuides } from '@/store/guides';
+import type { Connector } from '@/lib/connectors';
 
 export function snapValue(value: number, enabled: boolean): number {
   return snapToUnit(value, enabled);
+}
+
+/** Expand `ids` across the link graph: every window reachable from them over
+ * connectors (edges used in both directions), so a shift-drag can carry the
+ * windows they are chained to as one rigid group. */
+export function linkedComponent(ids: string[], connectors: Connector[]): string[] {
+  if (connectors.length === 0) return [...new Set(ids)];
+  const neighbours = new Map<string, string[]>();
+  for (const link of connectors) {
+    if (link.from === link.to) continue;
+    neighbours.set(link.from, [...(neighbours.get(link.from) ?? []), link.to]);
+    neighbours.set(link.to, [...(neighbours.get(link.to) ?? []), link.from]);
+  }
+  const carry = new Set(ids);
+  const queue = [...ids];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    for (const next of neighbours.get(id) ?? []) {
+      if (!carry.has(next)) {
+        carry.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return [...carry];
 }
 
 export interface DragWindowsOptions {

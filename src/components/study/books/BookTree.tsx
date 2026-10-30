@@ -5,7 +5,8 @@ import { useBooks } from '@/store/books';
 import { RowMenu } from './RowMenu';
 import {
   beginBooksDrag,
-  endBooksDrag,
+  booksClickSuppressed,
+  isBooksDragBlockedTarget,
   isFolderInSubtree,
   useBooksDropTarget,
 } from './dnd';
@@ -52,7 +53,9 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
   // Guards against the unmount blur firing after Enter/Escape already committed
   const childCommitted = useRef(false);
 
-  const drop = useBooksDropTarget({
+  // Drop zone for files (Alt/Option copies) and folders — registered with the
+  // pointer-based drag engine; hovering adds the .drop-target classes itself.
+  const dropRef = useBooksDropTarget<HTMLDivElement>({
     accepts: (payload) =>
       payload.kind === 'files' ||
       (payload.folderId !== folderId && !isFolderInSubtree(folders, folderId, payload.folderId)),
@@ -77,12 +80,13 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
   const isSelected = selectedFolderId === folderId;
   const hasChildren = children.length > 0;
 
-  const handleDragStart = (event: React.DragEvent) => {
-    beginBooksDrag(event.dataTransfer, { kind: 'folder', folderId });
+  const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
+    if (isBooksDragBlockedTarget(event.target as Element)) return;
+    beginBooksDrag(event, { kind: 'folder', folderId }, folder.name);
   };
 
   const handleSelect = () => {
-    if (isEditing) return;
+    if (isEditing || booksClickSuppressed()) return;
     // The tree shows every project at once, so a folder click may also need
     // to make its project active before the folder selection sticks
     if (folder.projectId !== activeProjectId) setActiveProject(folder.projectId);
@@ -116,21 +120,15 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
   return (
     <div className="folder-node">
       <div
+        ref={dropRef}
+        data-books-drop=""
         className={cn(
           'folder-row',
           isSelected && 'selected',
-          drop.isActive && 'drop-target',
-          drop.isActive && drop.mode === 'copy' && 'drop-copy',
         )}
         style={{ paddingLeft: 5 + level * INDENT }}
-        draggable={!isEditing}
-        onDragStart={handleDragStart}
-        onDragEnd={endBooksDrag}
+        onPointerDown={isEditing ? undefined : handleDragStart}
         onClick={handleSelect}
-        onDragEnter={drop.handlers.onDragEnter}
-        onDragOver={drop.handlers.onDragOver}
-        onDragLeave={drop.handlers.onDragLeave}
-        onDrop={drop.handlers.onDrop}
       >
         {isEditing ? (
           <input
@@ -300,7 +298,7 @@ function ProjectNode({
   // The project row doubles as the "root" drop target: dropping files here
   // moves (Alt/Option copies) them to the project's top level; a dropped
   // folder is re-homed into this project, subfolders and all
-  const drop = useBooksDropTarget({
+  const dropRef = useBooksDropTarget<HTMLDivElement>({
     accepts: () => !!project,
     onDrop: (payload, mode) => {
       if (!project) return;
@@ -337,7 +335,7 @@ function ProjectNode({
   const fileCount = project.fileIds.length + folderFileCount;
 
   const handleOpen = () => {
-    if (editing) return;
+    if (editing || booksClickSuppressed()) return;
     // Activating shows the project's root files; also reveal its folders
     setActiveProject(projectId);
     if (project.collapsed) toggleProjectCollapse(projectId);
@@ -365,18 +363,14 @@ function ProjectNode({
   return (
     <div className="project-node">
       <div
+        ref={dropRef}
+        data-books-drop=""
         className={cn(
           'project-row',
           isSelected && 'selected',
           containsSelection && 'contains-selection',
-          drop.isActive && 'drop-target',
-          drop.isActive && drop.mode === 'copy' && 'drop-copy',
         )}
         onClick={handleOpen}
-        onDragEnter={drop.handlers.onDragEnter}
-        onDragOver={drop.handlers.onDragOver}
-        onDragLeave={drop.handlers.onDragLeave}
-        onDrop={drop.handlers.onDrop}
       >
         {editing ? (
           <input

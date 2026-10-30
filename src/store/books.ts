@@ -6,6 +6,7 @@ import {
   type ExternalFileRef,
 } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
+import { searchLibrary } from '@/lib/books-search';
 import { uid } from '@/lib/utils';
 
 /**
@@ -117,7 +118,7 @@ interface BooksActions {
   // Queries
   getProjectFiles: (projectId: string, folderId?: string | null) => BookFile[];
   getFolderChildren: (folderId: string) => BookFolder[];
-  searchFiles: (query: string, projectId?: string | null) => BookFile[];
+  searchFiles: (query: string, projectId?: string | string[] | null) => BookFile[];
 }
 
 type BooksStore = BooksState & BooksActions;
@@ -249,6 +250,7 @@ function snapshotBooksState(state: BooksStore) {
 const saver = createSaver<ReturnType<typeof snapshotBooksState>>(
   (value) => saveBooksState(value),
   500,
+  (error) => console.error('Failed to save books library:', error),
 );
 
 export const useBooks = create<BooksStore>((set, get) => ({
@@ -793,29 +795,13 @@ export const useBooks = create<BooksStore>((set, get) => ({
   
   searchFiles: (query, projectId = null) => {
     const state = get();
-    const lower = query.toLowerCase();
-    
-    return Object.values(state.files)
-      .filter(file => {
-        const matchesQuery = file.name.toLowerCase().includes(lower) ||
-          file.tags.some(tag => tag.toLowerCase().includes(lower)) ||
-          file.notes.toLowerCase().includes(lower);
-        
-        if (!projectId) return matchesQuery;
-        
-        // Check if file belongs to project
-        const project = state.projects.find(p => p.id === projectId);
-        if (!project) return false;
-        
-        if (project.fileIds.includes(file.id)) return matchesQuery;
-        
-        const inFolder = Object.values(state.folders).some(
-          folder => folder.projectId === projectId && folder.fileIds.includes(file.id)
-        );
-        
-        return matchesQuery && inFolder;
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return searchLibrary(
+      Object.values(state.files),
+      state.projects,
+      Object.values(state.folders),
+      query,
+      projectId,
+    );
   },
 }));
 

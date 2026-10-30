@@ -286,7 +286,8 @@ export interface ExternalFileRef {
 
 export const importExternalFiles = (paths: string[]) => call<ExternalFileRef[]>('import_external_files', { paths });
 export const loadBooksState = () => call<unknown>('load_books_state');
-export const saveBooksState = (state: unknown) => call<void>('save_books_state', { state });
+// The Rust command's argument is `books_state`; the invoke key must be camelCase for it.
+export const saveBooksState = (booksState: unknown) => call<void>('save_books_state', { booksState });
 export const openExternalFile = (path: string) => call<void>('open_external_file', { path });
 export const revealExternalFile = (path: string) => call<void>('reveal_external_file', { path });
 

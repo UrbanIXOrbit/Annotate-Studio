@@ -32,7 +32,7 @@ import { renameFile } from '@/lib/workspace-actions';
 import { baseName, copyText, cn, stripExtension } from '@/lib/utils';
 import { setContentWindow } from '@/lib/window-keys';
 import { setLiveRect } from '@/lib/live-rects';
-import { dragWindows } from '@/lib/drag-windows';
+import { dragWindows, linkedComponent } from '@/lib/drag-windows';
 import { planDragDelta } from '@/lib/layout';
 import { useAlignmentGuides } from '@/store/guides';
 import { openCardSource } from '@/lib/card-actions';
@@ -137,6 +137,40 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     event.preventDefault();
     const handle = event.currentTarget;
     const selection = useCanvas.getState().selectedIds;
+    // Shift+drag carries links: the dragged window moves together with its
+    // whole connected set (plus the current selection), all shifted by one
+    // shared delta so the spacing and alignment inside the set never change.
+    // Shift+click without a drag keeps the toggle from activate().
+    if (event.shiftKey) {
+      const workspace = activeWorkspace(useCanvas.getState());
+      const component = linkedComponent([resource.id, ...selection], workspace.connectors);
+      const ids = [
+        resource.id,
+        ...component.filter((id) => {
+          if (id === resource.id) return false;
+          const candidate = workspace.resources.find((r) => r.id === id);
+          return !!candidate && !candidate.minimized && !candidate.maximized;
+        }),
+      ];
+      dragWindows({
+        ids,
+        start: { x: event.clientX, y: event.clientY },
+        zoom: currentZoom(),
+        handle,
+        pointerId: event.pointerId,
+        reconcile: true,
+        onMoveStart: () => setInteraction('dragging'),
+        onFinish: (moved) => {
+          setInteraction(null);
+          // Moving makes the carried set the selection; without movement the
+          // shift-click toggle stands as it is.
+          if (moved && ids.length > 1) {
+            useCanvas.setState({ selectedIds: ids, selectedId: resource.id, selectedConnectorId: null });
+          }
+        },
+      });
+      return;
+    }
     if (selection.length > 1 && selection.includes(resource.id)) {
       const plain = !(event.ctrlKey || event.metaKey || event.shiftKey);
       dragWindows({
