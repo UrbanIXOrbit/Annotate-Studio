@@ -7515,6 +7515,11 @@ input[type='checkbox'] {
   }
 }
 
+/* Spinning icon inside a busy button (e.g. "Adding…" while files import) */
+.btn-spin {
+  animation: spin 0.8s linear infinite;
+}
+
 /* ── Books drag & drop ───────────────────────────────────────── */
 
 /* Row being dragged */

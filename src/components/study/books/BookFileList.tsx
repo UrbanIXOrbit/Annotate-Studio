@@ -11,6 +11,7 @@ import {
 } from './dnd';
 import {
   Upload,
+  Plus,
   FileText,
   File,
   Image as ImageIcon,
@@ -377,9 +378,15 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
               {allSelected ? 'Clear' : 'Select all'}
             </button>
           )}
-          <button type="button" className="btn btn-sm btn-primary" onClick={handleImport} disabled={importing}>
-            <Upload size={14} />
-            {importing ? 'Importing…' : 'Import'}
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={handleImport}
+            disabled={importing}
+            title="Add files to this project — they are referenced in place, never copied"
+          >
+            {importing ? <Upload size={14} className="btn-spin" /> : <Plus size={14} />}
+            {importing ? 'Adding…' : 'Add files'}
           </button>
         </div>
       </div>
@@ -437,12 +444,12 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
       >
         {files.length === 0 && !searchQuery && (
           <div className="books-panel-empty">
-            <Upload size={36} strokeWidth={1.4} />
+            <Plus size={36} strokeWidth={1.4} />
             <h4>{activeFolder ? 'This folder is empty' : 'No files yet'}</h4>
-            <p>Import files to start building your library — they are referenced in place, never copied.</p>
+            <p>Add files to start building your library — they are referenced in place, never copied.</p>
             <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={handleImport}>
-              <Upload size={14} />
-              Import files
+              <Plus size={14} />
+              Add files
             </button>
           </div>
         )}

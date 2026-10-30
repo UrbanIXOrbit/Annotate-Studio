@@ -1,0 +1,10 @@
+{
+  "name": "annotate-studio",
+  "engine": "generic",
+  "launch": { "cmd": "npm", "args": ["run", "app"] },
+  "log": { "stdout": true },
+  "ready": "Running .target/debug/annotate-studio",
+  "window": "Annotate Studio",
+  "sourceRoots": ["src", "src-tauri/src"],
+  "timeout": 600
+}
