@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import { useBooks } from '@/store/books';
-import { X, Tag, FileText, Calendar, HardDrive, Pencil, Save, Plus } from 'lucide-react';
+import { X, Tag, FileText, FileQuestion, Calendar, HardDrive, Pencil, Save, Plus } from 'lucide-react';
 import { cn, formatBytes } from '@/lib/utils';
+import { BookCitationSection } from './BookCitationSection';
 
 interface BookFileDetailsProps {
   fileId: string;
@@ -11,14 +12,29 @@ interface BookFileDetailsProps {
 }
 
 export function BookFileDetails({ fileId, onClose }: BookFileDetailsProps) {
-  const { files, updateFile } = useBooks();
+  const { files, missingFileIds, updateFile } = useBooks();
   const file = files[fileId];
+  const isMissing = missingFileIds.includes(fileId);
 
   const [tagInput, setTagInput] = useState('');
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState('');
+  /** Display-name rename — never touches filePath (used for duplicates/verification) */
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
 
   if (!file) return null;
+
+  const handleSaveName = () => {
+    const trimmed = nameInput.trim();
+    if (trimmed) {
+      // Writing the display name; matching the original filename reverts the rename.
+      updateFile(fileId, { displayName: trimmed === file.name ? undefined : trimmed });
+    } else {
+      updateFile(fileId, { displayName: undefined });
+    }
+    setEditingName(false);
+  };
 
   const handleAddTag = () => {
     const tag = tagInput.trim();
@@ -56,8 +72,59 @@ export function BookFileDetails({ fileId, onClose }: BookFileDetailsProps) {
             <FileText size={12} />
             File
           </div>
-          <div className="file-details-value">{file.name}</div>
+          {editingName ? (
+            <div className="file-details-rename">
+              <input
+                className="input input-sm"
+                value={nameInput}
+                autoFocus
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveName();
+                  if (e.key === 'Escape') setEditingName(false);
+                }}
+                dir="auto"
+              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn btn-sm btn-primary" onClick={handleSaveName}>
+                  <Save size={14} />
+                  Save
+                </button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditingName(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="file-details-value">{file.displayName || file.name}</div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => {
+                    setNameInput(file.displayName || file.name);
+                    setEditingName(true);
+                  }}
+                >
+                  <Pencil size={13} />
+                  Rename
+                </button>
+              </div>
+            </>
+          )}
           <div className="file-details-path">{file.filePath}</div>
+          {file.displayName && <p className="file-details-hint">Original file name: {file.name}</p>}
+          <p className="file-details-hint">
+            Renaming only changes the display name — the file on disk and its path are never touched, so duplicate
+            detection and verification keep working.
+          </p>
+          {isMissing && (
+            <p className="file-details-warning">
+              <FileQuestion size={12} />
+              Not found on disk — it may have been moved or deleted. Re-add it from its new location, or remove the stale reference.
+            </p>
+          )}
         </div>
 
         <div className="file-details-section">
@@ -148,6 +215,8 @@ export function BookFileDetails({ fileId, onClose }: BookFileDetailsProps) {
             </>
           )}
         </div>
+
+        <BookCitationSection fileId={fileId} />
 
         <div className="file-details-section">
           <div className="file-details-label">

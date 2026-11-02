@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tauri::State;
 
 use crate::state::AppState;
@@ -212,48 +213,82 @@ pub struct ExternalFileRef {
     pub modified_at: String,
 }
 
-/// Import external files - reads metadata without copying files
+/// Import outcome for a single path: success carries the reference,
+/// failure carries a reason the UI can show directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalImportOutcome {
+    pub path: String,
+    pub file: Option<ExternalFileRef>,
+    pub error: Option<String>,
+}
+
+fn outcome_error(path: String, error: String) -> ExternalImportOutcome {
+    ExternalImportOutcome {
+        path,
+        file: None,
+        error: Some(error),
+    }
+}
+
+/// Import external files - reads metadata without copying files.
+/// Every requested path gets an outcome so partial failures are visible
+/// instead of silently dropping files.
 #[tauri::command(async)]
-pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalFileRef>, String> {
-    let mut refs = Vec::new();
+pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalImportOutcome>, String> {
+    let mut outcomes = Vec::new();
 
     for path_str in paths {
         let path = Path::new(&path_str);
 
-        // Check if file exists and is a file (not directory)
         if !path.exists() {
-            continue; // Skip non-existent paths
+            outcomes.push(outcome_error(path_str, "File does not exist".into()));
+            continue;
         }
 
         if !path.is_file() {
-            continue; // Skip directories
+            outcomes.push(outcome_error(path_str, "Path is a folder, not a file".into()));
+            continue;
         }
 
         // Get metadata
         let metadata = match std::fs::metadata(path) {
             Ok(m) => m,
-            Err(_) => continue, // Skip files we can't read
+            Err(error) => {
+                outcomes.push(outcome_error(path_str, format!("Could not read file metadata: {error}")));
+                continue;
+            }
         };
 
         let size = metadata.len();
 
         // Get modified time
-        let modified = metadata
+        let modified_at = match metadata
             .modified()
-            .map_err(|e| format!("Failed to get modified time: {}", e))?;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let modified_at = {
-            use std::time::SystemTime;
-            let duration = modified
+            .map_err(|e| format!("Failed to get modified time: {}", e))
+        {
+            Ok(modified) => match modified
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map_err(|e| format!("Invalid timestamp: {}", e))?;
-            let datetime = chrono::DateTime::from_timestamp(
-                duration.as_secs() as i64,
-                duration.subsec_nanos(),
-            )
-            .ok_or("Invalid timestamp")?;
-            datetime.to_rfc3339()
+                .map_err(|e| format!("Invalid timestamp: {}", e))
+            {
+                Ok(duration) => match chrono::DateTime::from_timestamp(
+                    duration.as_secs() as i64,
+                    duration.subsec_nanos(),
+                ) {
+                    Some(datetime) => datetime.to_rfc3339(),
+                    None => {
+                        outcomes.push(outcome_error(path_str, "Invalid timestamp".into()));
+                        continue;
+                    }
+                },
+                Err(error) => {
+                    outcomes.push(outcome_error(path_str, error));
+                    continue;
+                }
+            },
+            Err(error) => {
+                outcomes.push(outcome_error(path_str, error));
+                continue;
+            }
         };
 
         // Extract file name
@@ -270,16 +305,38 @@ pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalFileRef>,
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
 
-        refs.push(ExternalFileRef {
+        outcomes.push(ExternalImportOutcome {
+            file: Some(ExternalFileRef {
+                path: path_str.clone(),
+                name,
+                extension,
+                size,
+                modified_at,
+            }),
+            error: None,
             path: path_str,
-            name,
-            extension,
-            size,
-            modified_at,
         });
     }
 
-    Ok(refs)
+    Ok(outcomes)
+}
+
+/// Existence check for referenced files on disk (Books library verification).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalFileStatus {
+    pub path: String,
+    pub exists: bool,
+}
+
+#[tauri::command(async)]
+pub fn external_files_exist(paths: Vec<String>) -> Result<Vec<ExternalFileStatus>, String> {
+    Ok(paths
+        .into_iter()
+        .map(|path| ExternalFileStatus {
+            exists: Path::new(&path).is_file(),
+            path,
+        })
+        .collect())
 }
 
 /// Load books state from JSON file
@@ -441,36 +498,67 @@ mod tests {
         let result = import_external_files(paths);
         assert!(result.is_ok());
 
-        let refs = result.unwrap();
-        assert_eq!(refs.len(), 2);
+        let outcomes = result.unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().all(|o| o.error.is_none()));
 
-        assert_eq!(refs[0].name, "test1.pdf");
-        assert_eq!(refs[0].extension, "pdf");
-        assert_eq!(refs[0].size, 14);
+        let ref0 = outcomes[0].file.as_ref().unwrap();
+        assert_eq!(ref0.name, "test1.pdf");
+        assert_eq!(ref0.extension, "pdf");
+        assert_eq!(ref0.size, 14);
 
-        assert_eq!(refs[1].name, "test2.txt");
-        assert_eq!(refs[1].extension, "txt");
+        let ref1 = outcomes[1].file.as_ref().unwrap();
+        assert_eq!(ref1.name, "test2.txt");
+        assert_eq!(ref1.extension, "txt");
     }
 
     #[test]
-    fn test_import_skips_non_existent() {
+    fn test_import_reports_missing_paths() {
         let result = import_external_files(vec![
             "/non/existent/file.pdf".to_string(),
             "/another/missing.txt".to_string(),
         ]);
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
+        let outcomes = result.unwrap();
+        assert_eq!(outcomes.len(), 2);
+        for outcome in outcomes {
+            assert!(outcome.file.is_none());
+            assert!(outcome.error.unwrap().contains("does not exist"));
+        }
     }
 
     #[test]
-    fn test_import_skips_directories() {
+    fn test_import_reports_directories() {
         let temp_dir = TempDir::new().unwrap();
         let paths = vec![temp_dir.path().to_string_lossy().into_owned()];
 
         let result = import_external_files(paths);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
+        let outcomes = result.unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].file.is_none());
+        assert!(outcomes[0].error.as_deref().unwrap().contains("folder"));
+    }
+
+    #[test]
+    fn test_external_files_exist() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("real.txt");
+        fs::write(&file, b"content").unwrap();
+
+        let statuses = external_files_exist(vec![
+            file.to_string_lossy().into_owned(),
+            "/non/existent/file.pdf".to_string(),
+            temp_dir.path().to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(statuses.len(), 3);
+        assert!(statuses[0].exists);
+        assert!(!statuses[1].exists);
+        // Directories are not valid book references
+        assert!(!statuses[2].exists);
     }
 
     #[test]

@@ -7,6 +7,8 @@
 export interface SearchableFile {
   id: string;
   name: string;
+  /** Optional renamed display name (set by a rename or a fetched citation title) */
+  displayName?: string | null;
   tags: string[];
   notes: string;
 }
@@ -53,11 +55,13 @@ export function searchLibrary<F extends SearchableFile>(
 
   return files
     .filter((file) => {
+      const label = (file.displayName ?? file.name).toLowerCase();
       const matchesQuery =
+        label.includes(lower) ||
         file.name.toLowerCase().includes(lower) ||
         file.tags.some((tag) => tag.toLowerCase().includes(lower)) ||
         file.notes.toLowerCase().includes(lower);
       return matchesQuery && belongsToScope(file.id);
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => (a.displayName ?? a.name).localeCompare(b.displayName ?? b.name));
 }

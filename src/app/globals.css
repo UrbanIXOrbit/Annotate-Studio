@@ -7413,6 +7413,25 @@ input[type='checkbox'] {
   color: var(--text-secondary);
 }
 
+.file-details-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.file-details-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .file-details-tags {
   display: flex;
   flex-wrap: wrap;
@@ -7520,6 +7539,61 @@ input[type='checkbox'] {
   animation: spin 0.8s linear infinite;
 }
 
+/* Single-step undo toast for destructive operations (delete project/folder/files) */
+.books-undo-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 980;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 9px 10px 9px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-dropdown);
+  animation: pop-in 0.12s ease-out;
+}
+
+.books-undo-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.books-undo-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.books-undo-spacer {
+  flex: 1;
+}
+
+.books-undo-btn {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.books-undo-btn:hover:not(:disabled) {
+  color: var(--primary);
+}
+
 /* ── Books drag & drop ───────────────────────────────────────── */
 
 /* Row being dragged */
@@ -7531,6 +7605,34 @@ input[type='checkbox'] {
 .book-file.cut {
   opacity: 0.6;
   border-style: dashed;
+}
+
+/* Files whose referenced path failed disk verification */
+.book-file.missing .book-file-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--warning);
+}
+
+.book-file-missing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Drop onto an individual file row (e.g. drag into the row file's own location,
+   or onto a search-result row to re-home into that container) */
+.book-file.drop-target {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
 }
 
 /* Drop targets: folder rows, project rows */
@@ -7931,4 +8033,439 @@ input[type='checkbox'] {
   position: fixed;
   z-index: 40;
   translate: -50% 0;
+}
+
+/* ── Books citations ─────────────────────────────────────────── */
+
+.citation-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.citation-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger);
+}
+
+.citation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Formatted citation text */
+.citation-preview {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.citation-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.citation-style-select {
+  max-width: 130px;
+}
+
+.citation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.citation-badge-embedded {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-card));
+}
+
+.citation-badge-enriched {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-card));
+}
+
+.citation-badge-manual {
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+
+/* Manual entry form */
+.citation-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.citation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.citation-field > span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.citation-field-wide {
+  grid-column: 1 / -1;
+}
+
+.citation-authors-input {
+  min-height: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* Candidate picker */
+.citation-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.citation-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  text-align: left;
+  cursor: pointer;
+}
+
+.citation-candidate:hover {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+
+.citation-candidate-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-candidate-meta {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Batch citations dialog ──────────────────────────────────── */
+
+.citations-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.citations-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.citations-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.citations-row {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.citations-row:last-child {
+  border-bottom: none;
+}
+
+.citations-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.citations-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.citations-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.citations-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+}
+
+.citations-status-saved {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 13%, var(--bg-card));
+}
+
+.citations-status-missing {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.citations-status-error {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 13%, var(--bg-card));
+}
+
+.citations-status-working {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.citations-inline-pick {
+  margin-top: 6px;
+}
+
+/* Output: preview + copy/export */
+.citations-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.citations-output-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.citations-output-spacer {
+  flex: 1;
+}
+
+.citations-preview {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.citations-preview-empty {
+  padding: 14px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  text-align: center;
+}
+
+/* Multi-source provenance + conflicts (citation engine) */
+.citation-provenance {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.citation-candidate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.citation-source-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.citation-source-chip-best {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.citation-conflict-chip {
+  background: color-mix(in srgb, var(--warning) 13%, var(--bg-card));
+  color: var(--warning);
+}
+
+.citation-field-conflict > input,
+.citation-field-conflict > textarea {
+  border-color: var(--warning);
+}
+
+.citation-conflict-note {
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--warning);
+}
+
+/* Add citation dialog (search inputs + paste parser) */
+.add-citation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.add-citation-spacer {
+  flex: 1;
+}
+
+.citation-search-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.citations-selectbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.citations-row-check {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Details-panel rename + hints */
+.file-details-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.file-details-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.add-citation-rename {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.add-citation-rename input {
+  margin-top: 2px;
+}
+
+/* Reference-engine UI: settings, confidence pills, candidate notes */
+.add-citation-settings {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-citation-settings summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.add-citation-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.add-citation-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.citation-pill-high {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-card));
+}
+
+.citation-pill-medium {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-card));
+}
+
+.citation-pill-low {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.citation-candidate-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin-top: 3px;
 }

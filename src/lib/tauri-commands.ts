@@ -284,7 +284,24 @@ export interface ExternalFileRef {
   modified_at: string;
 }
 
-export const importExternalFiles = (paths: string[]) => call<ExternalFileRef[]>('import_external_files', { paths });
+/** Per-path import result: success carries the ref, failure carries a reason. */
+export interface ExternalImportOutcome {
+  path: string;
+  file: ExternalFileRef | null;
+  error: string | null;
+}
+
+export const importExternalFiles = (paths: string[]) =>
+  call<ExternalImportOutcome[]>('import_external_files', { paths });
+
+/** Existence check for one referenced path (Books library verification). */
+export interface ExternalFileStatus {
+  path: string;
+  exists: boolean;
+}
+
+export const externalFilesExist = (paths: string[]) =>
+  call<ExternalFileStatus[]>('external_files_exist', { paths });
 export const loadBooksState = () => call<unknown>('load_books_state');
 // The Rust command's argument is `books_state`; the invoke key must be camelCase for it.
 export const saveBooksState = (booksState: unknown) => call<void>('save_books_state', { booksState });

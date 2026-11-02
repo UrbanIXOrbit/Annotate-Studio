@@ -1,5 +1,5 @@
 import type { PdfEngine } from '@embedpdf/models';
-import { uid } from './utils';
+import { uid } from './utils.ts';
 
 export type SharedPdfEngine = PdfEngine<Blob>;
 

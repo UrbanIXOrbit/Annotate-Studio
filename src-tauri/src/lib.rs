@@ -87,6 +87,7 @@ pub fn run() {
             backup::export_data,
             backup::import_data,
             books::import_external_files,
+            books::external_files_exist,
             books::load_books_state,
             books::save_books_state,
             books::open_external_file,

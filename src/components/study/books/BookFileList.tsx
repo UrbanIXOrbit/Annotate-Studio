@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useBooks, type BookFile } from '@/store/books';
 import { RowMenu } from './RowMenu';
 import {
   beginBooksDrag,
   booksClickSuppressed,
   isBooksDragBlockedTarget,
+  isFolderInSubtree,
   useBooksDropTarget,
 } from './dnd';
 import {
@@ -21,12 +22,18 @@ import {
   FolderOpen,
   LayoutGrid,
   FileSearch,
+  FileQuestion,
   Copy,
   Scissors,
   ClipboardPaste,
+  BookMarked,
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { openExternalFile, revealExternalFile } from '@/lib/tauri-commands';
+import { openExternalFile, revealExternalFile, errorMessage } from '@/lib/tauri-commands';
+import { appConfirm } from '@/lib/ui-dialogs';
+import { isCitationCapable } from '@/lib/book-citations';
+import { CitationsDialog } from './CitationsDialog';
+import { AddCitationDialog } from './AddCitationDialog';
 import { useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
 import { cn, formatBytes } from '@/lib/utils';
@@ -54,21 +61,96 @@ function FileRow({
   file,
   selected,
   cut,
+  missing,
+  searching,
+  dropLocation,
+  wantRename,
+  onRenameOpened,
+  onAddCitation,
   onSelectRow,
   onToggleCheck,
 }: {
   file: BookFile;
   selected: boolean;
   cut: boolean;
+  /** Path failed the last disk verification */
+  missing?: boolean;
+  /** True while a scoped search is displayed */
+  searching: boolean;
+  /** Where a drop onto this row lands (the file's own location while searching) */
+  dropLocation: { projectId: string; folderId: string | null } | null;
+  /** Keyboard rename request (F2) */
+  wantRename?: boolean;
+  onRenameOpened?: () => void;
+  /** Open the Add citation dialog for this file — only set for citatable formats */
+  onAddCitation?: () => void;
   onSelectRow: () => void;
   onToggleCheck: () => void;
 }) {
-  const { updateFile, removeFiles, selectedFileIds, setSelectedFiles, copyToClipboard, cutToClipboard } = useBooks();
+  const {
+    updateFile,
+    removeFiles,
+    selectedFileIds,
+    setSelectedFiles,
+    copyToClipboard,
+    cutToClipboard,
+    moveFiles,
+    copyFiles,
+    moveFolder,
+    projects,
+    folders,
+  } = useBooks();
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
+  /** What the row shows: the renamed display name, or the original import filename */
+  const label = file.displayName || file.name;
+
+  // F2 from the panel: jump straight into editing, then release the request
+  useEffect(() => {
+    if (!wantRename) return;
+    setEditName(label);
+    setEditing(true);
+    onRenameOpened?.();
+  }, [wantRename]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Row-scoped actions operate on the whole selection when this row is part of it
   const effectiveIds = selected && selectedFileIds.includes(file.id) ? selectedFileIds : [file.id];
+
+  // The row itself is a drop target: dropping files moves (Alt/Option copies)
+  // them into this row's own location — the viewed folder normally, or the row
+  // file's home folder in search results, so results accept drops again.
+  const dropRef = useBooksDropTarget<HTMLDivElement>({
+    accepts: (payload) => {
+      const loc = dropLocation;
+      if (!loc) return false;
+      if (payload.kind === 'files') {
+        const targetIds = loc.folderId
+          ? folders[loc.folderId]?.fileIds ?? []
+          : projects.find((p) => p.id === loc.projectId)?.fileIds ?? [];
+        // Nothing would change if every dragged file is already at the target
+        return !payload.fileIds.every((id) => targetIds.includes(id));
+      }
+      // Folder drops make no sense across scattered search results
+      if (searching) return false;
+      if (payload.folderId === loc.folderId) return false;
+      if (loc.folderId && isFolderInSubtree(folders, loc.folderId, payload.folderId)) return false;
+      return true;
+    },
+    onDrop: (payload, mode) => {
+      const loc = dropLocation;
+      if (!loc) return;
+      if (payload.kind === 'files') {
+        if (mode === 'copy') {
+          const copied = copyFiles(payload.fileIds, loc.projectId, loc.folderId);
+          if (copied === 0) alert('Those files are already in this location.');
+        } else {
+          moveFiles(payload.fileIds, loc.projectId, loc.folderId);
+        }
+      } else {
+        moveFolder(payload.folderId, loc.folderId, loc.projectId);
+      }
+    },
+  });
 
   const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
     if (isBooksDragBlockedTarget(event.target as Element)) return;
@@ -77,12 +159,15 @@ function FileRow({
     beginBooksDrag(
       event,
       { kind: 'files', fileIds: ids },
-      ids.length > 1 ? `${ids.length} files` : file.name,
+      ids.length > 1 ? `${ids.length} files` : label,
     );
   };
 
   const handleRename = () => {
-    if (editName.trim()) updateFile(file.id, { name: editName.trim() });
+    if (editName.trim()) {
+      // Only the display name moves; the original `name` and filePath never change.
+      updateFile(file.id, { displayName: editName.trim() === file.name ? undefined : editName.trim() });
+    }
     setEditing(false);
   };
 
@@ -123,23 +208,26 @@ function FileRow({
 
     try {
       const canvas = useCanvas.getState();
-      canvas.openResource({ type, title: file.name, filePath: file.filePath }, { isExternal: true });
+      canvas.openResource({ type, title: label, filePath: file.filePath }, { isExternal: true });
       useApp.getState().setView('canvas');
     } catch (error) {
       alert(`Failed to open file on canvas: ${error}`);
     }
   };
 
-  const handleRemove = () => {
-    if (confirm(`Remove "${file.name}" from the library? The actual file will not be deleted.`)) {
+  const handleRemove = async () => {
+    if (await appConfirm(`Remove "${label}" from the library? The actual file will not be deleted.`)) {
       removeFiles([file.id]);
     }
   };
 
   return (
     <div
-      className={cn('book-file', selected && 'selected', cut && 'cut')}
+      ref={dropRef}
+      data-books-drop=""
+      className={cn('book-file', selected && 'selected', cut && 'cut', missing && 'missing')}
       onPointerDown={editing ? undefined : handleDragStart}
+      title={searching ? undefined : dropLocation ? `Drop files here to add them to this location` : undefined}
     >
       {editing ? (
         <input
@@ -166,8 +254,14 @@ function FileRow({
           </div>
 
           <div className="book-file-main" onClick={onSelectRow} onDoubleClick={handleOpenOnCanvas} title={file.filePath}>
-            <div className="book-file-name">{file.name}</div>
+            <div className="book-file-name">{label}</div>
             <div className="book-file-meta">
+              {missing && (
+                <span className="book-file-missing-badge" title="Not found on disk — last check failed to locate this path">
+                  <FileQuestion size={11} />
+                  Missing
+                </span>
+              )}
               <span>{formatBytes(file.size)}</span>
               {file.extension && <span className="book-file-ext">{file.extension}</span>}
               {file.tags.map((tag) => (
@@ -202,6 +296,15 @@ function FileRow({
                   icon: <FolderOpen size={14} />,
                   onClick: handleReveal,
                 },
+                ...(onAddCitation
+                  ? [
+                      {
+                        label: 'Add citation',
+                        icon: <BookMarked size={14} />,
+                        onClick: onAddCitation,
+                      },
+                    ]
+                  : []),
                 {
                   label: effectiveIds.length > 1 ? `Copy ${effectiveIds.length} files` : 'Copy',
                   icon: <Copy size={14} />,
@@ -248,13 +351,17 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   const {
     projects,
     folders,
+    files: libraryFiles,
     selectedFolderId,
     selectedFileIds,
     setSelectedFiles,
     toggleFileSelection,
     getProjectFiles,
     searchFiles,
+    getFileLocation,
     importFiles,
+    verifyLibrary,
+    missingFileIds,
     removeFiles,
     moveFiles,
     copyFiles,
@@ -266,6 +373,18 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   } = useBooks();
 
   const [importing, setImporting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  /** Row id that a keyboard F2 requested to rename */
+  const [renameId, setRenameId] = useState<string | null>(null);
+  /** Batch citations dialog, with the file scope frozen at open time */
+  const [citationsOpen, setCitationsOpen] = useState(false);
+  const [citationScope, setCitationScope] = useState<string[]>([]);
+  /** Per-book Add citation dialog, opened from a row's "…" menu */
+  const [addCitationFileId, setAddCitationFileId] = useState<string | null>(null);
+  const openCitations = (ids: string[]) => {
+    setCitationScope(ids);
+    setCitationsOpen(true);
+  };
 
   const files = searchQuery
     ? searchFiles(searchQuery, searchProjectIds ?? projectId)
@@ -341,14 +460,106 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
 
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        await importFiles(projectId, selectedFolderId, paths);
+        const result = await importFiles(projectId, selectedFolderId, paths);
+
+        // Successful adds are visible in the list immediately; only report
+        // what the user couldn't get — skipped duplicates and hard failures
+        const notices: string[] = [];
+        if (result.duplicates.length > 0) {
+          notices.push(`Already in this location (skipped): ${result.duplicates.join(', ')}`);
+        }
+        if (result.failures.length > 0) {
+          notices.push(`Could not add:\n${result.failures.join('\n')}`);
+        }
+        if (notices.length > 0) {
+          const lead = result.added.length > 0
+            ? `Added ${result.added.length} file${result.added.length === 1 ? '' : 's'}.\n`
+            : '';
+          alert(lead + notices.join('\n'));
+        }
       }
     } catch (error) {
-      alert(`Failed to import files: ${error}`);
+      alert(`Failed to add files: ${errorMessage(error)}`);
     } finally {
       setImporting(false);
     }
   };
+
+  const handleVerify = async () => {
+    try {
+      setVerifying(true);
+      const missing = await verifyLibrary();
+      const totalFiles = Object.keys(libraryFiles).length;
+      alert(
+        missing.length === 0
+          ? `All ${totalFiles} library files were found on disk.`
+          : `${missing.length} of ${totalFiles} library files could not be found on disk — they are flagged “Missing” in the list. If a file moved, re-add it from its new location, or remove the stale reference.`
+      );
+    } catch (error) {
+      alert(`Could not check files on disk: ${errorMessage(error)}`);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Panel keyboard shortcuts: ⌘A select all in view, ⌫/Delete remove, F2 rename.
+  // Reads live state through getState()/refs so the listener never re-binds.
+  const visibleRef = useRef<{ fileIds: string[]; hasVisible: boolean }>({ fileIds: [], hasVisible: false });
+  useEffect(() => {
+    visibleRef.current = { fileIds: files.map((f) => f.id), hasVisible: files.length > 0 };
+  }, [files]);
+
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+      const store = useBooks.getState();
+      if (!store.activeProjectId) return;
+
+      // ⌘/Ctrl+A — select every file in the current view (native text-select
+      // still works while typing: the guard above returns first)
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+        const { fileIds, hasVisible } = visibleRef.current;
+        if (!hasVisible) return;
+        event.preventDefault();
+        store.setSelectedFiles(fileIds);
+        return;
+      }
+
+      // ⌫ / Delete — remove the selection (same confirm as the button)
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        const ids = store.selectedFileIds;
+        if (ids.length === 0) return;
+        event.preventDefault();
+        void (async () => {
+          if (
+            await appConfirm(
+              `Remove ${ids.length} file(s) from the library? Actual files will not be deleted.`
+            )
+          ) {
+            store.removeFiles(ids);
+          }
+        })();
+        return;
+      }
+
+      // F2 — rename the single selected file, if it's in this view
+      if (event.key === 'F2') {
+        if (store.selectedFileIds.length !== 1) return;
+        const [onlyId] = store.selectedFileIds;
+        if (!visibleRef.current.fileIds.includes(onlyId)) return;
+        event.preventDefault();
+        setRenameId(onlyId);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <div className="book-file-list">
@@ -374,10 +585,42 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
               type="button"
               className="btn btn-sm btn-ghost"
               onClick={() => setSelectedFiles(allSelected ? [] : files.map((f) => f.id))}
+              title={allSelected ? 'Clear selection' : 'Select all files (⌘A)'}
             >
               {allSelected ? 'Clear' : 'Select all'}
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() =>
+              openCitations(
+                (selectedFileIds.length > 0 ? selectedFileIds : files.map((f) => f.id)).filter((id) => {
+                  const target = libraryFiles[id];
+                  return !!target && isCitationCapable(target.extension);
+                }),
+              )
+            }
+            disabled={files.length === 0}
+            title={
+              selectedFileIds.length > 0
+                ? 'Get citations for the selected books'
+                : 'Get citations for every book in this view'
+            }
+          >
+            <BookMarked size={14} />
+            Citations
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={handleVerify}
+            disabled={verifying || Object.keys(libraryFiles).length === 0}
+            title="Check every referenced file against the disk and flag the missing ones"
+          >
+            <FileQuestion size={14} className={verifying ? 'btn-spin' : undefined} />
+            {verifying ? 'Checking…' : 'Verify'}
+          </button>
           <button
             type="button"
             className="btn btn-sm btn-primary"
@@ -417,10 +660,27 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           </button>
           <button
             type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() =>
+              openCitations(
+                selectedFileIds.filter((id) => {
+                  const target = libraryFiles[id];
+                  return !!target && isCitationCapable(target.extension);
+                }),
+              )
+            }
+            title="Get and export citations for the selected books"
+          >
+            <BookMarked size={14} />
+            Citations
+          </button>
+          <button
+            type="button"
             className="btn btn-sm btn-danger-text"
-            onClick={() => {
+            title="Remove selection (⌫)"
+            onClick={async () => {
               if (
-                confirm(
+                await appConfirm(
                   `Remove ${selectedFileIds.length} file(s) from the library? Actual files will not be deleted.`
                 )
               ) {
@@ -467,12 +727,25 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
 
         {files.map((file) => {
           const selected = selectedFileIds.includes(file.id);
+          // The row's drop target: the viewed folder normally; in search
+          // results, the file's own home so results accept drops again
+          const dropLocation = searchQuery
+            ? getFileLocation(file.id)
+            : { projectId, folderId: selectedFolderId };
           return (
             <FileRow
               key={file.id}
               file={file}
               selected={selected}
               cut={!!cutIds && cutIds.has(file.id)}
+              missing={missingFileIds.includes(file.id)}
+              searching={!!searchQuery}
+              dropLocation={dropLocation}
+              wantRename={renameId === file.id}
+              onRenameOpened={() => setRenameId(null)}
+              onAddCitation={
+                isCitationCapable(file.extension) ? () => setAddCitationFileId(file.id) : undefined
+              }
               onSelectRow={() => {
                 if (!booksClickSuppressed()) setSelectedFiles(selected && selectedFileIds.length === 1 ? [] : [file.id]);
               }}
@@ -481,6 +754,15 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           );
         })}
       </div>
+
+      <CitationsDialog open={citationsOpen} onClose={() => setCitationsOpen(false)} fileIds={citationScope} />
+
+      <AddCitationDialog
+        key={addCitationFileId ?? 'none'}
+        open={addCitationFileId !== null}
+        onClose={() => setAddCitationFileId(null)}
+        fileId={addCitationFileId}
+      />
     </div>
   );
 }

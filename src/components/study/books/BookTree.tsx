@@ -3,6 +3,7 @@
 import React, { useRef, useState } from 'react';
 import { useBooks } from '@/store/books';
 import { RowMenu } from './RowMenu';
+import { appConfirm } from '@/lib/ui-dialogs';
 import {
   beginBooksDrag,
   booksClickSuppressed,
@@ -38,6 +39,7 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
     deleteFolder,
     createFolder,
     getFolderChildren,
+    getFolderFileCount,
     moveFiles,
     copyFiles,
     moveFolder,
@@ -79,6 +81,7 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
   const children = getFolderChildren(folderId);
   const isSelected = selectedFolderId === folderId;
   const hasChildren = children.length > 0;
+  const folderFileCount = getFolderFileCount(folderId);
 
   const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
     if (isBooksDragBlockedTarget(event.target as Element)) return;
@@ -167,9 +170,12 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
               </span>
             </div>
 
-            {folder.fileIds.length > 0 && (
-              <span className="folder-count" title={`${folder.fileIds.length} file${folder.fileIds.length === 1 ? '' : 's'}`}>
-                {folder.fileIds.length}
+            {folderFileCount > 0 && (
+              <span
+                className="folder-count"
+                title={`${folderFileCount} file${folderFileCount === 1 ? '' : 's'} incl. subfolders`}
+              >
+                {folderFileCount}
               </span>
             )}
 
@@ -208,9 +214,9 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
                   icon: <Trash2 size={14} />,
                   danger: true,
                   dividerBefore: true,
-                  onClick: () => {
+                  onClick: async () => {
                     if (
-                      confirm(
+                      await appConfirm(
                         `Delete "${folder.name}" and all its contents? This only removes references, not the actual files.`
                       )
                     ) {
@@ -533,8 +539,8 @@ export function BookTree({ newProjectOpen, onNewProjectOpenChange }: BookTreePro
     setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Delete this project? All folders and file references will be removed (actual files remain untouched).')) {
+  const handleDelete = async (id: string) => {
+    if (await appConfirm('Delete this project? All folders and file references will be removed (actual files remain untouched).')) {
       deleteProject(id);
     }
   };

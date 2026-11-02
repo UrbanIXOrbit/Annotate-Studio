@@ -17,6 +17,8 @@
     "shell:allow-open",
     "notification:default",
     "dialog:default",
+    "dialog:allow-confirm",
+    "dialog:allow-ask",
     "fs:default",
     "fs:allow-write-file"
   ]

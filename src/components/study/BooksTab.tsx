@@ -6,7 +6,7 @@ import { BookTree } from './books/BookTree';
 import { BookFileList } from './books/BookFileList';
 import { BookFileDetails } from './books/BookFileDetails';
 import { isTauri } from '@/lib/tauri-commands';
-import { Check, ChevronDown, FileStack, FolderSearch, Plus, Search } from 'lucide-react';
+import { Check, ChevronDown, FileStack, FolderSearch, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** Where a Books search looks: the viewed project, a hand-picked subset, or everything. */
@@ -140,10 +140,12 @@ function SearchScopePicker({
 }
 
 export default function BooksTab() {
-  const { hydrated, hydrate, projects, files, activeProjectId, selectedFileIds, setSelectedFiles } = useBooks();
+  const { hydrated, hydrate, projects, files, activeProjectId, selectedFileIds, setSelectedFiles, undoStack, undoLast, clearUndo } = useBooks();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScope, setSearchScope] = useState<BooksSearchScope>({ kind: 'active' });
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  /** ⌘F target: the search input ref, attached to the search field below */
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // The concrete project ids the search runs over; null means "the project being viewed".
   // Pick lists are pruned against live projects so deletions can't leave ghosts.
@@ -186,6 +188,14 @@ export default function BooksTab() {
 
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
+
+      // ⌘/Ctrl+F — jump to the search box, no matter what has focus
+      if (key === 'f') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
       if (key !== 'c' && key !== 'x' && key !== 'v') return;
       if (isTypingTarget(event.target)) return;
 
@@ -235,6 +245,8 @@ export default function BooksTab() {
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const totalFiles = Object.keys(files).length;
   const detailsFileId = selectedFileIds.length === 1 ? selectedFileIds[0] : null;
+  // Newest destructive op sits at the end of the stack
+  const lastUndo = undoStack[undoStack.length - 1] ?? null;
 
   return (
     <div className="books-page">
@@ -256,9 +268,10 @@ export default function BooksTab() {
           <div className="search-field books-search">
             <Search size={15} />
             <input
+              ref={searchInputRef}
               className="input"
               type="text"
-              placeholder="Search files, tags, notes…"
+              placeholder="Search files, tags, notes… (⌘F)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               dir="auto"
@@ -310,6 +323,36 @@ export default function BooksTab() {
           </div>
         )}
       </div>
+
+      {lastUndo && (
+        <div className="books-undo-toast" role="status">
+          <span className="books-undo-label">{lastUndo.label}</span>
+          {undoStack.length > 1 && (
+            <span className="books-undo-count" title={`${undoStack.length} actions can be undone`}>
+              {undoStack.length}
+            </span>
+          )}
+          <span className="books-undo-spacer" />
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost books-undo-btn"
+            onClick={undoLast}
+            title={undoStack.length > 1 ? 'Undo the most recent deletion' : 'Undo this deletion'}
+          >
+            <RotateCcw size={13} />
+            Undo
+          </button>
+          <button
+            type="button"
+            className="icon-btn icon-btn-sm"
+            onClick={clearUndo}
+            aria-label="Dismiss undo history"
+            title="Dismiss — later deletions keep new entries in the history"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
