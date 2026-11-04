@@ -7140,6 +7140,26 @@ input[type='checkbox'] {
   flex: 1;
 }
 
+/* Live selection count — pulses briefly whenever the number changes */
+.books-selection-count {
+  display: inline-block;
+}
+
+@keyframes books-selection-bump {
+  0% {
+    transform: scale(1.25);
+    color: var(--primary);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.books-selection-count {
+  animation: books-selection-bump 0.24s ease-out;
+  transform-origin: left center;
+}
+
 .book-file-body {
   flex: 1;
   min-height: 0;
@@ -7594,6 +7614,109 @@ input[type='checkbox'] {
   color: var(--primary);
 }
 
+/* Fading exit when the undo history empties (last entry undone or dismissed) */
+.books-undo-toast-exit {
+  animation: books-undo-out 0.2s ease-out forwards;
+}
+
+@keyframes books-undo-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+}
+
+/* Dismissible outcome banner for imports and disk verification */
+.books-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 10px 10px 0;
+  padding: 9px 8px 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  flex-shrink: 0;
+  animation: pop-in 0.12s ease-out;
+}
+
+.books-notice-success {
+  background: color-mix(in srgb, var(--success) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 32%, transparent);
+  color: var(--text-primary);
+}
+
+.books-notice-warning {
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  color: var(--text-primary);
+}
+
+.books-notice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.books-notice-success .books-notice-icon {
+  color: var(--success);
+}
+
+.books-notice-warning .books-notice-icon {
+  color: var(--warning);
+}
+
+.books-notice-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.books-notice-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.books-notice-summary {
+  min-width: 0;
+}
+
+.books-notice-toggle {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.books-notice-toggle:hover {
+  color: var(--text-primary);
+}
+
+.books-notice-details {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.books-notice-details li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Books drag & drop ───────────────────────────────────────── */
 
 /* Row being dragged */
@@ -7620,12 +7743,34 @@ input[type='checkbox'] {
   gap: 3px;
   height: 17px;
   padding: 0 5px;
+  border: none;
   border-radius: 4px;
   background: color-mix(in srgb, var(--warning) 14%, transparent);
   color: var(--warning);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.book-file-missing-badge:hover {
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+}
+
+/* Details panel: missing-file warning plus its "Show folder" action */
+.file-details-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-details-missing .file-details-warning {
+  margin: 0;
+}
+
+.file-details-missing .file-details-hint {
+  margin: 0;
 }
 
 /* Drop onto an individual file row (e.g. drag into the row file's own location,

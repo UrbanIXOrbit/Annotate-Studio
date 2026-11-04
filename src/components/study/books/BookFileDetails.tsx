@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import { useBooks } from '@/store/books';
-import { X, Tag, FileText, FileQuestion, Calendar, HardDrive, Pencil, Save, Plus } from 'lucide-react';
+import { X, Tag, FileText, FileQuestion, Calendar, HardDrive, Pencil, Save, Plus, FolderOpen } from 'lucide-react';
 import { cn, formatBytes } from '@/lib/utils';
+import { errorMessage, revealExternalFile } from '@/lib/tauri-commands';
 import { BookCitationSection } from './BookCitationSection';
 
 interface BookFileDetailsProps {
@@ -53,6 +54,16 @@ export function BookFileDetails({ fileId, onClose }: BookFileDetailsProps) {
   const handleSaveNotes = () => {
     updateFile(fileId, { notes: notesInput });
     setEditingNotes(false);
+  };
+
+  // Opens the containing folder when the file is missing (the Tauri command
+  // falls back to the parent), so the user can see where the file went
+  const handleReveal = async () => {
+    try {
+      await revealExternalFile(file.filePath);
+    } catch (error) {
+      alert(`Failed to reveal file: ${errorMessage(error)}`);
+    }
   };
 
   return (
@@ -120,10 +131,18 @@ export function BookFileDetails({ fileId, onClose }: BookFileDetailsProps) {
             detection and verification keep working.
           </p>
           {isMissing && (
-            <p className="file-details-warning">
-              <FileQuestion size={12} />
-              Not found on disk — it may have been moved or deleted. Re-add it from its new location, or remove the stale reference.
-            </p>
+            <div className="file-details-missing">
+              <p className="file-details-warning">
+                <FileQuestion size={12} />
+                Not found on disk — it may have been moved or deleted. Re-add it from its new location, or remove the
+                stale reference.
+              </p>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={handleReveal}>
+                <FolderOpen size={13} />
+                Show folder
+              </button>
+              <p className="file-details-hint">Opens the folder the file was imported from, even when the file moved.</p>
+            </div>
           )}
         </div>
 

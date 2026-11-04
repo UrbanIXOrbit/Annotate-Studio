@@ -411,39 +411,54 @@ pub fn open_external_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Reveal a file in the system file explorer
+/// Reveal a file in the system file explorer. When the file itself no longer
+/// exists but its folder does (e.g. it was moved or deleted), the containing
+/// folder is opened instead — so a flagged-missing library entry can still be
+/// located without the reveal failing outright.
 #[tauri::command(async)]
 pub fn reveal_external_file(path: String) -> Result<(), String> {
     let file_path = Path::new(&path);
+    let exists = file_path.exists();
+    let parent = file_path.parent().filter(|p| p.exists()).map(|p| p.to_path_buf());
 
-    // Verify file exists
-    if !file_path.exists() {
-        return Err(format!("File not found: {}", path));
+    if !exists && parent.is_none() {
+        return Err(format!("File and its folder were not found: {}", path));
     }
 
     // Reveal the file in the file explorer
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .args(["/select,", &path])
-            .spawn()
-            .map_err(|e| format!("Failed to reveal file: {}", e))?;
+        if exists {
+            std::process::Command::new("explorer")
+                .args(["/select,", &path])
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+        } else {
+            open_folder_windows(parent.unwrap())
+        }
     }
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .args(["-R", &path])
-            .spawn()
-            .map_err(|e| format!("Failed to reveal file: {}", e))?;
+        if exists {
+            std::process::Command::new("open")
+                .args(["-R", &path])
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+        } else {
+            std::process::Command::new("open")
+                .arg(parent.unwrap())
+                .spawn()
+                .map_err(|e| format!("Failed to reveal folder: {}", e))?;
+        }
     }
 
     #[cfg(target_os = "linux")]
     {
         // On Linux, try to reveal in file manager or fall back to opening the parent directory
-        if let Some(parent) = file_path.parent() {
+        if let Some(target) = if exists { Some(path) } else { parent.map(|p| p.to_string_lossy().into_owned()) } {
             std::process::Command::new("xdg-open")
-                .arg(parent)
+                .arg(target)
                 .spawn()
                 .map_err(|e| format!("Failed to reveal file: {}", e))?;
         } else {
@@ -452,6 +467,14 @@ pub fn reveal_external_file(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_folder_windows(folder: std::path::PathBuf) -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg(&folder)
+        .spawn()
+        .map_err(|e| format!("Failed to reveal folder: {}", e))
 }
 
 /// Read external file bytes

@@ -219,6 +219,37 @@ export default function BooksTab() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // Newest destructive op sits at the end of the stack
+  const lastUndo = undoStack[undoStack.length - 1] ?? null;
+
+  // The toast fades out instead of vanishing when the history empties (last
+  // entry undone, or dismissed): capture the departing label once, keep the
+  // toast mounted for the exit animation, then drop it. Hooks must run on
+  // every render — before the early returns below, never after them.
+  const [exitLabel, setExitLabel] = useState<string | null>(null);
+  const lastLabelRef = useRef<string | null>(null);
+  const lastUndoId = lastUndo?.id ?? null;
+  useEffect(() => {
+    if (lastUndo) {
+      lastLabelRef.current = lastUndo.label;
+      return;
+    }
+    // lastUndo just became null — if the component still holds a label, fade it out
+    if (lastLabelRef.current) {
+      setExitLabel(lastLabelRef.current);
+      lastLabelRef.current = null;
+    } else {
+      setExitLabel(null);
+    }
+  }, [lastUndoId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!exitLabel) return;
+    const timer = setTimeout(() => setExitLabel(null), 200);
+    return () => clearTimeout(timer);
+  }, [exitLabel]);
+  const toastLabel = lastUndo?.label ?? exitLabel;
+  const toastIsFading = !lastUndo && !!toastLabel;
+
   if (!isTauri()) {
     return (
       <div className="page page-center">
@@ -245,8 +276,6 @@ export default function BooksTab() {
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const totalFiles = Object.keys(files).length;
   const detailsFileId = selectedFileIds.length === 1 ? selectedFileIds[0] : null;
-  // Newest destructive op sits at the end of the stack
-  const lastUndo = undoStack[undoStack.length - 1] ?? null;
 
   return (
     <div className="books-page">
@@ -324,33 +353,37 @@ export default function BooksTab() {
         )}
       </div>
 
-      {lastUndo && (
-        <div className="books-undo-toast" role="status">
-          <span className="books-undo-label">{lastUndo.label}</span>
-          {undoStack.length > 1 && (
+      {toastLabel && (
+        <div className={cn('books-undo-toast', toastIsFading && 'books-undo-toast-exit')} role="status" aria-live="polite">
+          <span className="books-undo-label">{toastLabel}</span>
+          {!toastIsFading && undoStack.length > 1 && (
             <span className="books-undo-count" title={`${undoStack.length} actions can be undone`}>
               {undoStack.length}
             </span>
           )}
           <span className="books-undo-spacer" />
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost books-undo-btn"
-            onClick={undoLast}
-            title={undoStack.length > 1 ? 'Undo the most recent deletion' : 'Undo this deletion'}
-          >
-            <RotateCcw size={13} />
-            Undo
-          </button>
-          <button
-            type="button"
-            className="icon-btn icon-btn-sm"
-            onClick={clearUndo}
-            aria-label="Dismiss undo history"
-            title="Dismiss — later deletions keep new entries in the history"
-          >
-            <X size={13} />
-          </button>
+          {!toastIsFading && (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost books-undo-btn"
+                onClick={undoLast}
+                title={undoStack.length > 1 ? 'Undo the most recent deletion' : 'Undo this deletion'}
+              >
+                <RotateCcw size={13} />
+                Undo
+              </button>
+              <button
+                type="button"
+                className="icon-btn icon-btn-sm"
+                onClick={clearUndo}
+                aria-label="Dismiss undo history"
+                title="Dismiss — later deletions keep new entries in the history"
+              >
+                <X size={13} />
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

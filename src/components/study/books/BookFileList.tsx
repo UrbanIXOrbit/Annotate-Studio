@@ -27,6 +27,9 @@ import {
   Scissors,
   ClipboardPaste,
   BookMarked,
+  AlertTriangle,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openExternalFile, revealExternalFile, errorMessage } from '@/lib/tauri-commands';
@@ -182,6 +185,9 @@ function FileRow({
   const handleReveal = async () => {
     try {
       await revealExternalFile(file.filePath);
+      // When the file is missing this opens the containing folder instead of
+      // failing (the Rust command falls back to the parent) — handy for
+      // spotting where the file went after a move.
     } catch (error) {
       alert(`Failed to reveal file: ${error}`);
     }
@@ -257,10 +263,18 @@ function FileRow({
             <div className="book-file-name">{label}</div>
             <div className="book-file-meta">
               {missing && (
-                <span className="book-file-missing-badge" title="Not found on disk — last check failed to locate this path">
+                <button
+                  type="button"
+                  className="book-file-missing-badge"
+                  title={`Not found on disk: ${file.filePath}\nClick to open the folder it was in`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleReveal();
+                  }}
+                >
                   <FileQuestion size={11} />
                   Missing
-                </span>
+                </button>
               )}
               <span>{formatBytes(file.size)}</span>
               {file.extension && <span className="book-file-ext">{file.extension}</span>}
@@ -347,6 +361,17 @@ interface BookFileListProps {
   searchProjectIds: string[] | null;
 }
 
+/**
+ * Outcome of an import or a disk verification, kept as a dismissible banner
+ * instead of a modal alert so the numbers stay on screen and the per-file
+ * details can be opened on demand.
+ */
+interface ActionNotice {
+  tone: 'success' | 'warning';
+  summary: string;
+  details: string[];
+}
+
 export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookFileListProps) {
   const {
     projects,
@@ -374,6 +399,9 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
 
   const [importing, setImporting] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  /** Outcome of the last import/verify — a dismissible banner, cleared when the view changes */
+  const [notice, setNotice] = useState<ActionNotice | null>(null);
+  const [noticeExpanded, setNoticeExpanded] = useState(false);
   /** Row id that a keyboard F2 requested to rename */
   const [renameId, setRenameId] = useState<string | null>(null);
   /** Batch citations dialog, with the file scope frozen at open time */
@@ -389,6 +417,13 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   const files = searchQuery
     ? searchFiles(searchQuery, searchProjectIds ?? projectId)
     : getProjectFiles(projectId, selectedFolderId);
+
+  // Banners describe the view they were produced for — swap folder/project or
+  // start another search and the stale report would only confuse.
+  useEffect(() => {
+    setNotice(null);
+    setNoticeExpanded(false);
+  }, [projectId, selectedFolderId, searchQuery, searchProjectIds?.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeFolder = selectedFolderId ? folders[selectedFolderId] : null;
   const activeProjectName = projects.find((p) => p.id === projectId)?.name ?? 'Search results';
@@ -462,21 +497,30 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
         const paths = Array.isArray(selected) ? selected : [selected];
         const result = await importFiles(projectId, selectedFolderId, paths);
 
-        // Successful adds are visible in the list immediately; only report
-        // what the user couldn't get — skipped duplicates and hard failures
-        const notices: string[] = [];
+        // Successful adds are visible in the list immediately; the banner
+        // reports the counts and holds the skipped/failed names until dismissed
+        const details: string[] = [];
         if (result.duplicates.length > 0) {
-          notices.push(`Already in this location (skipped): ${result.duplicates.join(', ')}`);
+          details.push(`Already in this location (skipped): ${result.duplicates.join(', ')}`);
         }
         if (result.failures.length > 0) {
-          notices.push(`Could not add:\n${result.failures.join('\n')}`);
+          details.push(`Could not add: ${result.failures.join(', ')}`);
         }
-        if (notices.length > 0) {
-          const lead = result.added.length > 0
-            ? `Added ${result.added.length} file${result.added.length === 1 ? '' : 's'}.\n`
-            : '';
-          alert(lead + notices.join('\n'));
+        const parts: string[] = [];
+        if (result.added.length > 0) {
+          parts.push(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'}`);
         }
+        if (result.duplicates.length > 0) {
+          parts.push(`${result.duplicates.length} skipped`);
+        }
+        if (result.failures.length > 0) {
+          parts.push(`${result.failures.length} failed`);
+        }
+        setNotice({
+          tone: result.failures.length > 0 || result.duplicates.length > 0 ? 'warning' : 'success',
+          summary: parts.length > 0 ? `${parts.join(' · ')}.` : 'Nothing to add.',
+          details,
+        });
       }
     } catch (error) {
       alert(`Failed to add files: ${errorMessage(error)}`);
@@ -490,11 +534,23 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
       setVerifying(true);
       const missing = await verifyLibrary();
       const totalFiles = Object.keys(libraryFiles).length;
-      alert(
-        missing.length === 0
-          ? `All ${totalFiles} library files were found on disk.`
-          : `${missing.length} of ${totalFiles} library files could not be found on disk — they are flagged “Missing” in the list. If a file moved, re-add it from its new location, or remove the stale reference.`
-      );
+      if (missing.length === 0) {
+        setNotice({
+          tone: 'success',
+          summary: `All ${totalFiles} library files were found on disk.`,
+          details: [],
+        });
+      } else {
+        setNotice({
+          tone: 'warning',
+          summary: `${missing.length} of ${totalFiles} library files could not be found on disk.`,
+          details: missing.map((id) => {
+            const target = libraryFiles[id];
+            if (!target) return id;
+            return target.filePath || target.name;
+          }),
+        });
+      }
     } catch (error) {
       alert(`Could not check files on disk: ${errorMessage(error)}`);
     } finally {
@@ -636,7 +692,8 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
 
       {selectedFileIds.length > 0 && (
         <div className="book-file-selection">
-          <span>
+          {/* key restarts the bump animation on every count change */}
+          <span key={selectedFileIds.length} className="books-selection-count">
             {selectedFileIds.length} selected
           </span>
           <span className="book-file-selection-spacer" />
@@ -693,6 +750,50 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           </button>
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSelectedFiles([])}>
             Clear
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div className={cn('books-notice', `books-notice-${notice.tone}`)} role="status">
+          {notice.tone === 'success' ? (
+            <CheckCircle2 size={15} className="books-notice-icon" />
+          ) : (
+            <AlertTriangle size={15} className="books-notice-icon" />
+          )}
+          <div className="books-notice-main">
+            <div className="books-notice-line">
+              <span className="books-notice-summary">{notice.summary}</span>
+              {notice.details.length > 0 && (
+                <button
+                  type="button"
+                  className="books-notice-toggle"
+                  onClick={() => setNoticeExpanded((v) => !v)}
+                >
+                  {noticeExpanded ? 'Hide details' : `Details (${notice.details.length})`}
+                </button>
+              )}
+            </div>
+            {noticeExpanded && notice.details.length > 0 && (
+              <ul className="books-notice-details">
+                {notice.details.map((detail, index) => (
+                  <li key={index} title={detail}>
+                    {detail}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button
+            type="button"
+            className="icon-btn icon-btn-sm"
+            onClick={() => {
+              setNotice(null);
+              setNoticeExpanded(false);
+            }}
+            aria-label="Dismiss notification"
+          >
+            <X size={13} />
           </button>
         </div>
       )}
