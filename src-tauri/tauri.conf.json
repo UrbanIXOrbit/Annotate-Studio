@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.annotate-studio.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "node node_modules/next/dist/bin/next dev -p 3210",
+    "devUrl": "http://localhost:3210",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

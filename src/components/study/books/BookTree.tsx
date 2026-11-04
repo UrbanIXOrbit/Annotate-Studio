@@ -419,7 +419,7 @@ function ProjectNode({
             {fileCount > 0 && (
               <span
                 className="folder-count"
-                title={`${fileCount} file${fileCount === 1 ? '' : 's'} in this project`}
+                title={`${fileCount} file${fileCount === 1 ? '' : 's'} in this project (folders included)`}
               >
                 {fileCount}
               </span>

@@ -86,7 +86,15 @@ export function isFolderInSubtree(
 function createGhost(label: string): HTMLElement {
   const el = document.createElement('div');
   el.className = 'books-drag-badge';
-  el.textContent = label;
+  const text = document.createElement('span');
+  text.textContent = label;
+  // Teach the gesture while it happens: plain drop moves, Alt/Option copies.
+  const hint = document.createElement('span');
+  hint.className = 'books-drag-badge-hint';
+  hint.textContent = /Mac|iPhone|iPad/i.test(navigator.userAgent)
+    ? 'Drop: move · ⌥: copy'
+    : 'Drop: move · Alt: copy';
+  el.append(text, hint);
   el.style.position = 'fixed';
   el.style.left = '0';
   el.style.top = '0';

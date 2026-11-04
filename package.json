@@ -10,7 +10,7 @@
     "test": "node --test --experimental-strip-types --no-warnings src/lib/*.test.ts",
     "tauri": "tauri",
     "doctor": "node scripts/check-env.mjs",
-    "app": "node scripts/check-env.mjs && tauri dev",
+    "app": "node scripts/check-env.mjs && (lsof -ti tcp:3210 | xargs kill 2>/dev/null); tauri dev",
     "app:build": "node scripts/check-env.mjs && tauri build"
   },
   "dependencies": {

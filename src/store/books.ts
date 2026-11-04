@@ -158,6 +158,8 @@ export interface BooksImportResult {
 export interface BooksUndoEntry {
   id: string;
   label: string;
+  /** When the destructive action happened — feeds the history pop-over */
+  ts: number;
   projects: BookProject[];
   folders: Record<string, BookFolder>;
   files: Record<string, BookFile>;
@@ -170,6 +172,7 @@ function pushUndoEntry(stack: BooksUndoEntry[], state: BooksState, label: string
   const entry: BooksUndoEntry = {
     id: uid(),
     label,
+    ts: Date.now(),
     projects: state.projects,
     folders: state.folders,
     files: state.files,
@@ -223,6 +226,7 @@ interface BooksActions {
 
   // Undo actions (ephemeral history, newest first from the end of the stack)
   undoLast: () => void;
+  undoTo: (entryId: string) => void;
   clearUndo: () => void;
   
   // Clipboard actions
@@ -1038,6 +1042,23 @@ export const useBooks = create<BooksStore>((set, get) => ({
       // Selection / missing flags may reference restored ids; missing is
       // deliberately stale-safe, selection ids become valid again
       undoStack: undoStack.slice(0, -1),
+    });
+  },
+
+  // Restore the snapshot taken just before the picked action — reverting it
+  // and every newer action at once. Entries older than the pick stay undoable.
+  undoTo: (entryId) => {
+    const { undoStack } = get();
+    const index = undoStack.findIndex((entry) => entry.id === entryId);
+    if (index === -1) return;
+    const entry = undoStack[index];
+
+    set({
+      projects: entry.projects,
+      folders: entry.folders,
+      files: entry.files,
+      activeProjectId: entry.activeProjectId,
+      undoStack: undoStack.slice(0, index),
     });
   },
 

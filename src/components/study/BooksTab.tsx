@@ -5,8 +5,9 @@ import { useBooks, type BookProject } from '@/store/books';
 import { BookTree } from './books/BookTree';
 import { BookFileList } from './books/BookFileList';
 import { BookFileDetails } from './books/BookFileDetails';
+import Dialog from '@/components/ui/Dialog';
 import { isTauri } from '@/lib/tauri-commands';
-import { Check, ChevronDown, FileStack, FolderSearch, Plus, RotateCcw, Search, X } from 'lucide-react';
+import { Check, ChevronDown, FileStack, FolderSearch, HelpCircle, History, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** Where a Books search looks: the viewed project, a hand-picked subset, or everything. */
@@ -36,7 +37,6 @@ function SearchScopePicker({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-
   // Close on outside press or Escape while the picker is open.
   useEffect(() => {
     if (!open) return;
@@ -139,11 +139,75 @@ function SearchScopePicker({
   );
 }
 
+/** "2m ago"-style relative time for the undo history pop-over */
+function undoAge(ts: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
+
+/** Cheat-sheet for everything reachable from the keyboard in the Books manager. */
+function BooksShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const rows: Array<[string, string, string]> = [
+    ['⌘/Ctrl + F', 'Focus the search box', 'Search'],
+    ['⌘/Ctrl + A', 'Select every file in the current view', 'Selection'],
+    ['Click / checkbox', 'Select one file / add to selection', 'Selection'],
+    ['⌘/Ctrl + C', 'Copy the selection', 'Clipboard'],
+    ['⌘/Ctrl + X', 'Cut the selection', 'Clipboard'],
+    ['⌘/Ctrl + V', 'Paste into the viewed folder or project', 'Clipboard'],
+    ['Drag', 'Move files or folders onto any project, folder or file row', 'Drag & drop'],
+    ['⌥/Alt + drag', 'Copy instead of move', 'Drag & drop'],
+    ['Double-click', 'Open the file on the canvas', 'Files'],
+    ['F2', 'Rename the selected file', 'Files'],
+    ['⌫ / Delete', 'Remove the selection from the library', 'Files'],
+    ['Esc', 'Cancel a cut, close dialogs', 'General'],
+    ['?', 'Show this cheat-sheet', 'General'],
+  ];
+  const groups = ['Search', 'Selection', 'Clipboard', 'Drag & drop', 'Files', 'General'];
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Books shortcuts" width={520}>
+      <div className="books-help">
+        <p className="books-help-intro">
+          Files are referenced in place — removing them from the library never deletes the actual file,
+          and every deletion can be undone from the bar at the bottom of the page.
+        </p>
+        {groups.map((group) => (
+          <div key={group} className="books-help-group">
+            <h4>{group}</h4>
+            <table>
+              <tbody>
+                {rows
+                  .filter(([, , g]) => g === group)
+                  .map(([keys, description]) => (
+                    <tr key={keys}>
+                      <td>
+                        <kbd>{keys}</kbd>
+                      </td>
+                      <td>{description}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+    </Dialog>
+  );
+}
+
 export default function BooksTab() {
-  const { hydrated, hydrate, projects, files, activeProjectId, selectedFileIds, setSelectedFiles, undoStack, undoLast, clearUndo } = useBooks();
+  const { hydrated, hydrate, projects, files, activeProjectId, selectedFileIds, setSelectedFiles, undoStack, undoLast, undoTo } = useBooks();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScope, setSearchScope] = useState<BooksSearchScope>({ kind: 'active' });
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  /** Shortcut cheat-sheet modal (Help button or "?") */
+  const [helpOpen, setHelpOpen] = useState(false);
+  /** Undo history pop-over, opened from the count chip in the toast */
+  const [historyOpen, setHistoryOpen] = useState(false);
   /** ⌘F target: the search input ref, attached to the search field below */
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -183,11 +247,20 @@ export default function BooksTab() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         if (useBooks.getState().clipboard?.mode === 'cut') useBooks.getState().clearClipboard();
+        setHelpOpen(false);
+        setHistoryOpen(false);
         return;
       }
 
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
+
+      // ? — open the shortcut cheat-sheet (unless typing in a field)
+      if (event.key === '?' && !isTypingTarget(event.target)) {
+        event.preventDefault();
+        setHelpOpen(true);
+        return;
+      }
 
       // ⌘/Ctrl+F — jump to the search box, no matter what has focus
       if (key === 'f') {
@@ -229,7 +302,10 @@ export default function BooksTab() {
   const [exitLabel, setExitLabel] = useState<string | null>(null);
   const lastLabelRef = useRef<string | null>(null);
   const lastUndoId = lastUndo?.id ?? null;
+  /** When the toast's ✕ was pressed (keyed to the entry it dismissed) */
+  const [toastDismissedId, setToastDismissedId] = useState<string | null>(null);
   useEffect(() => {
+    setToastDismissedId(null);
     if (lastUndo) {
       lastLabelRef.current = lastUndo.label;
       return;
@@ -306,6 +382,94 @@ export default function BooksTab() {
               dir="auto"
             />
           </div>
+          {/* Undo lives in the header permanently so it can always be found —
+              the bottom toast is only feedback for the most recent action. */}
+          <div className="books-undo-header">
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={undoLast}
+              disabled={undoStack.length === 0}
+              title={
+                undoStack.length === 0
+                  ? 'Nothing to undo — Undo appears here after you delete something'
+                  : `Undo the most recent deletion (${undoStack.length} undoable)`
+              }
+            >
+              <RotateCcw size={13} />
+              Undo
+            </button>
+            <button
+              type="button"
+              className={cn('books-undo-history-btn', historyOpen && 'books-undo-history-btn-open')}
+              onClick={() => setHistoryOpen((v) => !v)}
+              disabled={undoStack.length === 0}
+              aria-expanded={historyOpen}
+              title={
+                undoStack.length === 0
+                  ? 'History appears here after you delete something'
+                  : 'See everything that can still be undone'
+              }
+            >
+              <History size={13} />
+              History
+              {undoStack.length > 0 && <span className="books-undo-history-chip">{undoStack.length}</span>}
+            </button>
+
+            {historyOpen && undoStack.length > 0 && (
+              <div className="books-undo-history books-undo-history-header" role="dialog" aria-label="Undo history">
+                <div className="books-undo-history-head">
+                  <History size={13} />
+                  <span>Undo history · newest first</span>
+                  <button
+                    type="button"
+                    className="icon-btn icon-btn-sm books-undo-history-close"
+                    onClick={() => setHistoryOpen(false)}
+                    aria-label="Close undo history"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+                {[...undoStack].reverse().map((entry, index) => (
+                  <div key={entry.id} className="books-undo-history-row">
+                    <div className="books-undo-history-info">
+                      <span className="books-undo-history-label">{entry.label}</span>
+                      <span className="books-undo-history-time">
+                        {index === 0 ? `${undoAge(entry.ts)} · latest` : undoAge(entry.ts)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost books-undo-history-restore"
+                      title={
+                        index === 0
+                          ? 'Undo just this action'
+                          : `Undoes this action and the ${index} newer one${index === 1 ? '' : 's'} — the library returns to how it was right before it`
+                      }
+                      onClick={() => {
+                        undoTo(entry.id);
+                        setHistoryOpen(false);
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))}
+                <p className="books-undo-history-hint">
+                  “Restore” rewinds the library to exactly how it was just before that action happened.
+                </p>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setHelpOpen(true)}
+            title="Keyboard shortcuts (?)"
+            aria-label="Show Books keyboard shortcuts"
+          >
+            <HelpCircle size={16} />
+          </button>
         </div>
       </header>
 
@@ -353,14 +517,9 @@ export default function BooksTab() {
         )}
       </div>
 
-      {toastLabel && (
+      {toastLabel && !(toastDismissedId && toastDismissedId === lastUndoId) && (
         <div className={cn('books-undo-toast', toastIsFading && 'books-undo-toast-exit')} role="status" aria-live="polite">
           <span className="books-undo-label">{toastLabel}</span>
-          {!toastIsFading && undoStack.length > 1 && (
-            <span className="books-undo-count" title={`${undoStack.length} actions can be undone`}>
-              {undoStack.length}
-            </span>
-          )}
           <span className="books-undo-spacer" />
           {!toastIsFading && (
             <>
@@ -376,9 +535,9 @@ export default function BooksTab() {
               <button
                 type="button"
                 className="icon-btn icon-btn-sm"
-                onClick={clearUndo}
-                aria-label="Dismiss undo history"
-                title="Dismiss — later deletions keep new entries in the history"
+                onClick={() => setToastDismissedId(lastUndoId)}
+                aria-label="Hide this notification"
+                title="Hide — Undo and History stay available in the header"
               >
                 <X size={13} />
               </button>
@@ -386,6 +545,8 @@ export default function BooksTab() {
           )}
         </div>
       )}
+
+      <BooksShortcutsDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }
