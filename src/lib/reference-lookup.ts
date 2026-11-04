@@ -184,40 +184,101 @@ export class CatalogueHttpError extends Error {
   readonly status: number;
   constructor(status: number) {
     super(
-      status === 429
+      status === 429 || status === 503
         ? 'The online catalogue is rate-limiting requests — try again in a few minutes.'
-        : `The online catalogue request failed (${status}).`,
+        : status === 403
+          ? 'The online catalogue refused the request (403) — usually a daily request quota. Try again later.'
+          : `The online catalogue request failed (${status}).`,
     );
     this.status = status;
   }
 }
 
 /**
- * JSON from the webview directly; if CORS or the network blocks it, route the
- * same URL through the desktop-side fetcher and parse its body. HTTP-status
- * failures skip the fallback (same network, same result).
+ * The desktop fetcher reports an HTTP failure as plain text ("… HTTP status
+ * client error (429 Too Many Requests) for url (…)"). Recover the code so a
+ * rate limit or a "no such record" is told apart from a real outage.
+ */
+export function statusFromFetchError(message: string): number | null {
+  const m = /\((\d{3}) [A-Za-z' -]+\)/.exec(message);
+  return m ? Number(m[1]) : null;
+}
+
+async function viaDesktop<T>(url: string, parse: (body: string) => T): Promise<T> {
+  try {
+    return parse((await fetchWebPage(url)).html);
+  } catch (error) {
+    const status = statusFromFetchError(error instanceof Error ? error.message : String(error));
+    if (status === 404) throw new NotFoundError();
+    if (status) throw new CatalogueHttpError(status);
+    throw error;
+  }
+}
+
+/**
+ * JSON from the webview directly; if CORS, the app's CSP or the network blocks
+ * it, route the same URL through the desktop-side fetcher and parse its body.
+ * HTTP-status failures skip that fallback (same network, same result); a 404
+ * means the source simply has no record, which is reported as such.
  */
 async function fetchJson(url: string): Promise<unknown> {
   try {
     const response = await fetch(url);
+    if (response.status === 404) throw new NotFoundError();
     if (!response.ok) throw new CatalogueHttpError(response.status);
     return await response.json();
   } catch (error) {
-    if (error instanceof CatalogueHttpError) throw error;
-    const page = await fetchWebPage(url);
-    return JSON.parse(page.html);
+    if (error instanceof CatalogueHttpError || error instanceof NotFoundError) throw error;
+    return viaDesktop(url, (body) => JSON.parse(body));
   }
 }
 
 async function fetchText(url: string): Promise<string> {
   try {
     const response = await fetch(url);
+    if (response.status === 404) throw new NotFoundError();
     if (!response.ok) throw new CatalogueHttpError(response.status);
     return await response.text();
   } catch (error) {
-    if (error instanceof CatalogueHttpError) throw error;
-    const page = await fetchWebPage(url);
-    return page.html;
+    if (error instanceof CatalogueHttpError || error instanceof NotFoundError) throw error;
+    return viaDesktop(url, (body) => body);
+  }
+}
+
+/* ---------- Politeness for sources with strict anonymous quotas ---------- */
+
+// Minimum gap between requests to the same source. Semantic Scholar allows about one
+// request a second to unauthenticated callers; Google Books and NCBI are similarly touchy.
+const THROTTLE_MS: Record<string, number> = { semanticscholar: 1100, googlebooks: 300, pubmed: 350 };
+let backoffMs = [1500, 3500];
+let throttleOn = true;
+const slots: Record<string, Promise<void>> = {};
+
+/** Tests turn the waiting off; the app keeps the defaults. */
+export function setPoliteness(options: { throttle?: boolean; backoff?: number[] }): void {
+  if (options.throttle !== undefined) throttleOn = options.throttle;
+  if (options.backoff) backoffMs = options.backoff;
+}
+
+function takeSlot(source: string): Promise<void> {
+  const gap = throttleOn ? THROTTLE_MS[source] ?? 0 : 0;
+  if (!gap) return Promise.resolve();
+  const turn = slots[source] ?? Promise.resolve();
+  slots[source] = turn.then(() => new Promise<void>((r) => setTimeout(r, gap)));
+  return turn;
+}
+
+/** fetchJson for a rate-limited source: one request at a time per source, and a patient retry on 429/503. */
+async function fetchJsonPolite(source: string, url: string): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    await takeSlot(source);
+    try {
+      return await fetchJson(url);
+    } catch (error) {
+      const retriable = error instanceof CatalogueHttpError && (error.status === 429 || error.status === 503);
+      if (!retriable || attempt >= backoffMs.length) throw error;
+      await new Promise((r) => setTimeout(r, backoffMs[attempt]));
+    }
   }
 }
 
@@ -227,6 +288,12 @@ function api(base: string, params: Record<string, string | number | undefined> =
     if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, String(v));
   }
   return u.toString();
+}
+
+let googleBooksKey = '';
+/** Optional free key from Google Cloud: lifts the shared anonymous quota that Google Books enforces per IP. */
+export function setGoogleBooksApiKey(key: string): void {
+  googleBooksKey = key.trim();
 }
 
 let contactEmail = '';
@@ -521,7 +588,7 @@ export const API: Record<string, SourceApi> = {
       return (j.message?.items ?? []).map(fromCrossref);
     },
     async search(q) {
-      const j = (await fetchJson(api('https://api.crossref.org/works', { 'query.bibliographic': q, rows: 8, mailto: mailto() }))) as { message?: { items?: CrossrefWork[] } };
+      const j = (await fetchJson(api('https://api.crossref.org/works', { 'query.bibliographic': q, rows: 10, mailto: mailto() }))) as { message?: { items?: CrossrefWork[] } };
       return (j.message?.items ?? []).map(fromCrossref);
     },
   },
@@ -533,13 +600,15 @@ export const API: Record<string, SourceApi> = {
       return [fromOpenAlex((await fetchJson(api(`https://api.openalex.org/works/pmid:${id}`, { select: OA_SELECT, mailto: mailto() }))) as OpenAlexWork)];
     },
     async search(q) {
-      const j = (await fetchJson(api('https://api.openalex.org/works', { search: q, per_page: 8, select: OA_SELECT, mailto: mailto() }))) as { results?: OpenAlexWork[] };
+      const j = (await fetchJson(api('https://api.openalex.org/works', { search: q, per_page: 10, select: OA_SELECT, mailto: mailto() }))) as { results?: OpenAlexWork[] };
       return (j.results ?? []).map(fromOpenAlex);
     },
   },
   datacite: {
     async doi(id) {
-      return [fromDataCite((await fetchJson(`https://api.datacite.org/dois/${doiPath(id.toLowerCase())}`)) as DataCiteDoi)];
+      const j = (await fetchJson(`https://api.datacite.org/dois/${doiPath(id.toLowerCase())}`)) as { data?: DataCiteDoi };
+      if (!j.data?.attributes) throw new NotFoundError();
+      return [fromDataCite(j.data)];
     },
     async search(q) {
       const j = (await fetchJson(api('https://api.datacite.org/dois', { query: `titles.title:"${q.replace(/"/g, '')}"`, 'page[size]': 6 }))) as { data?: DataCiteDoi[] };
@@ -559,7 +628,7 @@ export const API: Record<string, SourceApi> = {
   },
   pubmed: {
     async pmid(id) {
-      const j = (await fetchJson(api('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi', { db: 'pubmed', id, retmode: 'json', tool: 'annotate-studio', email: mailto() }))) as { result?: Record<string, PubmedSummary> };
+      const j = (await fetchJsonPolite('pubmed', api('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi', { db: 'pubmed', id, retmode: 'json', tool: 'annotate-studio', email: mailto() }))) as { result?: Record<string, PubmedSummary> };
       const s = j.result?.[id];
       if (!s || (s as { error?: unknown }).error || !s.title) throw new NotFoundError();
       return [fromPubmed(s)];
@@ -567,10 +636,10 @@ export const API: Record<string, SourceApi> = {
   },
   semanticscholar: {
     async lookup(ext) {
-      return [fromS2((await fetchJson(api(`https://api.semanticscholar.org/graph/v1/paper/${encodeURI(ext)}`, { fields: S2_FIELDS }))) as S2Paper)];
+      return [fromS2((await fetchJsonPolite('semanticscholar', api(`https://api.semanticscholar.org/graph/v1/paper/${encodeURI(ext)}`, { fields: S2_FIELDS }))) as S2Paper)];
     },
     async search(q) {
-      const j = (await fetchJson(api('https://api.semanticscholar.org/graph/v1/paper/search', { query: q, limit: 6, fields: S2_FIELDS }))) as { data?: S2Paper[] };
+      const j = (await fetchJsonPolite('semanticscholar', api('https://api.semanticscholar.org/graph/v1/paper/search', { query: q, limit: 6, fields: S2_FIELDS }))) as { data?: S2Paper[] };
       return (j.data ?? []).map(fromS2);
     },
   },
@@ -597,7 +666,7 @@ export const API: Record<string, SourceApi> = {
       })];
     },
     async search(q) {
-      const j = (await fetchJson(api('https://openlibrary.org/search.json', { q, limit: 6, fields: 'key,title,subtitle,author_name,first_publish_year,publisher,isbn' }))) as { docs?: OpenLibraryDoc[] };
+      const j = (await fetchJson(api('https://openlibrary.org/search.json', { q, limit: 10, fields: 'key,title,subtitle,author_name,first_publish_year,publisher,isbn' }))) as { docs?: OpenLibraryDoc[] };
       return (j.docs ?? []).map((d) => mk('openlibrary', {
         type: 'book', title: (d.title || '') + (d.subtitle ? `: ${d.subtitle}` : ''), authors: (d.author_name || []).map((n) => parseName(n) ?? { family: n, given: '' }),
         year: d.first_publish_year, publisher: d.publisher?.[0] ?? '', isbn: d.isbn?.[0] ?? '', firstPubYear: true,
@@ -607,7 +676,7 @@ export const API: Record<string, SourceApi> = {
   },
   googlebooks: {
     async query(q: string, n: number) {
-      const j = (await fetchJson(api('https://www.googleapis.com/books/v1/volumes', { q, maxResults: n, printType: 'books' }))) as { items?: GoogleVolume[] };
+      const j = (await fetchJsonPolite('googlebooks', api('https://www.googleapis.com/books/v1/volumes', { q, maxResults: n, printType: 'books', key: googleBooksKey || undefined }))) as { items?: GoogleVolume[] };
       return (j.items ?? []).map((it) => {
         const v = it.volumeInfo || {};
         const ids = (v.industryIdentifiers || []).map((x) => x.identifier ?? '');
@@ -618,7 +687,7 @@ export const API: Record<string, SourceApi> = {
       });
     },
     isbn(id: string) { return this.query(`isbn:${id}`, 1); },
-    search(q: string) { return this.query(q, 6); },
+    search(q: string) { return this.query(q, 10); },
   },
 };
 
@@ -1004,15 +1073,17 @@ function mergeVersion(v: { key: string; status: string; records: RefRecord[] }, 
     const [pub, ps] = pick(primary, 'publisher', (r) => r.publisher);
     out.publisher = pub;
     if (pub) prov.publisher = ps;
-    const [ed] = pick(primary, 'publisher', (r) => r.edition);
+    const [ed, es] = pick(primary, 'publisher', (r) => r.edition);
     out.edition = ed;
+    if (ed) prov.edition = es;
     const doiRec = v.key.startsWith('pub|') ? primary.find((r) => r.dk === v.key.replace(/^pub\|doi:/, '')) : primary.find((r) => r.doi);
     out.doi = doiRec?.doi || '';
     if (out.doi && doiRec) prov.doi = doiRec.source;
     out.editors = (primary.find((r) => r.editors.length) || { editors: [] }).editors;
   }
   out.isbn = recs.find((r) => r.isbn)?.isbn || '';
-  out.note = recs.map((r) => r.note).find(Boolean) || '';
+  const hasEditionYear = recs.some((r) => !r.firstPubYear && Number(r.year));
+  out.note = recs.find((r) => r.note && !(r.firstPubYear && hasEditionYear))?.note || '';
   out.pmid = recs.find((r) => r.pmid)?.pmid || '';
   Object.keys(prov).forEach((k) => {
     if (!prov[k]) delete prov[k];
@@ -1061,7 +1132,7 @@ export function analyseCluster(recs: RefRecord[]): { versions: RefVersion[]; cho
     const rec = mergeVersion(v, recs);
     return { status: v.status, records: v.records, rec, key: v.key, label: verLabel(v, rec) };
   });
-  const rank = (v: RefVersion) => ({ published: 3, preprint: 2, other: 0 }[v.status] ?? 0 + v.records.length * 0.01);
+  const rank = (v: RefVersion) => (({ published: 3, preprint: 2, other: 0 } as Record<string, number>)[v.status] ?? 0) + v.records.length * 0.01;
   let chosen = 0;
   versions.forEach((v, i) => {
     if (rank(v) > rank(versions[chosen])) chosen = i;
@@ -1116,12 +1187,69 @@ function clusterScore(recs: RefRecord[]): number {
 
 interface ClusterRec { recs: RefRecord[]; score: number }
 
+/**
+ * Editions of one book are different references (year, publisher, ISBN), so a
+ * cluster made only of books is split per edition instead of being merged into
+ * one record with a voted year. Records that share an ISBN or a year stay
+ * together; "first published" records (Open Library search) join the edition
+ * they share an ISBN with, else the one from the same year, else the earliest.
+ */
+function splitEditions(clusters: RefRecord[][]): RefRecord[][] {
+  const out: RefRecord[][] = [];
+  for (const recs of clusters) {
+    const bookish = recs.every((r) => (r.type === 'book' || r.type === 'other') && r.status === 'published' && !r.dataset);
+    const fixed = recs.filter((r) => !r.firstPubYear && Number(r.year));
+    if (!bookish || new Set(fixed.map((r) => r.year)).size < 2) {
+      out.push(recs);
+      continue;
+    }
+    const floating = recs.filter((r) => !fixed.includes(r));
+    const parent = fixed.map((_, i) => i);
+    const find = (x: number): number => {
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    };
+    for (let i = 0; i < fixed.length; i++) {
+      for (let j = i + 1; j < fixed.length; j++) {
+        if (fixed[i].year === fixed[j].year || fixed[i].isbns.some((k) => fixed[j].isbns.includes(k))) {
+          const a = find(i), b = find(j);
+          if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+        }
+      }
+    }
+    const byRoot = new Map<number, RefRecord[]>();
+    fixed.forEach((r, i) => {
+      const root = find(i);
+      byRoot.set(root, [...(byRoot.get(root) ?? []), r]);
+    });
+    const groups = [...byRoot.values()];
+    if (groups.length < 2) {
+      out.push(recs);
+      continue;
+    }
+    const earliest = (g: RefRecord[]) => Math.min(...g.map((r) => Number(r.year)));
+    for (const f of floating) {
+      const target =
+        groups.find((g) => g.some((r) => r.isbns.some((k) => f.isbns.includes(k)))) ??
+        (f.firstPubYear ? groups.find((g) => g.some((r) => r.year === f.year)) : undefined) ??
+        groups.reduce((a, b) => (earliest(a) <= earliest(b) ? a : b));
+      target.push(f);
+    }
+    out.push(...groups);
+  }
+  return out;
+}
+
 function rankClusters(records: RefRecord[], kind: RefKind, id: string): ClusterRec[] {
-  const clusters = cluster(records).map((recs) => ({ recs, score: 0 }));
+  const clusters = splitEditions(cluster(records)).map((recs) => ({ recs, score: 0 }));
   if (kind === 'title') {
     clusters.forEach((c) => {
       c.recs.forEach((r) => (r.score = recordMatch(r, id)));
-      c.score = clusterScore(c.recs);
+      // The year only breaks exact ties, newest edition first.
+      c.score = clusterScore(c.recs) + Math.max(0, ...c.recs.map((r) => Number(r.year) || 0)) / 1e7;
     });
   } else {
     const q = new Set<string>();
@@ -1143,6 +1271,8 @@ function rankClusters(records: RefRecord[], kind: RefKind, id: string): ClusterR
 
 /* ---------- One lookup: ask every source, expand, cluster, merge ---------- */
 
+/** How many distinct matches a title search offers (editions count separately). */
+const MAX_CANDIDATES = 10;
 const PHASE_BUDGET = 16000;
 const EXPAND_BUDGET = 10000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1167,11 +1297,24 @@ export interface LookupEntry {
   rec: MergedRef | null;
   cands: { score: number; versions: RefVersion[]; chosen: number; rec: MergedRef }[];
   progress: Record<string, SourceProgress>;
+  /** Every raw record the sources returned — kept so a retry can merge new answers with the old ones */
+  records: RefRecord[];
 }
 
 export interface LookupOptions {
   /** Per-source on/off switches, keyed by SOURCE_LABELS keys */
   enabled?: Record<string, boolean>;
+  /** Called whenever a source starts or finishes answering, with a snapshot of every source's state */
+  onProgress?: (progress: Record<string, SourceProgress>) => void;
+  /** Ask only these sources (used to retry the ones that failed) */
+  only?: string[];
+  /** Records already collected; new answers are merged into them */
+  keep?: RefRecord[];
+}
+
+/** A detached copy, safe to hand to UI state. */
+function snapshotProgress(progress: Record<string, SourceProgress>): Record<string, SourceProgress> {
+  return Object.fromEntries(Object.entries(progress).map(([k, v]) => [k, { ...v, errors: [...v.errors] }]));
 }
 
 function applyCand(en: LookupEntry, i: number): void {
@@ -1193,17 +1336,21 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
   en.rec = null;
   en.versions = [];
   en.cands = [];
-  en.progress = {};
+  // A retry keeps what the other sources already said and only starts the retried ones afresh.
+  const retrying = !!opts.only;
+  const priorProgress = retrying ? en.progress : {};
+  en.progress = { ...priorProgress };
+  for (const src of opts.only ?? []) delete en.progress[src];
   if (en.invalid) {
     en.status = 'error';
     en.error = 'This looks like an ISBN, but its check digit does not match. Check it for a typing mistake.';
     return en;
   }
-  const records: RefRecord[] = [];
+  const records: RefRecord[] = opts.keep ? [...opts.keep] : [];
   const done = new Set<string>();
   let closed = false;
   const enabled = opts.enabled ?? {};
-  const isEnabled = (src: string) => enabled[src] !== false;
+  const isEnabled = (src: string) => enabled[src] !== false && (!opts.only || opts.only.includes(src));
 
   const call = (src: string, fn: string, arg: string): Promise<unknown> | null => {
     const key = `${src}:${fn}:${arg}`;
@@ -1211,6 +1358,8 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
     done.add(key);
     const pr = (en.progress[src] ||= { pending: 0, found: 0, none: 0, errors: [] });
     pr.pending++;
+    const emit = () => opts.onProgress?.(snapshotProgress(en.progress));
+    emit();
     return (async () => {
       try {
         const recs = await API[src][fn](arg);
@@ -1224,6 +1373,7 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
         else pr.errors.push(String(err));
       } finally {
         pr.pending--;
+        emit();
       }
     })();
   };
@@ -1258,7 +1408,65 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
     if (tasks.length) await withBudget(tasks, EXPAND_BUDGET);
   }
   closed = true;
+  en.records = records;
   return finish(en, records);
+}
+
+/** Sources that errored and never produced a record — the ones worth asking again. */
+export function failedSourceKeys(progress: Record<string, SourceProgress>): string[] {
+  return Object.entries(progress)
+    .filter(([, p]) => !p.pending && p.errors.length > 0 && p.found === 0)
+    .map(([key]) => key);
+}
+
+/**
+ * Ask again only the sources that failed (rate-limited, timed out, refused) and
+ * merge their answers with the records already collected. Mutates and returns the entry.
+ */
+export async function retryFailedSources(en: LookupEntry, opts: LookupOptions = {}): Promise<LookupEntry> {
+  const failed = failedSourceKeys(en.progress).filter((k) => (opts.enabled ?? {})[k] !== false);
+  if (!failed.length) return en;
+  return lookupEntry(en, { ...opts, only: failed, keep: en.records });
+}
+
+/** A one-word reason for a failed source, so "rate-limited" is not mistaken for "broken". */
+export function errorReason(errors: string[]): string {
+  const text = errors.join(' ');
+  if (/rate-limiting|rate limit/i.test(text)) return 'rate-limited';
+  if (/refused|quota|\(403\)/i.test(text)) return 'refused';
+  if (/timed out|timeout/i.test(text)) return 'timed out';
+  return 'failed';
+}
+
+export interface ProgressSummary {
+  total: number;
+  checking: number;
+  found: number;
+  none: number;
+  failed: { key: string; label: string; reason: string }[];
+  /** One plain-language sentence for the whole lookup */
+  text: string;
+}
+
+/** "Checked 7 sources — 4 found a record, 2 had none; Semantic Scholar was rate-limited." */
+export function summarizeProgress(progress: Record<string, SourceProgress>): ProgressSummary {
+  const entries = Object.entries(progress);
+  const checking = entries.filter(([, p]) => p.pending > 0).length;
+  const found = entries.filter(([, p]) => !p.pending && p.found > 0).length;
+  const failed = entries
+    .filter(([, p]) => !p.pending && p.found === 0 && p.errors.length > 0)
+    .map(([key, p]) => ({ key, label: SOURCE_LABELS[key] ?? key, reason: errorReason(p.errors) }));
+  const none = entries.length - checking - found - failed.length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  let text: string;
+  if (!entries.length) text = '';
+  else if (checking > 0) text = `Checking ${entries.length - checking} of ${plural(entries.length, 'source')}…`;
+  else {
+    const parts = [`${found} found a record`, `${none} had none`].filter((_, i) => (i === 0 ? true : none > 0));
+    const bad = failed.length ? `; ${failed.map((f) => `${f.label} ${f.reason === 'failed' ? 'failed' : `was ${f.reason}`}`).join(', ')}` : '';
+    text = `Checked ${plural(entries.length, 'source')} — ${parts.join(', ')}${bad}.`;
+  }
+  return { total: entries.length, checking, found, none, failed, text };
 }
 
 function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
@@ -1279,7 +1487,10 @@ function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
   }
   const ranked = rankClusters(records, en.kind, en.id);
   if (en.kind === 'title') {
-    const good = ranked.filter((c) => c.score >= 0.45).slice(0, 4);
+    // Close matches only: above the floor and within reach of the best one, so a long tail of loosely
+    // related papers does not bury the real choices (editions of one book score alike and all stay).
+    const floor = Math.max(0.45, (ranked[0]?.score ?? 0) - 0.35);
+    const good = ranked.filter((c) => c.score >= floor).slice(0, MAX_CANDIDATES);
     if (!good.length) {
       en.status = 'error';
       en.error = 'No close matches found. Try more of the title, or add the first author’s surname.';
@@ -1287,7 +1498,9 @@ function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
     }
     en.cands = good.map((c) => ({ score: c.score, ...analyseCluster(c.recs) }));
     const [a, b] = en.cands;
-    if (a.score >= 0.95 && (!b || a.score - b.score >= 0.04)) applyCand(en, 0);
+    // Never pick silently between two records with the same title (editions, duplicate DOIs): the user chooses.
+    const sameTitleRival = !!b && titleSimilarity(a.rec.title, b.rec.title) >= 0.9;
+    if (a.score >= 0.95 && !sameTitleRival && (!b || a.score - b.score >= 0.04)) applyCand(en, 0);
     else en.status = 'choose';
   } else {
     en.cands = [{ score: 1, ...analyseCluster(ranked[0].recs) }];
@@ -1311,6 +1524,7 @@ export async function lookupLine(raw: string, opts: LookupOptions = {}): Promise
     rec: null,
     cands: [],
     progress: {},
+    records: [],
   };
   return lookupEntry(en, opts);
 }

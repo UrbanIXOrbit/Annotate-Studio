@@ -52,7 +52,17 @@ export function splitAuthor(name: string): SplitAuthor {
 
 /* ---------- Record helpers (ported) ---------- */
 
-const end = (s: string) => (/[.?!][”"’']?$/.test(s) ? s : s + '.');
+/**
+ * Italics are carried through the formatters as private-use marks (\uE000 … \uE001)
+ * so one set of formatters yields both the plain-text reference and the rich one
+ * (journal and book titles in italics) used when copying into Word or Docs.
+ */
+const IT0 = '\uE000';
+const IT1 = '\uE001';
+const I = (s: string | undefined) => (s ? `${IT0}${s}${IT1}` : '');
+const stripMarks = (s: string) => s.replace(/[\uE000\uE001]/g, '');
+
+const end = (s: string) => (/[.?!]\uE001?[”"’']?$/.test(s) ? s : s + '.');
 const pg = (p: string) => String(p).replace(/\s*[-–—]+\s*/g, '–');
 const pgV = (p: string) => String(p).replace(/\s*[-–—]+\s*/g, '-');
 const isRange = (p: string) => /[-–—]/.test(p);
@@ -119,17 +129,16 @@ function fmtAPA(c: BookCitation): string {
   const head = (th: string): string[] => (A ? [end(A), `${yr}.`, end(th)] : [end(th), `${yr}.`]);
   let out: string[];
   if (k === 'article') {
-    const cont = contOf(c);
-    let src = cont;
-    if (c.volume) src += `${src ? ', ' : ''}${c.volume}${c.issue ? `(${c.issue})` : ''}`;
+    let src = I(contOf(c));
+    if (c.volume) src += `${src ? ', ' : ''}${I(c.volume)}${c.issue ? `(${c.issue})` : ''}`;
     if (c.pages) src += `${src ? ', ' : ''}${pg(c.pages)}`;
     out = [...head(t), src ? `${src}.` : '', doi];
   } else if (k === 'chapter') {
     const eds = editorsOf(c);
     const ed = eds.length ? `${apaEditors(eds)} (${eds.length > 1 ? 'Eds.' : 'Ed.'}), ` : '';
-    out = [...head(t), `In ${ed}${contOf(c)}${c.pages ? ` (pp. ${pg(c.pages)})` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
+    out = [...head(t), `In ${ed}${I(contOf(c))}${c.pages ? ` (pp. ${pg(c.pages)})` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
   } else {
-    out = [...head(`${t}${c.edition ? ` (${edOrd(c.edition)} ed.)` : ''}`), c.publisher ? end(c.publisher) : '', doi];
+    out = [...head(`${I(t)}${c.edition ? ` (${edOrd(c.edition)} ed.)` : ''}`), c.publisher ? end(c.publisher) : '', doi];
   }
   return out.filter(Boolean).join(' ');
 }
@@ -152,16 +161,16 @@ function fmtHarvard(c: BookCitation): string {
   let s: string;
   if (k === 'article') {
     const bits: string[] = [];
-    if (contOf(c)) bits.push(contOf(c));
+    if (contOf(c)) bits.push(I(contOf(c)));
     if (c.volume) bits.push(`${c.volume}${c.issue ? `(${c.issue})` : ''}`);
     if (c.pages) bits.push(`${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}`);
     s = `${lead}${A ? ` ‘${t}’` : ''}${bits.length ? `, ${bits.join(', ')}` : ''}.`;
   } else if (k === 'chapter') {
     const eds = editorsOf(c);
     const ed = eds.length ? `${harvAuthors(eds)} (${eds.length > 1 ? 'eds' : 'ed.'}) ` : '';
-    s = `${lead}${A ? ` ‘${t}’` : ''}, in ${ed}${contOf(c)}.${c.publisher ? ` ${c.publisher}` : ''}${c.pages ? `${c.publisher ? ',' : ''} ${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : ''}${c.publisher || c.pages ? '.' : ''}`;
+    s = `${lead}${A ? ` ‘${t}’` : ''}, in ${ed}${I(contOf(c))}.${c.publisher ? ` ${c.publisher}` : ''}${c.pages ? `${c.publisher ? ',' : ''} ${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : ''}${c.publisher || c.pages ? '.' : ''}`;
   } else {
-    s = `${lead}${A ? ` ${t}` : ''}.${c.edition ? ` ${edOrd(c.edition)} edn.` : ''}${c.publisher ? ` ${end(c.publisher)}` : ''}`;
+    s = `${lead}${A ? ` ${I(t)}` : ''}.${c.edition ? ` ${edOrd(c.edition)} edn.` : ''}${c.publisher ? ` ${end(c.publisher)}` : ''}`;
   }
   const doi = doiUrl(c);
   return doi ? `${s} ${doi}` : s;
@@ -190,13 +199,13 @@ function fmtMLA(c: BookCitation): string {
   const tail = (a: (string | false | undefined)[]) => a.filter(Boolean).join(', ') + '.';
   const pp = c.pages ? `${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : '';
   if (k === 'article') {
-    return `${au}${T} ${tail([contOf(c), c.volume && `vol. ${c.volume}`, c.issue && `no. ${c.issue}`, yr, pp, doi])}`;
+    return `${au}${T} ${tail([I(contOf(c)), c.volume && `vol. ${c.volume}`, c.issue && `no. ${c.issue}`, yr, pp, doi])}`;
   }
   if (k === 'chapter') {
     const eds = editorsOf(c);
-    return `${au}${T} ${tail([contOf(c), eds.length > 0 && `edited by ${mlaEditors(eds)}`, c.publisher, yr, pp, doi])}`;
+    return `${au}${T} ${tail([I(contOf(c)), eds.length > 0 && `edited by ${mlaEditors(eds)}`, c.publisher, yr, pp, doi])}`;
   }
-  return `${au}${end(tr)} ${tail([c.edition && `${edOrd(c.edition)} ed.`, c.publisher, yr, doi])}`;
+  return `${au}${end(I(tr))} ${tail([c.edition && `${edOrd(c.edition)} ed.`, c.publisher, yr, doi])}`;
 }
 
 /* ---------- Chicago author-date (ported) ---------- */
@@ -225,16 +234,15 @@ function fmtChicago(c: BookCitation): string {
   const lead = (title: string) => (A ? [end(A), `${yr}.`, title] : [title, `${yr}.`]);
   let out: string[];
   if (k === 'article') {
-    const cont = contOf(c);
-    let src = cont ?? '';
+    let src = I(contOf(c));
     if (c.volume) src += `${src ? ' ' : ''}${c.volume}${c.issue ? ` (${c.issue})` : ''}`;
     if (c.pages) src += `${src ? ': ' : ''}${pg(c.pages)}`;
     out = [...lead(T), src ? `${src}.` : '', doi];
   } else if (k === 'chapter') {
     const eds = editorsOf(c);
-    out = [...lead(T), `In ${contOf(c)}${eds.length ? `, edited by ${chiEditors(eds)}` : ''}${c.pages ? `, ${pg(c.pages)}` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
+    out = [...lead(T), `In ${I(contOf(c))}${eds.length ? `, edited by ${chiEditors(eds)}` : ''}${c.pages ? `, ${pg(c.pages)}` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
   } else {
-    out = [...lead(end(`${tr}.`) + (c.edition ? ` ${edOrd(c.edition)} ed.` : '')), c.publisher ? end(c.publisher) : '', doi];
+    out = [...lead(end(I(tr)) + (c.edition ? ` ${edOrd(c.edition)} ed.` : '')), c.publisher ? end(c.publisher) : '', doi];
   }
   return out.filter(Boolean).join(' ');
 }
@@ -277,9 +285,38 @@ const FORMATTERS: Record<CitationStyle, (c: BookCitation) => string> = {
   vancouver: fmtVancouver,
 };
 
+function styled(style: CitationStyle, c: BookCitation): string {
+  return FORMATTERS[style](c).replace(/\s+/g, ' ').trim();
+}
+
 /** Render a citation as a plain-text reference in the chosen style. */
 export function formatCitation(style: CitationStyle, c: BookCitation): string {
-  return FORMATTERS[style](c).replace(/\s+/g, ' ').trim();
+  return stripMarks(styled(style, c));
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string);
+
+/** The same reference with journal and book titles in <i> — safe HTML (everything else is escaped). */
+export function formatCitationHtml(style: CitationStyle, c: BookCitation): string {
+  return escapeHtml(styled(style, c)).replace(/\uE000/g, '<i>').replace(/\uE001/g, '</i>');
+}
+
+/**
+ * A bibliography as clipboard content: hanging-indent paragraphs (what Word and
+ * Docs expect for reference lists) plus a plain-text twin. Vancouver is numbered
+ * in the order given; the other styles are expected to arrive already sorted.
+ */
+export function renderBibliographyRich(citations: BookCitation[], style: CitationStyle): { html: string; text: string } {
+  const numbered = style === 'vancouver';
+  const html = citations
+    .map((c, i) => {
+      const body = formatCitationHtml(style, c);
+      const para = numbered ? `${i + 1}. ${body}` : body;
+      return `<p style="margin:0 0 8pt 36pt;text-indent:-36pt;font-family:'Times New Roman',serif;font-size:12pt">${para}</p>`;
+    })
+    .join('');
+  const text = citations.map((c, i) => (numbered ? `${i + 1}. ` : '') + formatCitation(style, c)).join('\n\n');
+  return { html, text };
 }
 
 /* ---------- BibTeX (ported) ---------- */

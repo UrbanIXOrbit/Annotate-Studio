@@ -9,15 +9,22 @@ import {
   fallbackTitleFromFile,
   parseCitationInput,
   enrichCitation,
+  findDuplicateOf,
+  retryFailedEnrichment,
+  type EnrichResult,
 } from '@/lib/book-citations';
-import { SOURCE_LABELS, setReferenceContactEmail } from '@/lib/reference-lookup.ts';
+import { SOURCE_LABELS, setGoogleBooksApiKey, setReferenceContactEmail, type SourceProgress } from '@/lib/reference-lookup.ts';
 import { errorMessage } from '@/lib/tauri-commands';
 import Dialog from '@/components/ui/Dialog';
+import { CITATION_STYLES, type CitationStyle } from '@/lib/citation-formats';
 import { CitationCandidateList } from './CitationCandidateList';
+import { SourceStatusChips, SourceSummary } from './SourceStatusChips';
 
 const SOURCE_KEYS = Object.keys(SOURCE_LABELS);
 const SOURCES_STORE_KEY = 'citation-sources-disabled';
 const EMAIL_STORE_KEY = 'citation-contact-email';
+const BOOKS_KEY_STORE_KEY = 'citation-google-books-key';
+const STYLE_STORE_KEY = 'citation-preview-style';
 
 function loadEnabledSources(): Record<string, boolean> {
   try {
@@ -54,6 +61,8 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
   const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<BookCitation[] | null>(null);
   const [seed, setSeed] = useState<BookCitation | null>(null);
+  const [progress, setProgress] = useState<Record<string, SourceProgress> | null>(null);
+  const [lastResult, setLastResult] = useState<EnrichResult | null>(null);
   // On by default while the display name is still the untouched filename — a
   // fetched citation usually knows the real title better than "10.1515_...pdf".
   const [renameToTitle, setRenameToTitle] = useState(
@@ -67,6 +76,41 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
       return '';
     }
   });
+
+  const [style, setStyle] = useState<CitationStyle>(() => {
+    try {
+      const saved = window.localStorage.getItem(STYLE_STORE_KEY);
+      return CITATION_STYLES.some((s) => s.id === saved) ? (saved as CitationStyle) : 'apa';
+    } catch {
+      return 'apa';
+    }
+  });
+  const changeStyle = (next: CitationStyle) => {
+    setStyle(next);
+    try {
+      window.localStorage.setItem(STYLE_STORE_KEY, next);
+    } catch {
+      // private mode — the choice still applies this session
+    }
+  };
+
+  const [booksKey, setBooksKey] = useState(() => {
+    try {
+      return window.localStorage.getItem(BOOKS_KEY_STORE_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
+
+  // Optional Google Books key: without one, Google applies a small quota shared by every anonymous caller.
+  useEffect(() => {
+    setGoogleBooksApiKey(booksKey);
+    try {
+      window.localStorage.setItem(BOOKS_KEY_STORE_KEY, booksKey);
+    } catch {
+      // private mode — the session still works
+    }
+  }, [booksKey]);
 
   // The polite-pool email reaches Crossref/OpenAlex/PubMed with every lookup.
   useEffect(() => {
@@ -137,6 +181,8 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
 
   const handleSearch = async () => {
     setError(null);
+    setProgress(null);
+    setLastResult(null);
     setBusy(true);
     try {
       let base = seed;
@@ -152,11 +198,32 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
         }
       }
       setSeed(base);
-      const result = await enrichCitation(base, { enabled: enabledSources });
-      setCandidates(result.candidates);
-      if (result.candidates.length === 0) {
-        toast.info('No online matches — refine the inputs or use the file metadata');
-      }
+      showResult(await enrichCitation(base, { enabled: enabledSources, onProgress: setProgress }));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showResult = (result: EnrichResult) => {
+    setLastResult(result);
+    setCandidates(result.candidates);
+    if (result.progress) setProgress(result.progress);
+    if (result.candidates.length === 0) {
+      // Say why — e.g. every source unreachable — instead of a generic "no matches".
+      if (result.error) setError(result.error);
+      else toast.info('No online matches — refine the inputs or use the file metadata');
+    }
+  };
+
+  /** Ask again only the sources that failed; the others' answers are kept and merged. */
+  const handleRetry = async () => {
+    if (!lastResult?.entry) return;
+    setError(null);
+    setBusy(true);
+    try {
+      showResult(await retryFailedEnrichment(lastResult.entry, { enabled: enabledSources, onProgress: setProgress }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -280,7 +347,27 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
               onChange={(e) => setEmail(e.target.value)}
             />
           </label>
+          <p className="citation-hint">
+            Google Books limits anonymous requests and may answer with a quota error. A free Google API key (optional)
+            lifts that limit. Semantic Scholar allows about one request a second; the app spaces them out and retries
+            when it is told to wait.
+          </p>
+          <label className="citation-field">
+            <span>Google Books API key (optional)</span>
+            <input
+              className="input input-sm"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="AIza…"
+              value={booksKey}
+              onChange={(e) => setBooksKey(e.target.value)}
+            />
+          </label>
         </details>
+
+        <SourceSummary progress={progress} busy={busy} onRetry={lastResult?.entry ? handleRetry : undefined} />
+        <SourceStatusChips progress={progress} />
 
         {error && <p className="citation-error">{error}</p>}
 
@@ -291,7 +378,30 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
               <input type="checkbox" checked={renameToTitle} onChange={(e) => setRenameToTitle(e.target.checked)} />
               Rename the book to the picked citation's title (display name only — the file on disk is untouched)
             </label>
-            <CitationCandidateList candidates={candidates} onPick={handlePick} />
+            <label className="citation-field citation-style-row">
+              <span>Preview style</span>
+              <select
+                className="input input-sm citation-style-select"
+                value={style}
+                onChange={(e) => changeStyle(e.target.value as CitationStyle)}
+              >
+                {CITATION_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <CitationCandidateList
+              candidates={candidates}
+              onPick={handlePick}
+              style={style}
+              current={file.citation ?? null}
+              duplicateOf={(candidate) => {
+                const other = findDuplicateOf(files, candidate, fileId);
+                return other ? other.displayName || other.name : null;
+              }}
+            />
             {seed && (
               <div className="citation-actions">
                 <button type="button" className="btn btn-sm btn-secondary" onClick={() => handlePick(seed)}>

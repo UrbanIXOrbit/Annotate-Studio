@@ -93,6 +93,46 @@ export function debounce<T extends unknown[]>(fn: (...args: T) => void, delay: n
   return debounced;
 }
 
+/**
+ * Copy formatted text so a paste into Word, Docs or Pages keeps italics and the
+ * hanging indent, while a paste into a plain-text field still gets the text.
+ * Falls back to plain text when the webview cannot write rich content.
+ */
+export async function copyRichText(html: string, text: string): Promise<boolean> {
+  try {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    // fall through to the selection-based copy
+  }
+  try {
+    const holder = document.createElement('div');
+    holder.contentEditable = 'true';
+    holder.style.cssText = 'position:fixed;left:-9999px;top:0;';
+    holder.innerHTML = html;
+    document.body.appendChild(holder);
+    const range = document.createRange();
+    range.selectNodeContents(holder);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const ok = document.execCommand('copy');
+    selection?.removeAllRanges();
+    holder.remove();
+    if (ok) return true;
+  } catch {
+    // fall through
+  }
+  return copyText(text);
+}
+
 export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);

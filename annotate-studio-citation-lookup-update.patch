@@ -1,0 +1,2758 @@
+diff --git a/src/app/globals.css b/src/app/globals.css
+index ffadd23..1469094 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -8146,6 +8146,10 @@ input[type='checkbox'] {
+   flex-direction: column;
+   gap: 4px;
+   margin-top: 6px;
++  /* A search can return up to ten matches (every edition separately): scroll rather than grow the dialog. */
++  max-height: min(52vh, 460px);
++  overflow-y: auto;
++  padding-right: 2px;
+ }
+ 
+ .citation-candidate {
+@@ -8249,7 +8253,7 @@ input[type='checkbox'] {
+   border-radius: var(--radius-pill);
+ }
+ 
+-.citations-status-saved {
++.citations-status-matched {
+   color: var(--success);
+   background: color-mix(in srgb, var(--success) 13%, var(--bg-card));
+ }
+@@ -8503,3 +8507,241 @@ input[type='checkbox'] {
+ .citation-source-status-wait {
+   opacity: 0.7;
+ }
++
++/* Match list: formatted preview + what would change */
++.citation-candidate-preview {
++  margin-top: 4px;
++  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
++  font-size: 12.5px;
++  line-height: 1.5;
++  color: var(--text-primary);
++  white-space: normal;
++  overflow-wrap: anywhere;
++}
++
++.citation-candidate-diff {
++  margin-top: 3px;
++  font-size: 11px;
++  font-weight: 600;
++  color: var(--warning);
++}
++
++.citation-candidate-same {
++  color: var(--success);
++}
++
++.citation-style-row {
++  flex-direction: row;
++  align-items: center;
++  gap: 8px;
++  margin: 6px 0 0;
++}
++
++/* One-sentence summary of how the sources answered, with a retry for the ones that failed */
++.citation-source-summary {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 8px;
++  margin-top: 8px;
++  font-size: 12px;
++  line-height: 1.45;
++  color: var(--text-secondary);
++}
++
++/* Edit form: authors list, inline checks, fetch buttons */
++.citation-authors {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++.citation-author-row {
++  display: flex;
++  align-items: center;
++  gap: 2px;
++}
++
++.citation-author-row .input {
++  flex: 1;
++  min-width: 0;
++}
++
++.citation-icon-btn {
++  padding: 4px;
++  flex-shrink: 0;
++}
++
++.citation-add-author {
++  align-self: flex-start;
++}
++
++.citation-input-action {
++  display: flex;
++  gap: 6px;
++  align-items: center;
++}
++
++.citation-input-action .input {
++  flex: 1;
++  min-width: 0;
++}
++
++.citation-field-problem {
++  font-size: 11px;
++  line-height: 1.4;
++  color: var(--warning);
++}
++
++.citation-more-fields {
++  grid-column: 1 / -1;
++  justify-self: flex-start;
++}
++
++/* Saved citation: completeness, retraction, repeats, confidence */
++.citation-gaps,
++.citation-retracted,
++.citation-warning-line {
++  display: flex;
++  align-items: flex-start;
++  gap: 6px;
++  margin: 6px 0 0;
++  padding: 6px 8px;
++  border-radius: var(--radius-sm);
++  font-size: 11.5px;
++  line-height: 1.45;
++}
++
++.citation-gaps,
++.citation-warning-line {
++  color: var(--warning);
++  background: color-mix(in srgb, var(--warning) 11%, var(--bg-card));
++}
++
++.citation-gaps svg,
++.citation-retracted svg,
++.citation-warning-line svg {
++  flex-shrink: 0;
++  margin-top: 2px;
++}
++
++.citation-retracted {
++  color: var(--danger);
++  background: color-mix(in srgb, var(--danger) 11%, var(--bg-card));
++  font-weight: 600;
++}
++
++.citation-link-btn {
++  padding: 0;
++  border: 0;
++  background: none;
++  color: var(--primary);
++  font: inherit;
++  font-weight: 600;
++  text-decoration: underline;
++  cursor: pointer;
++}
++
++.citation-confidence-high {
++  background: color-mix(in srgb, var(--success) 15%, var(--bg-card));
++  color: var(--success);
++}
++
++.citation-confidence-medium {
++  background: color-mix(in srgb, var(--warning) 15%, var(--bg-card));
++  color: var(--warning);
++}
++
++.citation-confidence-low {
++  background: var(--bg-elevated);
++  color: var(--text-muted);
++}
++
++/* Batch dialog: progress, filters, status labels, repeats */
++.citations-progress {
++  height: 5px;
++  margin: 8px 0 0;
++  border-radius: var(--radius-pill);
++  background: var(--bg-elevated);
++  overflow: hidden;
++}
++
++.citations-progress-bar {
++  height: 100%;
++  background: var(--primary);
++  transition: width 0.2s ease;
++}
++
++.citations-filters {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 4px;
++  margin: 8px 0 0;
++}
++
++.citations-filter {
++  padding: 2px 9px;
++  border: 1px solid var(--border);
++  border-radius: var(--radius-pill);
++  background: transparent;
++  color: var(--text-secondary);
++  font-size: 11.5px;
++  font-weight: 600;
++  cursor: pointer;
++}
++
++.citations-filter:disabled {
++  opacity: 0.45;
++  cursor: default;
++}
++
++.citations-filter-active {
++  background: var(--primary-soft);
++  border-color: var(--primary);
++  color: var(--primary);
++}
++
++.citations-duplicates {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 6px;
++  margin: 8px 0 0;
++  padding: 6px 8px;
++  border-radius: var(--radius-sm);
++  background: color-mix(in srgb, var(--warning) 11%, var(--bg-card));
++  color: var(--warning);
++  font-size: 12px;
++}
++
++.citations-status-review {
++  color: var(--warning);
++  background: color-mix(in srgb, var(--warning) 13%, var(--bg-card));
++}
++
++.citations-status-label {
++  flex-shrink: 0;
++  font-size: 10.5px;
++  font-weight: 600;
++  color: var(--text-muted);
++}
++
++.citations-status-label-matched {
++  color: var(--success);
++}
++
++.citations-status-label-review,
++.citations-status-label-error {
++  color: var(--warning);
++}
++
++.citations-row-note {
++  margin: 2px 0 0 52px;
++  font-size: 11px;
++  line-height: 1.4;
++  color: var(--text-muted);
++}
++
++.citations-row-repeat {
++  color: var(--warning);
++}
+diff --git a/src/components/study/books/AddCitationDialog.tsx b/src/components/study/books/AddCitationDialog.tsx
+index 4f61cbe..f1bba90 100644
+--- a/src/components/study/books/AddCitationDialog.tsx
++++ b/src/components/study/books/AddCitationDialog.tsx
+@@ -9,16 +9,22 @@ import {
+   fallbackTitleFromFile,
+   parseCitationInput,
+   enrichCitation,
++  findDuplicateOf,
++  retryFailedEnrichment,
++  type EnrichResult,
+ } from '@/lib/book-citations';
+-import { SOURCE_LABELS, setReferenceContactEmail, type SourceProgress } from '@/lib/reference-lookup.ts';
++import { SOURCE_LABELS, setGoogleBooksApiKey, setReferenceContactEmail, type SourceProgress } from '@/lib/reference-lookup.ts';
+ import { errorMessage } from '@/lib/tauri-commands';
+ import Dialog from '@/components/ui/Dialog';
++import { CITATION_STYLES, type CitationStyle } from '@/lib/citation-formats';
+ import { CitationCandidateList } from './CitationCandidateList';
+-import { SourceStatusChips } from './SourceStatusChips';
++import { SourceStatusChips, SourceSummary } from './SourceStatusChips';
+ 
+ const SOURCE_KEYS = Object.keys(SOURCE_LABELS);
+ const SOURCES_STORE_KEY = 'citation-sources-disabled';
+ const EMAIL_STORE_KEY = 'citation-contact-email';
++const BOOKS_KEY_STORE_KEY = 'citation-google-books-key';
++const STYLE_STORE_KEY = 'citation-preview-style';
+ 
+ function loadEnabledSources(): Record<string, boolean> {
+   try {
+@@ -56,6 +62,7 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+   const [candidates, setCandidates] = useState<BookCitation[] | null>(null);
+   const [seed, setSeed] = useState<BookCitation | null>(null);
+   const [progress, setProgress] = useState<Record<string, SourceProgress> | null>(null);
++  const [lastResult, setLastResult] = useState<EnrichResult | null>(null);
+   // On by default while the display name is still the untouched filename — a
+   // fetched citation usually knows the real title better than "10.1515_...pdf".
+   const [renameToTitle, setRenameToTitle] = useState(
+@@ -70,6 +77,41 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+     }
+   });
+ 
++  const [style, setStyle] = useState<CitationStyle>(() => {
++    try {
++      const saved = window.localStorage.getItem(STYLE_STORE_KEY);
++      return CITATION_STYLES.some((s) => s.id === saved) ? (saved as CitationStyle) : 'apa';
++    } catch {
++      return 'apa';
++    }
++  });
++  const changeStyle = (next: CitationStyle) => {
++    setStyle(next);
++    try {
++      window.localStorage.setItem(STYLE_STORE_KEY, next);
++    } catch {
++      // private mode — the choice still applies this session
++    }
++  };
++
++  const [booksKey, setBooksKey] = useState(() => {
++    try {
++      return window.localStorage.getItem(BOOKS_KEY_STORE_KEY) ?? '';
++    } catch {
++      return '';
++    }
++  });
++
++  // Optional Google Books key: without one, Google applies a small quota shared by every anonymous caller.
++  useEffect(() => {
++    setGoogleBooksApiKey(booksKey);
++    try {
++      window.localStorage.setItem(BOOKS_KEY_STORE_KEY, booksKey);
++    } catch {
++      // private mode — the session still works
++    }
++  }, [booksKey]);
++
+   // The polite-pool email reaches Crossref/OpenAlex/PubMed with every lookup.
+   useEffect(() => {
+     setReferenceContactEmail(email);
+@@ -140,6 +182,7 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+   const handleSearch = async () => {
+     setError(null);
+     setProgress(null);
++    setLastResult(null);
+     setBusy(true);
+     try {
+       let base = seed;
+@@ -155,14 +198,32 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+         }
+       }
+       setSeed(base);
+-      const result = await enrichCitation(base, { enabled: enabledSources, onProgress: setProgress });
+-      setCandidates(result.candidates);
+-      if (result.progress) setProgress(result.progress);
+-      if (result.candidates.length === 0) {
+-        // Say why — e.g. every source unreachable — instead of a generic "no matches".
+-        if (result.error) setError(result.error);
+-        else toast.info('No online matches — refine the inputs or use the file metadata');
+-      }
++      showResult(await enrichCitation(base, { enabled: enabledSources, onProgress: setProgress }));
++    } catch (e) {
++      setError(errorMessage(e));
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  const showResult = (result: EnrichResult) => {
++    setLastResult(result);
++    setCandidates(result.candidates);
++    if (result.progress) setProgress(result.progress);
++    if (result.candidates.length === 0) {
++      // Say why — e.g. every source unreachable — instead of a generic "no matches".
++      if (result.error) setError(result.error);
++      else toast.info('No online matches — refine the inputs or use the file metadata');
++    }
++  };
++
++  /** Ask again only the sources that failed; the others' answers are kept and merged. */
++  const handleRetry = async () => {
++    if (!lastResult?.entry) return;
++    setError(null);
++    setBusy(true);
++    try {
++      showResult(await retryFailedEnrichment(lastResult.entry, { enabled: enabledSources, onProgress: setProgress }));
+     } catch (e) {
+       setError(errorMessage(e));
+     } finally {
+@@ -286,8 +347,26 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+               onChange={(e) => setEmail(e.target.value)}
+             />
+           </label>
++          <p className="citation-hint">
++            Google Books limits anonymous requests and may answer with a quota error. A free Google API key (optional)
++            lifts that limit. Semantic Scholar allows about one request a second; the app spaces them out and retries
++            when it is told to wait.
++          </p>
++          <label className="citation-field">
++            <span>Google Books API key (optional)</span>
++            <input
++              className="input input-sm"
++              type="text"
++              autoComplete="off"
++              spellCheck={false}
++              placeholder="AIza…"
++              value={booksKey}
++              onChange={(e) => setBooksKey(e.target.value)}
++            />
++          </label>
+         </details>
+ 
++        <SourceSummary progress={progress} busy={busy} onRetry={lastResult?.entry ? handleRetry : undefined} />
+         <SourceStatusChips progress={progress} />
+ 
+         {error && <p className="citation-error">{error}</p>}
+@@ -299,7 +378,30 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
+               <input type="checkbox" checked={renameToTitle} onChange={(e) => setRenameToTitle(e.target.checked)} />
+               Rename the book to the picked citation's title (display name only — the file on disk is untouched)
+             </label>
+-            <CitationCandidateList candidates={candidates} onPick={handlePick} />
++            <label className="citation-field citation-style-row">
++              <span>Preview style</span>
++              <select
++                className="input input-sm citation-style-select"
++                value={style}
++                onChange={(e) => changeStyle(e.target.value as CitationStyle)}
++              >
++                {CITATION_STYLES.map((s) => (
++                  <option key={s.id} value={s.id}>
++                    {s.label}
++                  </option>
++                ))}
++              </select>
++            </label>
++            <CitationCandidateList
++              candidates={candidates}
++              onPick={handlePick}
++              style={style}
++              current={file.citation ?? null}
++              duplicateOf={(candidate) => {
++                const other = findDuplicateOf(files, candidate, fileId);
++                return other ? other.displayName || other.name : null;
++              }}
++            />
+             {seed && (
+               <div className="citation-actions">
+                 <button type="button" className="btn btn-sm btn-secondary" onClick={() => handlePick(seed)}>
+diff --git a/src/components/study/books/AuthorsEditor.tsx b/src/components/study/books/AuthorsEditor.tsx
+new file mode 100644
+index 0000000..e5504ea
+--- /dev/null
++++ b/src/components/study/books/AuthorsEditor.tsx
+@@ -0,0 +1,74 @@
++'use client';
++
++import React from 'react';
++import { ArrowDown, ArrowUp, Plus, X } from 'lucide-react';
++
++/**
++ * One row per person ("Family, Given"), with move-up / move-down / remove, instead of a
++ * text box where order and punctuation are easy to break. Pasting several lines into a
++ * row (a copied author list) splits them into separate people.
++ */
++export function AuthorsEditor({
++  value,
++  onChange,
++  label,
++  addLabel = 'Add author',
++}: {
++  value: string[];
++  onChange: (next: string[]) => void;
++  label: string;
++  addLabel?: string;
++}) {
++  const rows = value.length ? value : [];
++
++  const update = (index: number, text: string) => onChange(rows.map((r, i) => (i === index ? text : r)));
++  const remove = (index: number) => onChange(rows.filter((_, i) => i !== index));
++  const move = (index: number, delta: -1 | 1) => {
++    const target = index + delta;
++    if (target < 0 || target >= rows.length) return;
++    const next = [...rows];
++    [next[index], next[target]] = [next[target], next[index]];
++    onChange(next);
++  };
++  const paste = (index: number, event: React.ClipboardEvent<HTMLInputElement>) => {
++    const text = event.clipboardData.getData('text');
++    if (!/[\r\n;]/.test(text)) return;
++    event.preventDefault();
++    const parts = text
++      .split(/\r?\n|;/)
++      .map((p) => p.trim())
++      .filter(Boolean);
++    onChange([...rows.slice(0, index), ...parts, ...rows.slice(index + 1)]);
++  };
++
++  return (
++    <div className="citation-authors" role="group" aria-label={label}>
++      {rows.map((row, index) => (
++        <div key={index} className="citation-author-row">
++          <input
++            className="input input-sm"
++            value={row}
++            placeholder="Family, Given"
++            aria-label={`${label} ${index + 1}`}
++            dir="auto"
++            onChange={(e) => update(index, e.target.value)}
++            onPaste={(e) => paste(index, e)}
++          />
++          <button type="button" className="btn btn-sm btn-ghost citation-icon-btn" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`Move ${label.toLowerCase()} ${index + 1} up`}>
++            <ArrowUp size={13} />
++          </button>
++          <button type="button" className="btn btn-sm btn-ghost citation-icon-btn" onClick={() => move(index, 1)} disabled={index === rows.length - 1} aria-label={`Move ${label.toLowerCase()} ${index + 1} down`}>
++            <ArrowDown size={13} />
++          </button>
++          <button type="button" className="btn btn-sm btn-ghost citation-icon-btn" onClick={() => remove(index)} aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}>
++            <X size={13} />
++          </button>
++        </div>
++      ))}
++      <button type="button" className="btn btn-sm btn-ghost citation-add-author" onClick={() => onChange([...rows, ''])}>
++        <Plus size={13} />
++        {addLabel}
++      </button>
++    </div>
++  );
++}
+diff --git a/src/components/study/books/BookCitationSection.tsx b/src/components/study/books/BookCitationSection.tsx
+index 6422919..8f36648 100644
+--- a/src/components/study/books/BookCitationSection.tsx
++++ b/src/components/study/books/BookCitationSection.tsx
+@@ -1,20 +1,24 @@
+ 'use client';
+ 
+ import React, { useState } from 'react';
+-import { BookMarked, Check, Copy, Globe, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
++import { AlertTriangle, BookMarked, Check, Copy, Globe, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
+ import { toast } from '@/store/toast';
+-import { useBooks, type BookCitation } from '@/store/books';
++import { useBooks, type BookCitation, type CitationWorkType } from '@/store/books';
+ import { CITATION_FIELDS, type CitationField } from '@/lib/citation-schema';
+ import {
++  citationGaps,
+   extractCitationFromFile,
+   enrichCitation,
+   FIELD_LABELS,
++  findDuplicateOf,
+   provenanceSummary,
+   sourceDisplayName,
++  validateCitationField,
+ } from '@/lib/book-citations';
+-import { CITATION_STYLES, formatCitation, type CitationStyle } from '@/lib/citation-formats';
++import { CITATION_STYLES, formatCitation, renderBibliographyRich, type CitationStyle } from '@/lib/citation-formats';
+ import { errorMessage } from '@/lib/tauri-commands';
+-import { cn, copyText } from '@/lib/utils';
++import { cn, copyRichText } from '@/lib/utils';
++import { AuthorsEditor } from './AuthorsEditor';
+ import { CitationCandidateList } from './CitationCandidateList';
+ 
+ const SOURCE_LABEL_SHORT: Record<string, string> = {
+@@ -23,8 +27,10 @@ const SOURCE_LABEL_SHORT: Record<string, string> = {
+ };
+ 
+ interface Draft {
++  type: CitationWorkType;
+   title: string;
+-  authorsText: string;
++  authors: string[];
++  editors: string[];
+   publisher: string;
+   city: string;
+   year: string;
+@@ -40,10 +46,49 @@ interface Draft {
+   pages: string;
+ }
+ 
++type DraftField = 'publisher' | 'city' | 'edition' | 'isbn' | 'doi' | 'language' | 'pageCountText' | 'container' | 'containerShort' | 'volume' | 'issue' | 'pages' | 'editors';
++
++/** Which fields matter for each kind of work; the rest sit behind "More fields". */
++const TYPE_FIELDS: Record<CitationWorkType, DraftField[]> = {
++  book: ['publisher', 'city', 'edition', 'isbn', 'doi'],
++  thesis: ['publisher', 'city', 'doi'],
++  article: ['container', 'volume', 'issue', 'pages', 'doi'],
++  conference: ['container', 'pages', 'publisher', 'city', 'doi'],
++  chapter: ['container', 'editors', 'pages', 'publisher', 'city', 'edition', 'isbn', 'doi'],
++  preprint: ['container', 'doi'],
++  other: ['publisher', 'city', 'edition', 'isbn', 'doi', 'container', 'volume', 'issue', 'pages'],
++};
++
++const WORK_TYPES: { id: CitationWorkType; label: string }[] = [
++  { id: 'book', label: 'Book' },
++  { id: 'article', label: 'Journal article' },
++  { id: 'chapter', label: 'Book chapter' },
++  { id: 'conference', label: 'Conference paper' },
++  { id: 'preprint', label: 'Preprint' },
++  { id: 'thesis', label: 'Thesis' },
++  { id: 'other', label: 'Other' },
++];
++
++const CONTAINER_LABEL: Partial<Record<CitationWorkType, string>> = {
++  article: 'Journal',
++  chapter: 'Book title',
++  conference: 'Proceedings',
++  preprint: 'Server (e.g. arXiv)',
++};
++
++const CONFIDENCE_TEXT = { high: 'Cross-checked', medium: 'Partly cross-checked', low: 'Not cross-checked' } as const;
++const CONFIDENCE_TITLE = {
++  high: 'Three or more independent sources agree on this record',
++  medium: 'Two independent sources agree on this record',
++  low: 'Only one independent source — worth checking against the original',
++} as const;
++
+ function draftFrom(citation: BookCitation): Draft {
+   return {
++    type: citation.type ?? (citation.container ? 'article' : 'book'),
+     title: citation.title,
+-    authorsText: citation.authors.join('\n'),
++    authors: [...citation.authors],
++    editors: [...(citation.editors ?? [])],
+     publisher: citation.publisher ?? '',
+     city: citation.city ?? '',
+     year: citation.year ?? '',
+@@ -60,27 +105,32 @@ function draftFrom(citation: BookCitation): Draft {
+   };
+ }
+ 
+-function citationFromDraft(draft: Draft): BookCitation {
++function citationFromDraft(draft: Draft, original: BookCitation | null): BookCitation {
+   const pageCount = Number.parseInt(draft.pageCountText, 10);
++  const names = (list: string[]) => list.map((line) => line.trim()).filter(Boolean);
++  const editors = names(draft.editors);
+   const citation: BookCitation = {
+     title: draft.title.trim(),
+-    authors: draft.authorsText
+-      .split('\n')
+-      .map((line) => line.trim())
+-      .filter(Boolean),
++    authors: names(draft.authors),
+     publisher: draft.publisher.trim() || undefined,
+     city: draft.city.trim() || undefined,
+     year: draft.year.trim() || undefined,
+     edition: draft.edition.trim() || undefined,
+     isbn: draft.isbn.trim() || undefined,
+-    doi: draft.doi.trim() || undefined,
++    doi: draft.doi.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '') || undefined,
+     language: draft.language.trim() || undefined,
+     pageCount: Number.isFinite(pageCount) && pageCount > 0 ? pageCount : undefined,
++    // The work type chosen in the form: it decides how the reference is laid out.
++    type: draft.type,
+     container: draft.container.trim() || undefined,
+     containerShort: draft.containerShort.trim() || undefined,
+     volume: draft.volume.trim() || undefined,
+     issue: draft.issue.trim() || undefined,
+     pages: draft.pages.trim() || undefined,
++    editors: editors.length ? editors : undefined,
++    // Facts the form does not edit are kept rather than silently dropped.
++    url: original?.url,
++    retracted: original?.retracted,
+     source: 'manual',
+     retrievedAt: new Date().toISOString(),
+   };
+@@ -138,10 +188,19 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+   const [draft, setDraft] = useState<Draft | null>(null);
+   const [picking, setPicking] = useState<BookCitation[] | null>(null);
+   const [seed, setSeed] = useState<BookCitation | null>(null);
++  const [showAll, setShowAll] = useState(false);
++  const [fetching, setFetching] = useState<'isbn' | 'doi' | null>(null);
+ 
+   if (!file) return null;
+   const citation = file.citation ?? null;
+   const provenance = provenanceSummary(citation);
++  const styleLabel = CITATION_STYLES.find((entry) => entry.id === style)?.label ?? style;
++  const gaps = citation ? citationGaps(citation, style) : [];
++  const duplicateName = (c: BookCitation): string | null => {
++    const other = findDuplicateOf(files, c, fileId);
++    return other ? other.displayName || other.name : null;
++  };
++  const savedDuplicate = citation ? duplicateName(citation) : null;
+ 
+   const setField = <K extends keyof Draft>(key: K, value: Draft[K]) =>
+     setDraft((current) => (current ? { ...current, [key]: value } : current));
+@@ -159,7 +218,9 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+ 
+   const handleCopy = async () => {
+     if (!citation) return;
+-    if (await copyText(formatCitation(style, citation))) toast.success('Citation copied');
++    // Rich copy: pasting into Word or Docs keeps the italics and the hanging indent.
++    const { html, text } = renderBibliographyRich([citation], style);
++    if (await copyRichText(html, text)) toast.success('Citation copied');
+     else toast.error('Could not copy to the clipboard');
+   };
+ 
+@@ -200,13 +261,42 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+ 
+   const handleStartEdit = () => {
+     setDraft(draftFrom(citation ?? { title: file.name.replace(/\.[^.]+$/, ''), authors: [], source: 'embedded', retrievedAt: '' }));
++    setShowAll(false);
+     setEditing(true);
+     setPicking(null);
+   };
+ 
++  /** Fill the form from the catalogues using the ISBN or DOI typed in it; nothing is saved until "Save citation". */
++  const handleFetch = async (kind: 'isbn' | 'doi') => {
++    if (!draft) return;
++    const value = (kind === 'isbn' ? draft.isbn : draft.doi).trim();
++    if (!value) return;
++    setFetching(kind);
++    try {
++      const identifier: Partial<BookCitation> = kind === 'isbn' ? { isbn: value } : { doi: value };
++      const result = await enrichCitation({ title: '', authors: [], source: 'embedded', retrievedAt: '', ...identifier });
++      const found = result.citation ?? result.candidates[0] ?? null;
++      if (!found) {
++        toast.error((result.error ?? 'No catalogue has a record for that identifier').replace(/\.+$/, ''));
++        return;
++      }
++      // Keep what only the file knows (language, page count); everything else comes from the record.
++      setDraft((current) => ({
++        ...draftFrom({ ...found, [kind]: found[kind] || value }),
++        language: current?.language ?? '',
++        pageCountText: current?.pageCountText ?? '',
++      }));
++      toast.success('Filled from the online catalogues — check the fields, then save');
++    } catch (e) {
++      toast.error(errorMessage(e));
++    } finally {
++      setFetching(null);
++    }
++  };
++
+   const handleSaveEdit = () => {
+     if (!draft) return;
+-    const next = citationFromDraft(draft);
++    const next = citationFromDraft(draft, citation);
+     if (!next.title) {
+       toast.error('A citation needs at least a title');
+       return;
+@@ -218,6 +308,16 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+ 
+   const conflictedFields = new Set<CitationField>(editing && citation ? (citation.conflicts ?? []) : []);
+ 
++  // Which form fields apply to this kind of work (a field that already holds a value is never hidden).
++  const hasValue = (field: DraftField) =>
++    !!draft && (field === 'editors' ? draft.editors.length > 0 : String((draft as unknown as Record<string, string>)[field] ?? '').trim() !== '');
++  const show = (field: DraftField) => !!draft && (showAll || TYPE_FIELDS[draft.type].includes(field) || hasValue(field));
++  const ALL_DRAFT_FIELDS: DraftField[] = ['publisher', 'city', 'edition', 'isbn', 'doi', 'language', 'pageCountText', 'container', 'containerShort', 'volume', 'issue', 'pages', 'editors'];
++  const hiddenCount = draft ? ALL_DRAFT_FIELDS.filter((f) => !TYPE_FIELDS[draft.type].includes(f) && !hasValue(f)).length : 0;
++  const isbnProblem = draft ? validateCitationField('isbn', draft.isbn) : null;
++  const doiProblem = draft ? validateCitationField('doi', draft.doi) : null;
++  const yearProblem = draft ? validateCitationField('year', draft.year) : null;
++
+   return (
+     <div className="file-details-section">
+       <div className="file-details-label">
+@@ -227,61 +327,125 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+ 
+       {editing && draft ? (
+         <div className="citation-form">
++          <label className="citation-field citation-field-wide">
++            <span>Type of work</span>
++            <select className="input input-sm" value={draft.type} onChange={(e) => setField('type', e.target.value as CitationWorkType)}>
++              {WORK_TYPES.map((t) => (
++                <option key={t.id} value={t.id}>
++                  {t.label}
++                </option>
++              ))}
++            </select>
++          </label>
+           <Field label="Title" field="title" citation={citation} conflicted={conflictedFields.has('title')} wide>
+             <input className="input input-sm" value={draft.title} onChange={(e) => setField('title', e.target.value)} dir="auto" />
+           </Field>
+-          <Field label="Authors (one per line)" field="authors" citation={citation} conflicted={conflictedFields.has('authors')} wide>
+-            <textarea
+-              className="textarea citation-authors-input"
+-              rows={3}
+-              value={draft.authorsText}
+-              onChange={(e) => setField('authorsText', e.target.value)}
+-              placeholder={'Tolstoy, Leo'}
+-              dir="auto"
+-            />
+-          </Field>
+-          <Field label="Publisher" field="publisher" citation={citation} conflicted={conflictedFields.has('publisher')}>
+-            <input className="input input-sm" value={draft.publisher} onChange={(e) => setField('publisher', e.target.value)} dir="auto" />
+-          </Field>
++          <div className="citation-field citation-field-wide">
++            <span>Authors</span>
++            <AuthorsEditor label="Author" value={draft.authors} onChange={(next) => setField('authors', next)} />
++          </div>
++          {show('editors') && (
++            <div className="citation-field citation-field-wide">
++              <span>Editors</span>
++              <AuthorsEditor label="Editor" addLabel="Add editor" value={draft.editors} onChange={(next) => setField('editors', next)} />
++            </div>
++          )}
+           <Field label="Year" field="year" citation={citation} conflicted={conflictedFields.has('year')}>
+-            <input className="input input-sm" value={draft.year} onChange={(e) => setField('year', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Place" field="city" citation={citation} conflicted={conflictedFields.has('city')}>
+-            <input className="input input-sm" value={draft.city} onChange={(e) => setField('city', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Edition" field="edition" citation={citation} conflicted={conflictedFields.has('edition')}>
+-            <input className="input input-sm" value={draft.edition} onChange={(e) => setField('edition', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="ISBN" field="isbn" citation={citation} conflicted={conflictedFields.has('isbn')}>
+-            <input className="input input-sm" value={draft.isbn} onChange={(e) => setField('isbn', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="DOI" field="doi" citation={citation} conflicted={conflictedFields.has('doi')}>
+-            <input className="input input-sm" value={draft.doi} onChange={(e) => setField('doi', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Language" field="language" citation={citation} conflicted={conflictedFields.has('language')}>
+-            <input className="input input-sm" value={draft.language} onChange={(e) => setField('language', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Pages (file)" field="pageCount" citation={citation} conflicted={conflictedFields.has('pageCount')}>
+-            <input
+-              className="input input-sm"
+-              type="number"
+-              min={1}
+-              value={draft.pageCountText}
+-              onChange={(e) => setField('pageCountText', e.target.value)}
+-            />
+-          </Field>
+-          <Field label="Journal / venue" field="container" citation={citation} conflicted={conflictedFields.has('container')} wide>
+-            <input className="input input-sm" value={draft.container} onChange={(e) => setField('container', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Volume" field="volume" citation={citation} conflicted={conflictedFields.has('volume')}>
+-            <input className="input input-sm" value={draft.volume} onChange={(e) => setField('volume', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Issue" field="issue" citation={citation} conflicted={conflictedFields.has('issue')}>
+-            <input className="input input-sm" value={draft.issue} onChange={(e) => setField('issue', e.target.value)} dir="auto" />
+-          </Field>
+-          <Field label="Pages" field="pages" citation={citation} conflicted={conflictedFields.has('pages')}>
+-            <input className="input input-sm" value={draft.pages} onChange={(e) => setField('pages', e.target.value)} dir="auto" />
++            <input className="input input-sm" value={draft.year} onChange={(e) => setField('year', e.target.value)} dir="auto" inputMode="numeric" />
++            {yearProblem && <span className="citation-field-problem" role="alert">{yearProblem}</span>}
+           </Field>
++          {show('container') && (
++            <Field label={CONTAINER_LABEL[draft.type] ?? 'Journal / venue'} field="container" citation={citation} conflicted={conflictedFields.has('container')} wide>
++              <input className="input input-sm" value={draft.container} onChange={(e) => setField('container', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('volume') && (
++            <Field label="Volume" field="volume" citation={citation} conflicted={conflictedFields.has('volume')}>
++              <input className="input input-sm" value={draft.volume} onChange={(e) => setField('volume', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('issue') && (
++            <Field label="Issue" field="issue" citation={citation} conflicted={conflictedFields.has('issue')}>
++              <input className="input input-sm" value={draft.issue} onChange={(e) => setField('issue', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('pages') && (
++            <Field label="Pages" field="pages" citation={citation} conflicted={conflictedFields.has('pages')}>
++              <input className="input input-sm" value={draft.pages} onChange={(e) => setField('pages', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('publisher') && (
++            <Field label="Publisher" field="publisher" citation={citation} conflicted={conflictedFields.has('publisher')}>
++              <input className="input input-sm" value={draft.publisher} onChange={(e) => setField('publisher', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('city') && (
++            <Field label="Place" field="city" citation={citation} conflicted={conflictedFields.has('city')}>
++              <input className="input input-sm" value={draft.city} onChange={(e) => setField('city', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('edition') && (
++            <Field label="Edition" field="edition" citation={citation} conflicted={conflictedFields.has('edition')}>
++              <input className="input input-sm" value={draft.edition} onChange={(e) => setField('edition', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('isbn') && (
++            <Field label="ISBN" field="isbn" citation={citation} conflicted={conflictedFields.has('isbn')}>
++              <span className="citation-input-action">
++                <input className="input input-sm" value={draft.isbn} onChange={(e) => setField('isbn', e.target.value)} dir="auto" />
++                <button
++                  type="button"
++                  className="btn btn-sm btn-secondary"
++                  onClick={() => handleFetch('isbn')}
++                  disabled={!draft.isbn.trim() || !!isbnProblem || fetching !== null}
++                  title="Fill the fields from the online catalogues"
++                >
++                  {fetching === 'isbn' ? <Loader2 size={13} className="btn-spin" /> : <Globe size={13} />}
++                  Fetch
++                </button>
++              </span>
++              {isbnProblem && <span className="citation-field-problem" role="alert">{isbnProblem}</span>}
++            </Field>
++          )}
++          {show('doi') && (
++            <Field label="DOI" field="doi" citation={citation} conflicted={conflictedFields.has('doi')}>
++              <span className="citation-input-action">
++                <input className="input input-sm" value={draft.doi} onChange={(e) => setField('doi', e.target.value)} dir="auto" />
++                <button
++                  type="button"
++                  className="btn btn-sm btn-secondary"
++                  onClick={() => handleFetch('doi')}
++                  disabled={!draft.doi.trim() || !!doiProblem || fetching !== null}
++                  title="Fill the fields from the online catalogues"
++                >
++                  {fetching === 'doi' ? <Loader2 size={13} className="btn-spin" /> : <Globe size={13} />}
++                  Fetch
++                </button>
++              </span>
++              {doiProblem && <span className="citation-field-problem" role="alert">{doiProblem}</span>}
++            </Field>
++          )}
++          {show('containerShort') && (
++            <label className="citation-field">
++              <span>Journal abbreviation</span>
++              <input className="input input-sm" value={draft.containerShort} onChange={(e) => setField('containerShort', e.target.value)} dir="auto" />
++            </label>
++          )}
++          {show('language') && (
++            <Field label="Language" field="language" citation={citation} conflicted={conflictedFields.has('language')}>
++              <input className="input input-sm" value={draft.language} onChange={(e) => setField('language', e.target.value)} dir="auto" />
++            </Field>
++          )}
++          {show('pageCountText') && (
++            <Field label="Pages (file)" field="pageCount" citation={citation} conflicted={conflictedFields.has('pageCount')}>
++              <input className="input input-sm" type="number" min={1} value={draft.pageCountText} onChange={(e) => setField('pageCountText', e.target.value)} />
++            </Field>
++          )}
++          {(showAll || hiddenCount > 0) && (
++            <button type="button" className="btn btn-sm btn-ghost citation-more-fields" onClick={() => setShowAll((v) => !v)}>
++              {showAll ? 'Fewer fields' : `More fields (${hiddenCount})`}
++            </button>
++          )}
+           <div className="citation-actions">
+             <button type="button" className="btn btn-sm btn-primary" onClick={handleSaveEdit}>
+               <Save size={14} />
+@@ -304,6 +468,9 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+           <p className="citation-hint">Several records matched “{seed?.title || file.name}”. Pick the right one:</p>
+           <CitationCandidateList
+             candidates={picking}
++            style={style}
++            current={citation}
++            duplicateOf={duplicateName}
+             onPick={(candidate) => {
+               saveWithRename(candidate);
+               setPicking(null);
+@@ -332,6 +499,38 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+       ) : citation ? (
+         <>
+           <div className="citation-preview">{formatCitation(style, citation)}</div>
++          {citation.retracted && (
++            <p className="citation-retracted" role="alert">
++              <AlertTriangle size={12} />
++              At least one source marks this work as retracted. Check before citing it.
++            </p>
++          )}
++          {gaps.length > 0 && (
++            <p className="citation-gaps" role="note">
++              <AlertTriangle size={12} />
++              <span>
++                {gaps.some((g) => g.required) && (
++                  <>
++                    Incomplete for {styleLabel}: missing <strong>{gaps.filter((g) => g.required).map((g) => g.label).join(', ')}</strong>.{' '}
++                  </>
++                )}
++                {gaps.some((g) => !g.required) && (
++                  <>
++                    {styleLabel} usually also has {gaps.filter((g) => !g.required).map((g) => g.label).join(', ')}.{' '}
++                  </>
++                )}
++                <button type="button" className="citation-link-btn" onClick={handleStartEdit}>
++                  Fill in
++                </button>
++              </span>
++            </p>
++          )}
++          {savedDuplicate && (
++            <p className="citation-warning-line" role="note">
++              <AlertTriangle size={12} />
++              Already cited for “{savedDuplicate}” — it would appear twice in a bibliography.
++            </p>
++          )}
+           {provenance && <p className="citation-provenance">{provenance}</p>}
+           <div className="citation-toolbar">
+             <select
+@@ -350,6 +549,14 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
+               {citation.source === 'enriched' ? <Check size={11} /> : null}
+               {citation.source === 'embedded' ? 'From file' : citation.source === 'enriched' ? 'Verified online' : 'Manual'}
+             </span>
++            {citation.source === 'enriched' && citation.confidence && (
++              <span
++                className={`citation-source-chip citation-confidence-${citation.confidence}`}
++                title={CONFIDENCE_TITLE[citation.confidence]}
++              >
++                {CONFIDENCE_TEXT[citation.confidence]}
++              </span>
++            )}
+             {(citation.conflicts ?? []).length > 0 && (
+               <span className="citation-source-chip citation-conflict-chip" title="Sources disagreed on these fields — edit to resolve">
+                 {(citation.conflicts ?? []).map((field) => FIELD_LABELS[field]).join(', ')}?
+diff --git a/src/components/study/books/CitationCandidateList.tsx b/src/components/study/books/CitationCandidateList.tsx
+index 916863b..3856a59 100644
+--- a/src/components/study/books/CitationCandidateList.tsx
++++ b/src/components/study/books/CitationCandidateList.tsx
+@@ -1,6 +1,7 @@
+ 'use client';
+ 
+-import { citationSourceLabel, FIELD_LABELS, sourceDisplayName } from '@/lib/book-citations';
++import { citationSourceLabel, diffCitationFields, FIELD_LABELS, sourceDisplayName } from '@/lib/book-citations';
++import { formatCitationHtml, type CitationStyle } from '@/lib/citation-formats';
+ import type { BookCitation } from '@/store/books';
+ 
+ const CONF_TEXT: Record<string, string> = {
+@@ -13,19 +14,30 @@ const CONF_TEXT: Record<string, string> = {
+  * Shared candidate picker rows — the merged-best record first, then the
+  * engine's alternates (other versions, next-best clusters). Every row shows
+  * its provenance chip, how thoroughly it was cross-checked, and any fields
+- * the sources disagreed on.
++ * the sources disagreed on. Each row previews the reference as it would be
++ * copied (in the chosen style) and, when a citation is already saved, which of
++ * its fields would change.
+  */
+ export function CitationCandidateList({
+   candidates,
+   onPick,
++  style = 'apa',
++  current = null,
++  duplicateOf,
+ }: {
+   candidates: BookCitation[];
+   onPick: (citation: BookCitation) => void;
++  style?: CitationStyle;
++  current?: BookCitation | null;
++  /** Name of another book that already holds this citation, so a repeat is flagged before it is saved */
++  duplicateOf?: (citation: BookCitation) => string | null;
+ }) {
+   return (
+     <div className="citation-candidates">
+       {candidates.map((candidate, index) => {
+         const sources = [...new Set(Object.values(candidate.fieldSources ?? {}))].map((s) => sourceDisplayName(s));
++        const changes = current ? diffCitationFields(current, candidate) : null;
++        const repeat = duplicateOf?.(candidate) ?? null;
+         return (
+           <button
+             key={`${candidate.title}-${index}`}
+@@ -35,9 +47,29 @@ export function CitationCandidateList({
+           >
+             <span className="citation-candidate-title">{candidate.title}</span>
+             <span className="citation-candidate-meta">
+-              {[candidate.authors.join(', '), candidate.container || candidate.publisher, candidate.year].filter(Boolean).join(' · ') ||
+-                'No details'}
++              {[
++                candidate.authors.join(', '),
++                candidate.container || candidate.publisher,
++                candidate.year,
++                candidate.edition ? `${candidate.edition} ed.` : '',
++                candidate.isbn ? `ISBN ${candidate.isbn}` : '',
++              ]
++                .filter(Boolean)
++                .join(' · ') || 'No details'}
+             </span>
++            {/* formatCitationHtml escapes everything and only adds <i> around titles */}
++            <span
++              className="citation-candidate-preview"
++              dangerouslySetInnerHTML={{ __html: formatCitationHtml(style, candidate) }}
++            />
++            {changes && (
++              <span className={changes.length ? 'citation-candidate-diff' : 'citation-candidate-diff citation-candidate-same'}>
++                {changes.length
++                  ? `Changes your saved citation: ${changes.map((f) => FIELD_LABELS[f]).join(', ')}`
++                  : 'Same as your saved citation'}
++              </span>
++            )}
++            {repeat && <span className="citation-candidate-diff">Already cited for “{repeat}”</span>}
+             <span className="citation-candidate-tags">
+               {index === 0 && candidates.length > 1 && (
+                 <span className="citation-source-chip citation-source-chip-best">Best match</span>
+diff --git a/src/components/study/books/CitationsDialog.tsx b/src/components/study/books/CitationsDialog.tsx
+index 32f6c7e..16f5020 100644
+--- a/src/components/study/books/CitationsDialog.tsx
++++ b/src/components/study/books/CitationsDialog.tsx
+@@ -1,14 +1,21 @@
+ 'use client';
+ 
+ import React, { useEffect, useMemo, useState } from 'react';
+-import { AlertTriangle, BookMarked, Check, Copy, Download, Loader2, X } from 'lucide-react';
++import { AlertTriangle, BookMarked, Check, Copy, Download, Eye, Loader2, RotateCw, X } from 'lucide-react';
+ import { toast } from '@/store/toast';
+ import { useBooks, type BookCitation, type BookFile } from '@/store/books';
+-import { extractCitationFromFile, isCitationCapable, lookupByIsbn } from '@/lib/book-citations';
+-import { CITATION_STYLES, EXPORT_FORMATS, renderExport, type CitationStyle, type ExportFormat } from '@/lib/citation-formats';
++import { citationReview, extractCitationFromFile, findDuplicates, isCitationCapable, lookupByIsbn } from '@/lib/book-citations';
++import {
++  CITATION_STYLES,
++  EXPORT_FORMATS,
++  renderBibliographyRich,
++  renderExport,
++  type CitationStyle,
++  type ExportFormat,
++} from '@/lib/citation-formats';
+ import { saveExportedFile } from '@/lib/export-file';
+ import { errorMessage } from '@/lib/tauri-commands';
+-import { copyText } from '@/lib/utils';
++import { copyRichText, copyText } from '@/lib/utils';
+ import Dialog from '@/components/ui/Dialog';
+ import { AddCitationDialog } from './AddCitationDialog';
+ 
+@@ -19,7 +26,16 @@ interface CitationsDialogProps {
+   fileIds: string[];
+ }
+ 
+-type RowStatus = 'missing' | 'working' | 'saved' | 'error';
++type RowStatus = 'missing' | 'working' | 'matched' | 'review' | 'error';
++type RowFilter = 'all' | 'review' | 'error' | 'missing';
++
++const STATUS_LABEL: Record<RowStatus, string> = {
++  missing: 'No citation',
++  working: 'Working…',
++  matched: 'Verified',
++  review: 'Needs review',
++  error: 'Failed',
++};
+ 
+ /**
+  * Batch citation tool: pick the books, preview their citations in the chosen
+@@ -42,6 +58,9 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+   const [checked, setChecked] = useState<Set<string>>(new Set());
+   const [working, setWorking] = useState<Set<string>>(new Set());
+   const [errors, setErrors] = useState<Record<string, string>>({});
++  /** Books whose online check could not complete (offline, rate-limited): they kept their file metadata */
++  const [lookupFailed, setLookupFailed] = useState<Record<string, string>>({});
++  const [filter, setFilter] = useState<RowFilter>('all');
+   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+   const [style, setStyle] = useState<CitationStyle>('apa');
+   const [exportFormat, setExportFormat] = useState<ExportFormat>('txt');
+@@ -63,14 +82,44 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+     [withCitations, exportFormat, style],
+   );
+ 
++  const duplicates = useMemo(() => findDuplicates(citatable), [citatable]);
++  const duplicateName = (id: string): string | null => {
++    const original = duplicates.of.get(id);
++    const file = original ? citatable.find((f) => f.id === original) : null;
++    return file ? file.displayName || file.name : null;
++  };
++  /** Duplicates among the books currently ticked — the ones that would be listed twice. */
++  const checkedRepeats = useMemo(
++    () => [...duplicates.of.keys()].filter((id) => checked.has(id) && checked.has(duplicates.of.get(id) as string)),
++    [duplicates, checked],
++  );
++
+   if (!open) return null;
+ 
+   const statusOf = (file: BookFile): RowStatus => {
+     if (working.has(file.id)) return 'working';
+-    if (errors[file.id]) return 'error';
+-    if (file.citation) return 'saved';
+-    return 'missing';
++    if (errors[file.id] || (lookupFailed[file.id] && !file.citation)) return 'error';
++    if (!file.citation) return 'missing';
++    if (lookupFailed[file.id]) return 'review';
++    return citationReview(file.citation).state === 'review' ? 'review' : 'matched';
+   };
++  const reasonsOf = (file: BookFile): string[] => {
++    const reasons: string[] = [];
++    if (errors[file.id]) reasons.push(errors[file.id]);
++    if (lookupFailed[file.id]) reasons.push(lookupFailed[file.id]);
++    reasons.push(...citationReview(file.citation).reasons);
++    return [...new Set(reasons)];
++  };
++  const statusCounts = citatable.reduce(
++    (acc, f) => {
++      const st = statusOf(f);
++      if (st === 'review' || st === 'error' || st === 'missing') acc[st] += 1;
++      return acc;
++    },
++    { review: 0, error: 0, missing: 0 } as Record<'review' | 'error' | 'missing', number>,
++  );
++  const visible = citatable.filter((f) => filter === 'all' || statusOf(f) === filter);
++  const failedIds = citatable.filter((f) => statusOf(f) === 'error').map((f) => f.id);
+ 
+   const toggle = (id: string) =>
+     setChecked((current) => {
+@@ -88,6 +137,14 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+       return next;
+     });
+ 
++  const setLookupNote = (id: string, message?: string) =>
++    setLookupFailed((current) => {
++      const next = { ...current };
++      if (message) next[id] = message;
++      else delete next[id];
++      return next;
++    });
++
+   const setErrorOne = (id: string, message?: string) =>
+     setErrors((current) => {
+       const next = { ...current };
+@@ -104,6 +161,7 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+   const readOne = async (file: BookFile): Promise<void> => {
+     setWorkingOne(file.id, true);
+     setErrorOne(file.id);
++    setLookupNote(file.id);
+     try {
+       const seed = file.citation ?? (await extractCitationFromFile(file));
+       if (seed.isbn) {
+@@ -114,8 +172,9 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+             updateFile(file.id, { citation: found });
+             return;
+           }
+-        } catch {
+-          // offline or blocked — the embedded seed is still worth saving
++        } catch (error) {
++          // offline or blocked — the embedded seed is still worth saving, but say it was not checked
++          setLookupNote(file.id, `Online check did not finish: ${errorMessage(error).replace(/\.+$/, '')}`);
+         }
+       }
+       if (!file.citation) updateFile(file.id, { citation: seed });
+@@ -126,8 +185,7 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+     }
+   };
+ 
+-  const generateMissing = async () => {
+-    const targets = citatable.filter((f) => checked.has(f.id) && !f.citation);
++  const runBatch = async (targets: BookFile[], verb: string) => {
+     if (targets.length === 0) return;
+     setBulk({ done: 0, total: targets.length });
+     for (let index = 0; index < targets.length; index += 1) {
+@@ -136,12 +194,40 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+     }
+     setBulk(null);
+     const good = targets.filter((f) => useBooks.getState().files[f.id]?.citation).length;
+-    toast.success(`Citations ready for ${good} of ${targets.length} book${targets.length === 1 ? '' : 's'}`);
++    toast.success(`${verb} ${good} of ${targets.length} book${targets.length === 1 ? '' : 's'}`);
+   };
+ 
++  const generateMissing = () => runBatch(citatable.filter((f) => checked.has(f.id) && !f.citation), 'Citations ready for');
++
++  /** Try again the books whose read or online check failed; the ones that worked are left alone. */
++  const retryFailed = () =>
++    runBatch(
++      citatable.filter((f) => failedIds.includes(f.id) || (lookupFailed[f.id] && statusOf(f) !== 'working')),
++      'Retried',
++    );
++
++  const deselectRepeats = () =>
++    setChecked((current) => {
++      const next = new Set(current);
++      checkedRepeats.forEach((id) => next.delete(id));
++      return next;
++    });
++
+   const handleCopy = async () => {
+     if (!withCitations.length) return;
+-    if (await copyText(previewText)) toast.success(`Copied ${withCitations.length} citation${withCitations.length === 1 ? '' : 's'}`);
++    // Formatted references are copied as rich text (italics + hanging indent for Word/Docs);
++    // BibTeX, RIS and JSON are code, so they stay plain.
++    let copied: boolean;
++    if (exportFormat === 'txt') {
++      const { html, text } = renderBibliographyRich(
++        withCitations.map((f) => f.citation as BookCitation),
++        style,
++      );
++      copied = await copyRichText(html, text);
++    } else {
++      copied = await copyText(previewText);
++    }
++    if (copied) toast.success(`Copied ${withCitations.length} citation${withCitations.length === 1 ? '' : 's'}`);
+     else toast.error('Could not copy to the clipboard');
+   };
+ 
+@@ -174,6 +260,12 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+               ? `Generating… ${bulk.done} of ${bulk.total}`
+               : `${checkedCount} of ${citatable.length} selected · ${withCitations.length} with citations${missingCheckedCount ? ` · ${missingCheckedCount} to generate` : ''}`}
+           </span>
++          {failedIds.length > 0 && bulk === null && (
++            <button type="button" className="btn btn-sm btn-secondary" onClick={retryFailed} title="Try again the books whose read or online check failed">
++              <RotateCw size={13} />
++              Retry failed ({failedIds.length})
++            </button>
++          )}
+           {missingCheckedCount > 0 && (
+             <button type="button" className="btn btn-sm btn-primary" onClick={generateMissing} disabled={bulk !== null}>
+               {bulk ? <Loader2 size={14} className="btn-spin" /> : <BookMarked size={14} />}
+@@ -182,6 +274,53 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+           )}
+         </div>
+ 
++        {bulk && (
++          <div
++            className="citations-progress"
++            role="progressbar"
++            aria-label="Generating citations"
++            aria-valuemin={0}
++            aria-valuemax={bulk.total}
++            aria-valuenow={bulk.done}
++          >
++            <div className="citations-progress-bar" style={{ width: `${Math.round((bulk.done / bulk.total) * 100)}%` }} />
++          </div>
++        )}
++
++        <div className="citations-filters" role="group" aria-label="Show books">
++          {(
++            [
++              ['all', 'All', citatable.length],
++              ['review', 'Needs review', statusCounts.review],
++              ['error', 'Failed', statusCounts.error],
++              ['missing', 'No citation', statusCounts.missing],
++            ] as [RowFilter, string, number][]
++          ).map(([id, label, count]) => (
++            <button
++              key={id}
++              type="button"
++              className={`citations-filter${filter === id ? ' citations-filter-active' : ''}`}
++              onClick={() => setFilter(id)}
++              aria-pressed={filter === id}
++              disabled={id !== 'all' && count === 0}
++            >
++              {label} {count > 0 || id === 'all' ? `(${count})` : ''}
++            </button>
++          ))}
++        </div>
++
++        {checkedRepeats.length > 0 && (
++          <p className="citations-duplicates" role="alert">
++            <AlertTriangle size={13} />
++            <span>
++              {checkedRepeats.length} selected book{checkedRepeats.length === 1 ? ' repeats' : 's repeat'} another one and would be listed twice.
++            </span>
++            <button type="button" className="citation-link-btn" onClick={deselectRepeats}>
++              Keep one of each
++            </button>
++          </p>
++        )}
++
+         <div className="citations-selectbar">
+           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setChecked(new Set(citatable.map((f) => f.id)))} disabled={!citatable.length}>
+             All
+@@ -204,23 +343,30 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+           {citatable.length === 0 && (
+             <p className="citation-hint citations-preview-empty">No citatable books in this view — only PDF and ebook files carry citations.</p>
+           )}
+-          {citatable.map((file) => {
++          {citatable.length > 0 && visible.length === 0 && (
++            <p className="citation-hint citations-preview-empty">No books match this filter.</p>
++          )}
++          {visible.map((file) => {
+             const status = statusOf(file);
++            const reasons = reasonsOf(file);
++            const repeatOf = duplicateName(file.id);
+             return (
+               <div key={file.id} className="citations-row">
+                 <div className="citations-row-main">
+                   <label className="book-file-checkbox citations-row-check">
+                     <input type="checkbox" checked={checked.has(file.id)} onChange={() => toggle(file.id)} />
+                   </label>
+-                  <span className={`citations-status citations-status-${status}`}>
++                  <span className={`citations-status citations-status-${status}`} title={reasons.join(' · ') || STATUS_LABEL[status]}>
+                     {status === 'working' && <Loader2 size={13} className="btn-spin" />}
+-                    {status === 'saved' && <Check size={13} />}
++                    {status === 'matched' && <Check size={13} />}
++                    {status === 'review' && <Eye size={13} />}
+                     {status === 'error' && <AlertTriangle size={13} />}
+                     {status === 'missing' && <X size={13} />}
+                   </span>
+                   <span className="citations-row-name" title={file.filePath}>
+                     {file.displayName || file.name}
+                   </span>
++                  <span className={`citations-status-label citations-status-label-${status}`}>{STATUS_LABEL[status]}</span>
+                   <div className="citations-row-actions">
+                     {!file.citation && status !== 'working' && (
+                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => readOne(file)}>
+@@ -235,10 +381,12 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
+                       title="Search online catalogues with title, author, ISBN or a pasted reference"
+                     >
+                       <BookMarked size={13} />
+-                      Add citation
++                      {status === 'review' ? 'Review' : 'Add citation'}
+                     </button>
+                   </div>
+                 </div>
++                {status === 'review' && reasons.length > 0 && <p className="citations-row-note">{reasons.join(' · ')}</p>}
++                {repeatOf && <p className="citations-row-note citations-row-repeat">Same book as “{repeatOf}”</p>}
+                 {errors[file.id] && <p className="citation-error">{errors[file.id]}</p>}
+               </div>
+             );
+diff --git a/src/components/study/books/SourceStatusChips.tsx b/src/components/study/books/SourceStatusChips.tsx
+index 0d8ba30..e876b2e 100644
+--- a/src/components/study/books/SourceStatusChips.tsx
++++ b/src/components/study/books/SourceStatusChips.tsx
+@@ -1,13 +1,13 @@
+ 'use client';
+ 
+-import { SOURCE_LABELS, type SourceProgress } from '@/lib/reference-lookup.ts';
++import { errorReason, SOURCE_LABELS, summarizeProgress, type SourceProgress } from '@/lib/reference-lookup.ts';
+ 
+ type ChipState = 'wait' | 'ok' | 'none' | 'err';
+ 
+ function stateOf(p: SourceProgress): { state: ChipState; text: string } {
+   if (p.pending) return { state: 'wait', text: 'checking' };
+   if (p.found) return { state: 'ok', text: `${p.found} found` };
+-  if (p.errors.length) return { state: 'err', text: 'error' };
++  if (p.errors.length) return { state: 'err', text: errorReason(p.errors) };
+   return { state: 'none', text: 'no record' };
+ }
+ 
+@@ -37,3 +37,32 @@ export function SourceStatusChips({ progress }: { progress: Record<string, Sourc
+     </ul>
+   );
+ }
++
++/**
++ * One plain sentence for the whole lookup ("Checked 7 sources — 4 found a record, 2 had none;
++ * Semantic Scholar was rate-limited.") with a button to ask only the failed sources again.
++ */
++export function SourceSummary({
++  progress,
++  busy,
++  onRetry,
++}: {
++  progress: Record<string, SourceProgress> | null;
++  busy: boolean;
++  onRetry?: () => void;
++}) {
++  if (!progress) return null;
++  const summary = summarizeProgress(progress);
++  if (!summary.text) return null;
++  const canRetry = !!onRetry && !busy && summary.checking === 0 && summary.failed.length > 0;
++  return (
++    <div className="citation-source-summary" role="status" aria-live="polite">
++      <span>{summary.text}</span>
++      {canRetry && (
++        <button type="button" className="btn btn-sm btn-ghost" onClick={onRetry}>
++          Retry {summary.failed.length === 1 ? summary.failed[0].label : 'failed sources'}
++        </button>
++      )}
++    </div>
++  );
++}
+diff --git a/src/lib/book-citations.test.ts b/src/lib/book-citations.test.ts
+index 1f465bd..f41bbd4 100644
+--- a/src/lib/book-citations.test.ts
++++ b/src/lib/book-citations.test.ts
+@@ -2,13 +2,24 @@ import { test } from 'node:test';
+ import assert from 'node:assert/strict';
+ import {
+   cleanSearchTitle,
++  citationGaps,
++  citationReview,
++  diffCitationFields,
+   doiFromFilename,
++  duplicateKeys,
++  findDuplicateOf,
++  findDuplicates,
++  isValidDoi,
++  isValidIsbn,
++  validateCitationField,
++  ebookFile,
+   isCitationCapable,
+   mergedToCitation,
+   parseCitationInput,
+   sourceDisplayName,
+   toSchemaSource,
+ } from './book-citations.ts';
++import type { BookCitation } from '@/store/books';
+ import { CITATION_SOURCE_NAMES } from './citation-schema.ts';
+ import { analyseCluster, mk, SOURCE_LABELS } from './reference-lookup.ts';
+ 
+@@ -87,3 +98,107 @@ test('a merged record keeps its edition and records Google Books provenance unde
+   assert.equal(saved.edition, '3');
+   assert.equal(saved.fieldSources?.edition, 'crossref');
+ });
++
++test('ebooks are handed to foliate-js as a named, typed File (a bare Blob makes makeBook throw)', () => {
++  const bytes = new Uint8Array([80, 75, 3, 4]);
++  const epub = ebookFile(bytes, 'Ecology.epub', 'epub');
++  assert.equal(epub.name, 'Ecology.epub');
++  assert.equal(epub.type, 'application/epub+zip');
++  assert.equal(epub.size, 4);
++  assert.equal(ebookFile(bytes, 'strip.cbz', '.CBZ').type, 'application/vnd.comicbook+zip');
++  assert.equal(ebookFile(bytes, 'novel.fb2', 'fb2').type, 'application/x-fictionbook+xml');
++  // Even a missing name is replaced, because foliate calls name.endsWith(...)
++  assert.equal(ebookFile(bytes, '', 'mobi').name, 'book.mobi');
++});
++
++test('diffCitationFields names only what would actually change', () => {
++  const saved: BookCitation = { title: 'The Ecology of Human Development', authors: ['Bronfenbrenner, Urie'], year: '1979', publisher: 'Harvard University Press', isbn: '9780674224575', source: 'manual', retrievedAt: '' };
++  const same = { ...saved, title: 'the ecology of human development', publisher: 'Harvard  University Press.' };
++  assert.deepEqual(diffCitationFields(saved, same), []);
++  const newer = { ...saved, year: '2005', publisher: 'HUP', isbn: '9780674040441' };
++  assert.deepEqual(diffCitationFields(saved, newer), ['publisher', 'year', 'isbn']);
++  assert.deepEqual(diffCitationFields(null, newer), [], 'nothing to compare against when no citation is saved');
++  // Accents and punctuation do not count as differences
++  assert.deepEqual(diffCitationFields({ ...saved, authors: ['Kōhler, Wolfgang'] }, { ...saved, authors: ['Kohler, Wolfgang'] }), []);
++});
++
++const base = (over: Partial<BookCitation> = {}): BookCitation => ({
++  title: 'Social Work Practice',
++  authors: ['Adebayo, Tunde'],
++  year: '2018',
++  publisher: 'Sage',
++  source: 'manual',
++  retrievedAt: '',
++  ...over,
++});
++
++test('ISBN, DOI and year checks catch typing mistakes and stay quiet on empty or valid values', () => {
++  assert.equal(isValidIsbn('978-0-674-22457-5'), true);
++  assert.equal(isValidIsbn('0-674-22457-4'), true);
++  assert.equal(isValidIsbn('978-0-674-22457-4'), false);
++  assert.equal(validateCitationField('isbn', ''), null);
++  assert.equal(validateCitationField('isbn', '12345'), 'An ISBN has 10 or 13 digits.');
++  assert.match(validateCitationField('isbn', '9780674224574') ?? '', /check digit/);
++  assert.equal(validateCitationField('isbn', '9780674224575'), null);
++  assert.equal(isValidDoi('https://doi.org/10.1191/1478088706qp063oa'), true);
++  assert.equal(isValidDoi('doi 10.1191'), false);
++  assert.match(validateCitationField('doi', 'nonsense') ?? '', /starts with 10\./);
++  assert.equal(validateCitationField('year', '2006'), null);
++  assert.equal(validateCitationField('year', 'n.d.'), null);
++  assert.equal(validateCitationField('year', '06'), 'Use a four-digit year.');
++  assert.equal(validateCitationField('year', '2999', new Date('2026-11-03')), 'Use a four-digit year.');
++});
++
++test('citationGaps lists what a reference in the chosen style would be missing', () => {
++  assert.deepEqual(citationGaps(base(), 'apa'), []);
++  assert.deepEqual(citationGaps(base({ publisher: undefined, year: undefined }), 'mla').map((g) => g.field), ['year', 'publisher']);
++  const article = base({ type: 'article', container: 'Journal of Things', publisher: undefined });
++  assert.deepEqual(citationGaps(article, 'apa').map((g) => g.field), ['volume', 'pages', 'doi']);
++  assert.deepEqual(citationGaps(article, 'mla').map((g) => g.field), ['volume', 'pages'], 'MLA does not expect a DOI');
++  assert.equal(citationGaps(article, 'apa').every((g) => !g.required), true);
++  const chapter = base({ type: 'chapter', container: 'Handbook of Care', publisher: 'Oxford' });
++  assert.deepEqual(citationGaps(chapter, 'apa').map((g) => g.field), ['pages', 'editors']);
++  assert.deepEqual(citationGaps(chapter, 'vancouver').map((g) => g.field), ['pages']);
++  assert.equal(citationGaps(base({ title: '', authors: [] }), 'apa')[0].required, true);
++});
++
++test('citationReview separates trustworthy citations from ones that need a look, with reasons', () => {
++  assert.equal(citationReview(null).state, 'missing');
++  assert.equal(citationReview(base()).state, 'matched');
++  const embedded = citationReview(base({ source: 'embedded' }));
++  assert.equal(embedded.state, 'review');
++  assert.match(embedded.reasons[0], /not checked online/);
++  const conflicted = citationReview(base({ source: 'enriched', confidence: 'high', conflicts: ['year', 'publisher'] }));
++  assert.match(conflicted.reasons[0], /disagree on year, publisher/i);
++  assert.match(citationReview(base({ retracted: true })).reasons[0], /retracted/);
++  assert.match(citationReview(base({ source: 'enriched', confidence: 'low' })).reasons[0], /one independent source/);
++  assert.match(citationReview(base({ publisher: undefined })).reasons[0], /Missing publisher/);
++  assert.equal(citationReview(base({ source: 'enriched', confidence: 'high' })).state, 'matched');
++});
++
++test('duplicates: ISBN-10 and ISBN-13 match, DOIs ignore case, and title+author+year is the fallback', () => {
++  assert.deepEqual(duplicateKeys(base({ isbn: '0-674-22457-4' })), ['isbn:9780674224575']);
++  assert.deepEqual(duplicateKeys(base({ doi: 'https://doi.org/10.1191/ABC' })), ['doi:10.1191/abc']);
++  assert.equal(duplicateKeys(base())[0].startsWith('work:social work practice|adebayo|2018'), true);
++  assert.deepEqual(duplicateKeys(null), []);
++
++  const files = [
++    { id: 'a', citation: base({ isbn: '9780674224575' }) },
++    { id: 'b', citation: base({ title: 'Other', isbn: '0674224574' }) },
++    { id: 'c', citation: base({ title: 'Third', doi: '10.1/ABC'.replace('10.1/', '10.1234/') }) },
++    { id: 'd', citation: base({ title: 'Third again', doi: '10.1234/abc' }) },
++    { id: 'e', citation: undefined },
++    { id: 'f', citation: base({ title: 'Unique', isbn: '9781234567897' }) },
++  ];
++  const { of, groups } = findDuplicates(files);
++  assert.equal(of.get('b'), 'a');
++  assert.equal(of.get('d'), 'c');
++  assert.equal(of.has('f'), false);
++  assert.equal(of.has('e'), false);
++  assert.deepEqual(groups, [['a', 'b'], ['c', 'd']]);
++
++  const store = Object.fromEntries(files.map((f) => [f.id, { id: f.id, name: `${f.id}.pdf`, citation: f.citation } as never]));
++  assert.equal(findDuplicateOf(store, base({ isbn: '9780674224575' }), 'zzz')?.id, 'a');
++  assert.equal(findDuplicateOf(store, base({ isbn: '9780674224575' }), 'a')?.id, 'b', 'the file itself is excluded');
++  assert.equal(findDuplicateOf(store, base({ title: 'Nothing like it', isbn: '9780306406157' }), null), null);
++});
+diff --git a/src/lib/book-citations.ts b/src/lib/book-citations.ts
+index 9aec97b..0a7ec08 100644
+--- a/src/lib/book-citations.ts
++++ b/src/lib/book-citations.ts
+@@ -1,10 +1,13 @@
+ import type { BookCitation, BookFile, CitationAuthorName, CitationField, CitationSourceName } from '@/store/books';
++import type { CitationStyle } from './citation-formats.ts';
+ import { CITATION_FIELDS } from './citation-schema.ts';
+ import { getPdfEngine } from './pdf-engine.ts';
+ import { readExternalFileBytes, readFileBytes, errorMessage } from './tauri-commands.ts';
+ import { uid } from './utils.ts';
+ import {
++  isbn13,
+   lookupLine,
++  retryFailedSources,
+   type LookupEntry,
+   type LookupOptions,
+   type MergedRef,
+@@ -131,12 +134,35 @@ function identifiersFrom(values: unknown): { isbn?: string; doi?: string } {
+ 
+ // ── Extraction from files ────────────────────────────────────────────────────
+ 
++const EBOOK_MIME: Record<string, string> = {
++  epub: 'application/epub+zip',
++  mobi: 'application/x-mobipocket-ebook',
++  azw: 'application/x-mobipocket-ebook',
++  azw3: 'application/x-mobipocket-ebook',
++  prc: 'application/x-mobipocket-ebook',
++  fb2: 'application/x-fictionbook+xml',
++  fbz: 'application/x-zip-compressed-fb2',
++  cbz: 'application/vnd.comicbook+zip',
++};
++
++/**
++ * foliate-js picks its parser from `file.name` and `file.type` (`name.endsWith('.cbz')`…),
++ * so it must be given a named File — a bare Blob has no name and makeBook throws
++ * "Cannot read properties of undefined (reading 'endsWith')".
++ */
++export function ebookFile(bytes: Uint8Array, name: string, extension: string): File {
++  const ext = extension.toLowerCase().replace(/^\./, '');
++  return new File([bytes as BlobPart], name || `book.${ext}`, { type: EBOOK_MIME[ext] ?? '' });
++}
++
+ async function extractEbookCitation(bytes: Uint8Array, file: BookFile): Promise<BookCitation> {
+   const { makeBook } = await import('foliate-js/view.js');
+-  const book = await makeBook(new Blob([bytes as BlobPart]));
++  const book = await makeBook(ebookFile(bytes, file.name, file.extension));
+   const meta = (book.metadata ?? {}) as RawMeta;
+ 
+-  const title = flattenString(meta.title) || fallbackTitleFromFile(file.name);
++  const rawTitle = flattenString(meta.title);
++  // Comic archives report their own filename as the title — "comic.cbz" is not one.
++  const title = rawTitle && rawTitle !== file.name ? rawTitle : fallbackTitleFromFile(file.name);
+   const authors = flattenStringArray(meta.author).length ? flattenStringArray(meta.author) : flattenStringArray(meta.creator);
+   const published = meta.published ?? meta.date ?? '';
+   const { isbn, doi } = identifiersFrom([meta.identifier, meta.isbn, meta.altIdentifier, meta.source].flat());
+@@ -368,6 +394,7 @@ function entryToResult(en: LookupEntry): EnrichResult {
+       candidates: en.status === 'choose' ? en.cands.map((c) => mergedToCitation(c.rec)) : [],
+       progress,
+       error: en.status === 'error' ? en.error : undefined,
++      entry: en,
+     };
+   }
+   const citation = mergedToCitation(en.rec);
+@@ -375,7 +402,15 @@ function entryToResult(en: LookupEntry): EnrichResult {
+     en.cands.length > 1
+       ? en.cands.slice(1).map((c) => mergedToCitation(c.rec))
+       : en.versions.filter((_, i) => i !== en.chosen).map((v) => mergedToCitation(v.rec));
+-  return { citation, applied: true, candidates: [citation, ...others], progress };
++  return { citation, applied: true, candidates: [citation, ...others], progress, entry: en };
++}
++
++/**
++ * Ask again only the sources that failed (rate-limited, timed out, refused) and merge
++ * their answers with what the others already returned.
++ */
++export async function retryFailedEnrichment(entry: LookupEntry, opts: LookupOptions = {}): Promise<EnrichResult> {
++  return entryToResult(await retryFailedSources(entry, opts));
+ }
+ 
+ export interface EnrichResult {
+@@ -389,6 +424,8 @@ export interface EnrichResult {
+   progress?: Record<string, SourceProgress>;
+   /** The engine's reason when nothing usable came back (all sources failed, no close match…) */
+   error?: string;
++  /** The finished lookup, kept so the sources that failed can be asked again without redoing the rest */
++  entry?: LookupEntry;
+ }
+ 
+ /**
+@@ -413,6 +450,23 @@ export async function lookupByIsbn(isbn: string, opts: LookupOptions = {}): Prom
+   return mergedToCitation(en.rec);
+ }
+ 
++const COMPARED_FIELDS: CitationField[] = ['title', 'authors', 'publisher', 'year', 'edition', 'isbn', 'doi', 'container', 'volume', 'issue', 'pages'];
++
++function comparable(citation: BookCitation, field: CitationField): string {
++  const raw = field === 'authors' ? citation.authors.join('|') : String(citation[field] ?? '');
++  return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9|]+/g, ' ').trim();
++}
++
++/**
++ * Which fields would change if `candidate` replaced `current` — the quick answer to
++ * "is this record actually different from what I saved?". Fields only the file
++ * knows about (page count, language) are not compared.
++ */
++export function diffCitationFields(current: BookCitation | null | undefined, candidate: BookCitation): CitationField[] {
++  if (!current) return [];
++  return COMPARED_FIELDS.filter((field) => comparable(current, field) !== comparable(candidate, field));
++}
++
+ /** Chip label for a citation: "Merged · N sources" when provenance is mixed, else its single source. */
+ export function citationSourceLabel(citation: BookCitation): string {
+   const sources = new Set(Object.values(citation.fieldSources ?? {}));
+@@ -435,3 +489,178 @@ export function provenanceSummary(citation: BookCitation | null): string {
+   }
+   return [...groups.entries()].map(([source, fields]) => `${sourceDisplayName(source)}: ${fields.join(', ')}`).join(' · ');
+ }
++
++/* ---------- Field checks (shown inline while editing) ---------- */
++
++/** ISBN-10 or ISBN-13 with a correct check digit; hyphens and spaces are ignored. */
++export function isValidIsbn(value: string): boolean {
++  const c = value.replace(/[\s-]/g, '').toUpperCase();
++  if (/^97[89]\d{10}$/.test(c)) {
++    let sum = 0;
++    for (let i = 0; i < 13; i++) sum += Number(c[i]) * (i % 2 ? 3 : 1);
++    return sum % 10 === 0;
++  }
++  if (/^\d{9}[\dX]$/.test(c)) {
++    let sum = 0;
++    for (let i = 0; i < 10; i++) sum += (c[i] === 'X' ? 10 : Number(c[i])) * (10 - i);
++    return sum % 11 === 0;
++  }
++  return false;
++}
++
++/** A DOI, bare or as a doi.org link. */
++export function isValidDoi(value: string): boolean {
++  return /^10\.\d{4,9}\/\S+$/.test(value.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, ''));
++}
++
++/** A short, plain-language problem with a field's value, or null when it looks right (or is empty). */
++export function validateCitationField(field: 'isbn' | 'doi' | 'year', value: string, now = new Date()): string | null {
++  const v = value.trim();
++  if (!v) return null;
++  if (field === 'isbn') {
++    const digits = v.replace(/[\s-]/g, '');
++    if (!/^[\dXx]{10}$|^\d{13}$/.test(digits)) return 'An ISBN has 10 or 13 digits.';
++    return isValidIsbn(v) ? null : 'The check digit does not match — look for a typing mistake.';
++  }
++  if (field === 'doi') return isValidDoi(v) ? null : 'A DOI looks like 10.1234/abc — it starts with 10.';
++  if (/^n\.?d\.?$/i.test(v)) return null;
++  const year = Number(v);
++  return /^\d{4}$/.test(v) && year >= 1000 && year <= now.getFullYear() + 1 ? null : 'Use a four-digit year.';
++}
++
++/* ---------- Is the reference complete for the chosen style? ---------- */
++
++export interface CitationGap {
++  field: 'title' | 'authors' | 'year' | 'publisher' | 'container' | 'volume' | 'pages' | 'doi' | 'editors';
++  label: string;
++  /** Required gaps leave a visibly incomplete reference; the others are "usually expected". */
++  required: boolean;
++}
++
++const GAP_LABELS: Record<CitationGap['field'], string> = {
++  title: 'title',
++  authors: 'author',
++  year: 'year',
++  publisher: 'publisher',
++  container: 'journal or book title',
++  volume: 'volume',
++  pages: 'pages',
++  doi: 'DOI',
++  editors: 'editors',
++};
++
++/**
++ * What a reference in this style would be missing. Books need a publisher; articles a journal,
++ * volume and pages; chapters a book title and editors. A DOI is expected by the author-date styles.
++ */
++export function citationGaps(c: BookCitation, style: CitationStyle): CitationGap[] {
++  const kind = c.type ?? (c.container ? 'article' : 'book');
++  const gaps: CitationGap[] = [];
++  const need = (field: CitationGap['field'], present: unknown, required: boolean) => {
++    const has = Array.isArray(present) ? present.length > 0 : !!String(present ?? '').trim();
++    if (!has) gaps.push({ field, label: GAP_LABELS[field], required });
++  };
++  need('title', c.title, true);
++  need('authors', c.authors, true);
++  need('year', c.year, true);
++  if (kind === 'book' || kind === 'thesis') need('publisher', c.publisher, true);
++  if (kind === 'article') {
++    need('container', c.container, true);
++    need('volume', c.volume, false);
++    need('pages', c.pages, false);
++  }
++  if (kind === 'conference') {
++    need('container', c.container, true);
++    need('pages', c.pages, false);
++  }
++  if (kind === 'chapter') {
++    need('container', c.container, true);
++    need('publisher', c.publisher, true);
++    need('pages', c.pages, false);
++    if (style !== 'vancouver') need('editors', c.editors, false);
++  }
++  if ((kind === 'article' || kind === 'preprint') && ['apa', 'harvard', 'chicago'].includes(style)) need('doi', c.doi, false);
++  return gaps.sort((a, b) => Number(b.required) - Number(a.required));
++}
++
++/* ---------- Needs review? ---------- */
++
++export interface CitationReview {
++  state: 'missing' | 'matched' | 'review';
++  reasons: string[];
++}
++
++/** Whether a saved citation can be trusted as it is, and if not, why not (for the batch dialog). */
++export function citationReview(c: BookCitation | null | undefined): CitationReview {
++  if (!c) return { state: 'missing', reasons: [] };
++  const reasons: string[] = [];
++  if (c.retracted) reasons.push('A source marks it as retracted');
++  if ((c.conflicts ?? []).length) reasons.push(`Sources disagree on ${(c.conflicts ?? []).map((f) => FIELD_LABELS[f].toLowerCase()).join(', ')}`);
++  if (c.source === 'embedded') reasons.push('Only the file’s own metadata — not checked online');
++  if (c.source === 'enriched' && c.confidence === 'low') reasons.push('Only one independent source confirms it');
++  const required = citationGaps(c, 'apa').filter((g) => g.required).map((g) => g.label);
++  if (required.length) reasons.push(`Missing ${required.join(', ')}`);
++  return { state: reasons.length ? 'review' : 'matched', reasons };
++}
++
++/* ---------- Duplicates ---------- */
++
++const normaliseForKey = (s: string) =>
++  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
++
++/**
++ * Identifiers that make two citations "the same book": an ISBN (10 and 13 compare equal) or a DOI.
++ * Without either, the same title, first author and year count.
++ */
++export function duplicateKeys(c: BookCitation | null | undefined): string[] {
++  if (!c) return [];
++  const keys: string[] = [];
++  const isbn = c.isbn ? isbn13(c.isbn) : '';
++  if (isbn) keys.push(`isbn:${isbn}`);
++  const doi = (c.doi ?? '').trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').toLowerCase();
++  if (doi) keys.push(`doi:${doi}`);
++  if (!keys.length && c.title.trim()) {
++    keys.push(`work:${normaliseForKey(c.title)}|${normaliseForKey((c.authors[0] ?? '').split(',')[0])}|${c.year ?? ''}`);
++  }
++  return keys;
++}
++
++/**
++ * Which files duplicate an earlier file in the list. `of` maps a file to the first file it repeats;
++ * `groups` lists each set of repeats, original first.
++ */
++export function findDuplicates(files: { id: string; citation?: BookCitation | null }[]): { of: Map<string, string>; groups: string[][] } {
++  const seen = new Map<string, string>();
++  const of = new Map<string, string>();
++  const groups = new Map<string, string[]>();
++  for (const file of files) {
++    for (const key of duplicateKeys(file.citation)) {
++      const first = seen.get(key);
++      if (first === undefined) {
++        seen.set(key, file.id);
++        continue;
++      }
++      if (first === file.id) continue;
++      if (!of.has(file.id)) of.set(file.id, first);
++      const group = groups.get(first) ?? [first];
++      if (!group.includes(file.id)) group.push(file.id);
++      groups.set(first, group);
++    }
++  }
++  return { of, groups: [...groups.values()] };
++}
++
++/** The other file already holding this citation, if any — used to warn before saving a repeat. */
++export function findDuplicateOf(
++  files: Record<string, BookFile>,
++  citation: BookCitation,
++  excludeId: string | null,
++): BookFile | null {
++  const keys = new Set(duplicateKeys(citation));
++  if (!keys.size) return null;
++  for (const file of Object.values(files)) {
++    if (file.id === excludeId || !file.citation) continue;
++    if (duplicateKeys(file.citation).some((k) => keys.has(k))) return file;
++  }
++  return null;
++}
+diff --git a/src/lib/citation-formats.test.ts b/src/lib/citation-formats.test.ts
+index 8e4b163..4a8fabc 100644
+--- a/src/lib/citation-formats.test.ts
++++ b/src/lib/citation-formats.test.ts
+@@ -4,6 +4,8 @@ import {
+   bibtexKey,
+   CITATION_STYLES,
+   formatCitation,
++  formatCitationHtml,
++  renderBibliographyRich,
+   renderExport,
+   splitAuthor,
+   toBibtex,
+@@ -161,3 +163,57 @@ test('renderExport joins formatted citations for text output', () => {
+   assert.match(renderExport([book], 'ris', 'apa'), /^TY  - BOOK/);
+   assert.match(renderExport([book], 'json', 'apa'), /^\[/);
+ });
++
++const thematic: BookCitation = {
++  title: 'Using thematic analysis in psychology',
++  authors: ['Braun, Virginia', 'Clarke, Victoria'],
++  structuredAuthors: [
++    { family: 'Braun', given: 'Virginia' },
++    { family: 'Clarke', given: 'Victoria' },
++  ],
++  container: 'Qualitative Research in Psychology',
++  volume: '3',
++  issue: '2',
++  pages: '77-101',
++  year: '2006',
++  doi: '10.1191/1478088706qp063oa',
++  type: 'article',
++  source: 'manual',
++  retrievedAt: '2026-10-30T00:00:00.000Z',
++};
++
++test('rich output italicises journal, volume and book titles; the plain text is unchanged', () => {
++  const apa = formatCitationHtml('apa', thematic);
++  assert.ok(apa.includes('<i>Qualitative Research in Psychology</i>, <i>3</i>(2), 77–101.'), apa);
++  assert.ok(formatCitationHtml('apa', book).includes('<i>War and Peace</i> (2nd ed.).'));
++  assert.ok(formatCitationHtml('mla', thematic).includes('<i>Qualitative Research in Psychology</i>, vol. 3'));
++  assert.ok(formatCitationHtml('chicago', book).includes('<i>War and Peace</i>.'));
++  assert.equal(formatCitationHtml('vancouver', thematic).includes('<i>'), false, 'Vancouver uses no italics');
++  for (const style of CITATION_STYLES.map((s) => s.id)) {
++    assert.equal(formatCitation(style, thematic).includes('<i>'), false);
++    assert.equal(/[\uE000\uE001]/.test(formatCitation(style, thematic)), false, 'no private marks leak into plain text');
++  }
++});
++
++test('a title ending in a question mark is not given an extra full stop inside italics', () => {
++  const asks: BookCitation = { ...book, title: 'Who Moved My Cheese?' };
++  assert.ok(formatCitationHtml('mla', asks).includes('<i>Who Moved My Cheese?</i>'));
++  assert.equal(formatCitationHtml('mla', asks).includes('?</i>.'), false);
++});
++
++test('rich output escapes HTML in titles', () => {
++  const nasty: BookCitation = { ...book, title: 'Tom & <b>Jerry</b>' };
++  const html = formatCitationHtml('apa', nasty);
++  assert.ok(html.includes('Tom &amp; &lt;b&gt;Jerry&lt;/b&gt;'));
++  assert.equal(html.includes('<b>'), false);
++});
++
++test('a rich bibliography has hanging-indent paragraphs and numbers Vancouver entries', () => {
++  const { html, text } = renderBibliographyRich([thematic, book], 'apa');
++  assert.equal((html.match(/<p /g) ?? []).length, 2);
++  assert.ok(html.includes('text-indent:-36pt'));
++  assert.equal(text.split('\n\n').length, 2);
++  const van = renderBibliographyRich([thematic, book], 'vancouver');
++  assert.ok(van.text.startsWith('1. '));
++  assert.ok(van.text.includes('\n\n2. '));
++});
+diff --git a/src/lib/citation-formats.ts b/src/lib/citation-formats.ts
+index 85f3d16..a4ea1ad 100644
+--- a/src/lib/citation-formats.ts
++++ b/src/lib/citation-formats.ts
+@@ -52,7 +52,17 @@ export function splitAuthor(name: string): SplitAuthor {
+ 
+ /* ---------- Record helpers (ported) ---------- */
+ 
+-const end = (s: string) => (/[.?!][”"’']?$/.test(s) ? s : s + '.');
++/**
++ * Italics are carried through the formatters as private-use marks (\uE000 … \uE001)
++ * so one set of formatters yields both the plain-text reference and the rich one
++ * (journal and book titles in italics) used when copying into Word or Docs.
++ */
++const IT0 = '\uE000';
++const IT1 = '\uE001';
++const I = (s: string | undefined) => (s ? `${IT0}${s}${IT1}` : '');
++const stripMarks = (s: string) => s.replace(/[\uE000\uE001]/g, '');
++
++const end = (s: string) => (/[.?!]\uE001?[”"’']?$/.test(s) ? s : s + '.');
+ const pg = (p: string) => String(p).replace(/\s*[-–—]+\s*/g, '–');
+ const pgV = (p: string) => String(p).replace(/\s*[-–—]+\s*/g, '-');
+ const isRange = (p: string) => /[-–—]/.test(p);
+@@ -119,17 +129,16 @@ function fmtAPA(c: BookCitation): string {
+   const head = (th: string): string[] => (A ? [end(A), `${yr}.`, end(th)] : [end(th), `${yr}.`]);
+   let out: string[];
+   if (k === 'article') {
+-    const cont = contOf(c);
+-    let src = cont;
+-    if (c.volume) src += `${src ? ', ' : ''}${c.volume}${c.issue ? `(${c.issue})` : ''}`;
++    let src = I(contOf(c));
++    if (c.volume) src += `${src ? ', ' : ''}${I(c.volume)}${c.issue ? `(${c.issue})` : ''}`;
+     if (c.pages) src += `${src ? ', ' : ''}${pg(c.pages)}`;
+     out = [...head(t), src ? `${src}.` : '', doi];
+   } else if (k === 'chapter') {
+     const eds = editorsOf(c);
+     const ed = eds.length ? `${apaEditors(eds)} (${eds.length > 1 ? 'Eds.' : 'Ed.'}), ` : '';
+-    out = [...head(t), `In ${ed}${contOf(c)}${c.pages ? ` (pp. ${pg(c.pages)})` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
++    out = [...head(t), `In ${ed}${I(contOf(c))}${c.pages ? ` (pp. ${pg(c.pages)})` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
+   } else {
+-    out = [...head(`${t}${c.edition ? ` (${edOrd(c.edition)} ed.)` : ''}`), c.publisher ? end(c.publisher) : '', doi];
++    out = [...head(`${I(t)}${c.edition ? ` (${edOrd(c.edition)} ed.)` : ''}`), c.publisher ? end(c.publisher) : '', doi];
+   }
+   return out.filter(Boolean).join(' ');
+ }
+@@ -152,16 +161,16 @@ function fmtHarvard(c: BookCitation): string {
+   let s: string;
+   if (k === 'article') {
+     const bits: string[] = [];
+-    if (contOf(c)) bits.push(contOf(c));
++    if (contOf(c)) bits.push(I(contOf(c)));
+     if (c.volume) bits.push(`${c.volume}${c.issue ? `(${c.issue})` : ''}`);
+     if (c.pages) bits.push(`${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}`);
+     s = `${lead}${A ? ` ‘${t}’` : ''}${bits.length ? `, ${bits.join(', ')}` : ''}.`;
+   } else if (k === 'chapter') {
+     const eds = editorsOf(c);
+     const ed = eds.length ? `${harvAuthors(eds)} (${eds.length > 1 ? 'eds' : 'ed.'}) ` : '';
+-    s = `${lead}${A ? ` ‘${t}’` : ''}, in ${ed}${contOf(c)}.${c.publisher ? ` ${c.publisher}` : ''}${c.pages ? `${c.publisher ? ',' : ''} ${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : ''}${c.publisher || c.pages ? '.' : ''}`;
++    s = `${lead}${A ? ` ‘${t}’` : ''}, in ${ed}${I(contOf(c))}.${c.publisher ? ` ${c.publisher}` : ''}${c.pages ? `${c.publisher ? ',' : ''} ${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : ''}${c.publisher || c.pages ? '.' : ''}`;
+   } else {
+-    s = `${lead}${A ? ` ${t}` : ''}.${c.edition ? ` ${edOrd(c.edition)} edn.` : ''}${c.publisher ? ` ${end(c.publisher)}` : ''}`;
++    s = `${lead}${A ? ` ${I(t)}` : ''}.${c.edition ? ` ${edOrd(c.edition)} edn.` : ''}${c.publisher ? ` ${end(c.publisher)}` : ''}`;
+   }
+   const doi = doiUrl(c);
+   return doi ? `${s} ${doi}` : s;
+@@ -190,13 +199,13 @@ function fmtMLA(c: BookCitation): string {
+   const tail = (a: (string | false | undefined)[]) => a.filter(Boolean).join(', ') + '.';
+   const pp = c.pages ? `${isRange(c.pages) ? 'pp.' : 'p.'} ${pg(c.pages)}` : '';
+   if (k === 'article') {
+-    return `${au}${T} ${tail([contOf(c), c.volume && `vol. ${c.volume}`, c.issue && `no. ${c.issue}`, yr, pp, doi])}`;
++    return `${au}${T} ${tail([I(contOf(c)), c.volume && `vol. ${c.volume}`, c.issue && `no. ${c.issue}`, yr, pp, doi])}`;
+   }
+   if (k === 'chapter') {
+     const eds = editorsOf(c);
+-    return `${au}${T} ${tail([contOf(c), eds.length > 0 && `edited by ${mlaEditors(eds)}`, c.publisher, yr, pp, doi])}`;
++    return `${au}${T} ${tail([I(contOf(c)), eds.length > 0 && `edited by ${mlaEditors(eds)}`, c.publisher, yr, pp, doi])}`;
+   }
+-  return `${au}${end(tr)} ${tail([c.edition && `${edOrd(c.edition)} ed.`, c.publisher, yr, doi])}`;
++  return `${au}${end(I(tr))} ${tail([c.edition && `${edOrd(c.edition)} ed.`, c.publisher, yr, doi])}`;
+ }
+ 
+ /* ---------- Chicago author-date (ported) ---------- */
+@@ -225,16 +234,15 @@ function fmtChicago(c: BookCitation): string {
+   const lead = (title: string) => (A ? [end(A), `${yr}.`, title] : [title, `${yr}.`]);
+   let out: string[];
+   if (k === 'article') {
+-    const cont = contOf(c);
+-    let src = cont ?? '';
++    let src = I(contOf(c));
+     if (c.volume) src += `${src ? ' ' : ''}${c.volume}${c.issue ? ` (${c.issue})` : ''}`;
+     if (c.pages) src += `${src ? ': ' : ''}${pg(c.pages)}`;
+     out = [...lead(T), src ? `${src}.` : '', doi];
+   } else if (k === 'chapter') {
+     const eds = editorsOf(c);
+-    out = [...lead(T), `In ${contOf(c)}${eds.length ? `, edited by ${chiEditors(eds)}` : ''}${c.pages ? `, ${pg(c.pages)}` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
++    out = [...lead(T), `In ${I(contOf(c))}${eds.length ? `, edited by ${chiEditors(eds)}` : ''}${c.pages ? `, ${pg(c.pages)}` : ''}.`, c.publisher ? end(c.publisher) : '', doi];
+   } else {
+-    out = [...lead(end(`${tr}.`) + (c.edition ? ` ${edOrd(c.edition)} ed.` : '')), c.publisher ? end(c.publisher) : '', doi];
++    out = [...lead(end(I(tr)) + (c.edition ? ` ${edOrd(c.edition)} ed.` : '')), c.publisher ? end(c.publisher) : '', doi];
+   }
+   return out.filter(Boolean).join(' ');
+ }
+@@ -277,9 +285,38 @@ const FORMATTERS: Record<CitationStyle, (c: BookCitation) => string> = {
+   vancouver: fmtVancouver,
+ };
+ 
++function styled(style: CitationStyle, c: BookCitation): string {
++  return FORMATTERS[style](c).replace(/\s+/g, ' ').trim();
++}
++
+ /** Render a citation as a plain-text reference in the chosen style. */
+ export function formatCitation(style: CitationStyle, c: BookCitation): string {
+-  return FORMATTERS[style](c).replace(/\s+/g, ' ').trim();
++  return stripMarks(styled(style, c));
++}
++
++const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string);
++
++/** The same reference with journal and book titles in <i> — safe HTML (everything else is escaped). */
++export function formatCitationHtml(style: CitationStyle, c: BookCitation): string {
++  return escapeHtml(styled(style, c)).replace(/\uE000/g, '<i>').replace(/\uE001/g, '</i>');
++}
++
++/**
++ * A bibliography as clipboard content: hanging-indent paragraphs (what Word and
++ * Docs expect for reference lists) plus a plain-text twin. Vancouver is numbered
++ * in the order given; the other styles are expected to arrive already sorted.
++ */
++export function renderBibliographyRich(citations: BookCitation[], style: CitationStyle): { html: string; text: string } {
++  const numbered = style === 'vancouver';
++  const html = citations
++    .map((c, i) => {
++      const body = formatCitationHtml(style, c);
++      const para = numbered ? `${i + 1}. ${body}` : body;
++      return `<p style="margin:0 0 8pt 36pt;text-indent:-36pt;font-family:'Times New Roman',serif;font-size:12pt">${para}</p>`;
++    })
++    .join('');
++  const text = citations.map((c, i) => (numbered ? `${i + 1}. ` : '') + formatCitation(style, c)).join('\n\n');
++  return { html, text };
+ }
+ 
+ /* ---------- BibTeX (ported) ---------- */
+diff --git a/src/lib/reference-lookup.test.ts b/src/lib/reference-lookup.test.ts
+index ae00aef..da5726c 100644
+--- a/src/lib/reference-lookup.test.ts
++++ b/src/lib/reference-lookup.test.ts
+@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
+ import {
+   analyseCluster,
+   API,
++  failedSourceKeys,
++  retryFailedSources,
++  summarizeProgress,
++  setGoogleBooksApiKey,
++  setPoliteness,
++  statusFromFetchError,
+   lookupLine,
+   NotFoundError,
+   type SourceProgress,
+@@ -147,6 +153,8 @@ test('recordMatch scores full titles above partial hints and rejects unrelated o
+ 
+ /* ---------- Network behaviour (fetch is stubbed; nothing touches the network) ---------- */
+ 
++setPoliteness({ throttle: false, backoff: [1, 1] });
++
+ type Stub = { status: number; body?: unknown };
+ 
+ async function withFetch(handler: (url: URL) => Stub, run: () => Promise<void>) {
+@@ -239,3 +247,173 @@ test('when versions tie on status, the one backed by more records is chosen', ()
+   assert.equal(versions.length, 2);
+   assert.equal(versions[chosen].records.length, 2);
+ });
++
++/* ---------- Title searches for books: every edition is its own choice ---------- */
++
++function isbn13From(prefix12: string): string {
++  let sum = 0;
++  for (let i = 0; i < 12; i++) sum += Number(prefix12[i]) * (i % 2 ? 3 : 1);
++  return prefix12 + ((10 - (sum % 10)) % 10);
++}
++
++test('a title search lists each edition of a book separately instead of merging them', async () => {
++  const title = 'The Ecology of Human Development';
++  const a = isbn13From('978067422457'), c = isbn13From('978067404044'), d = isbn13From('978067411551');
++  const author = 'Urie Bronfenbrenner';
++  const bodies: Record<string, unknown> = {
++    'openlibrary.org': {
++      docs: [
++        { title, author_name: [author], first_publish_year: 1979, publisher: ['Harvard University Press'], isbn: [a] },
++        { title, author_name: [author], first_publish_year: 1979, publisher: ['Harvard University Press'], isbn: [c] },
++      ],
++    },
++    'www.googleapis.com': {
++      items: [
++        { volumeInfo: { title, authors: [author], publisher: 'Harvard University Press', publishedDate: '1979', industryIdentifiers: [{ identifier: a }] } },
++        { volumeInfo: { title, authors: [author], publisher: 'Harvard University Press', publishedDate: '2005', industryIdentifiers: [{ identifier: c }] } },
++        { volumeInfo: { title, authors: [author], publisher: 'Harvard University Press', publishedDate: '1996', industryIdentifiers: [{ identifier: d }] } },
++      ],
++    },
++  };
++  await withFetch(
++    (url) => (url.host in bodies ? { status: 200, body: bodies[url.host] } : { status: 200, body: { message: { items: [] }, results: [], resultList: { result: [] }, data: [] } }),
++    async () => {
++      const en = await lookupLine(`${title} Bronfenbrenner`);
++      assert.equal(en.status, 'choose', 'several editions: the user chooses, nothing is applied silently');
++      const years = en.cands.map((c) => c.rec.year).sort();
++      assert.deepEqual(years, ['1979', '1996', '2005']);
++      // The 2005 edition keeps its own year even though Open Library only knows the first-publication year.
++      const edition2005 = en.cands.find((c) => c.rec.year === '2005')!;
++      assert.equal(edition2005.rec.isbn, c);
++      assert.equal(edition2005.rec.note, '');
++    },
++  );
++});
++
++test('an ISBN lookup still resolves to the one edition it names', async () => {
++  const title = 'Social Work Practice';
++  const isbn = isbn13From('978019876543');
++  await withFetch(
++    (url) =>
++      url.host === 'openlibrary.org'
++        ? { status: 200, body: { [`ISBN:${isbn}`]: { title, authors: [{ name: 'Tunde Adebayo' }], publish_date: '2018', publishers: [{ name: 'Sage' }] } } }
++        : { status: 404, body: {} },
++    async () => {
++      const en = await lookupLine(isbn);
++      assert.equal(en.status, 'ok');
++      assert.equal(en.rec?.year, '2018');
++      assert.equal(en.cands.length, 1);
++    },
++  );
++});
++
++/* ---------- Rate-limited sources ---------- */
++
++test('the desktop fetcher\'s error text is turned back into an HTTP status', () => {
++  assert.equal(
++    statusFromFetchError('The page returned an error: HTTP status client error (429 Too Many Requests) for url (https://api.semanticscholar.org/x)'),
++    429,
++  );
++  assert.equal(statusFromFetchError('The page returned an error: HTTP status client error (404 Not Found) for url (https://a/b)'), 404);
++  assert.equal(statusFromFetchError('Could not fetch this page: error sending request'), null);
++});
++
++test('Semantic Scholar is retried after a 429 and succeeds on the next attempt', async () => {
++  setPoliteness({ throttle: false, backoff: [1, 1] });
++  let calls = 0;
++  await withFetch(
++    () => (++calls < 3 ? { status: 429, body: {} } : { status: 200, body: { title: 'A study', year: 2020, authors: [{ name: 'Ada Lovelace' }], externalIds: { DOI: '10.1234/study' } } }),
++    async () => {
++      const [rec] = await API.semanticscholar.lookup('DOI:10.1234/study');
++      assert.equal(rec.title, 'A study');
++      assert.equal(calls, 3);
++    },
++  );
++});
++
++test('a source that keeps answering 429 ends as a rate-limit error, not a missing record', async () => {
++  setPoliteness({ throttle: false, backoff: [1, 1] });
++  await withFetch(() => ({ status: 429, body: {} }), async () => {
++    await assert.rejects(() => API.semanticscholar.lookup('DOI:10.1234/study'), /rate-limiting/);
++  });
++});
++
++test('Google Books sends the API key when one is set, and reports a quota refusal clearly', async () => {
++  setPoliteness({ throttle: false, backoff: [1] });
++  setGoogleBooksApiKey('test-key');
++  const seen: string[] = [];
++  await withFetch(
++    (url) => {
++      seen.push(url.searchParams.get('key') ?? '');
++      return { status: 403, body: {} };
++    },
++    async () => {
++      await assert.rejects(() => API.googlebooks.search('anything'), /refused the request \(403\)/);
++    },
++  );
++  assert.deepEqual(seen, ['test-key']);
++  setGoogleBooksApiKey('');
++});
++
++/* ---------- Summary line and retrying only the failed sources ---------- */
++
++test('summarizeProgress describes the whole lookup in one sentence', () => {
++  const p = (found: number, none: number, errors: string[] = [], pending = 0): SourceProgress => ({ found, none, errors, pending });
++  const done = summarizeProgress({
++    crossref: p(1, 0),
++    openalex: p(1, 0),
++    datacite: p(0, 1),
++    europepmc: p(0, 1),
++    semanticscholar: p(0, 0, ['The online catalogue is rate-limiting requests — try again in a few minutes.']),
++  });
++  assert.equal(done.text, 'Checked 5 sources — 2 found a record, 2 had none; Semantic Scholar was rate-limited.');
++  assert.deepEqual(done.failed.map((f) => f.key), ['semanticscholar']);
++  const running = summarizeProgress({ crossref: p(1, 0), openalex: p(0, 0, [], 1) });
++  assert.equal(running.text, 'Checking 1 of 2 sources…');
++  assert.equal(summarizeProgress({}).text, '');
++  assert.equal(summarizeProgress({ crossref: p(1, 0) }).text, 'Checked 1 source — 1 found a record.');
++});
++
++test('retrying failed sources asks only those sources and keeps what the others returned', async () => {
++  setPoliteness({ throttle: false, backoff: [1, 1] });
++  const crossrefBody = {
++    message: {
++      type: 'journal-article',
++      title: ['A study of things'],
++      author: [{ given: 'Ada', family: 'Lovelace' }],
++      'container-title': ['Journal of Things'],
++      DOI: '10.1234/study',
++      'published-print': { 'date-parts': [[2020]] },
++    },
++  };
++  const s2Body = { title: 'A study of things', year: 2020, authors: [{ name: 'Ada Lovelace' }], externalIds: { DOI: '10.1234/study' } };
++  let en!: Awaited<ReturnType<typeof lookupLine>>;
++  await withFetch(
++    (url) => (url.host === 'api.crossref.org' ? { status: 200, body: crossrefBody } : url.host === 'api.semanticscholar.org' ? { status: 429, body: {} } : { status: 404, body: {} }),
++    async () => {
++      en = await lookupLine('10.1234/study');
++    },
++  );
++  assert.equal(en.status, 'ok');
++  assert.deepEqual(failedSourceKeys(en.progress), ['semanticscholar']);
++
++  const hosts = new Set<string>();
++  await withFetch(
++    (url) => {
++      hosts.add(url.host);
++      return url.host === 'api.semanticscholar.org' ? { status: 200, body: s2Body } : { status: 404, body: {} };
++    },
++    async () => {
++      await retryFailedSources(en);
++    },
++  );
++  assert.deepEqual([...hosts], ['api.semanticscholar.org'], 'only the failed source is asked again');
++  assert.equal(en.status, 'ok');
++  assert.equal(en.progress.semanticscholar.found, 1);
++  assert.deepEqual(en.progress.semanticscholar.errors, []);
++  assert.ok(en.progress.crossref.found >= 1, 'the earlier answers are kept');
++  assert.ok(en.rec?.sources.includes('Semantic Scholar') && en.rec.sources.includes('Crossref'));
++  assert.deepEqual(failedSourceKeys(en.progress), []);
++  // Nothing failed any more: a second retry is a no-op
++  assert.equal(await retryFailedSources(en), en);
++});
+diff --git a/src/lib/reference-lookup.ts b/src/lib/reference-lookup.ts
+index 7cb6d46..90b692c 100644
+--- a/src/lib/reference-lookup.ts
++++ b/src/lib/reference-lookup.ts
+@@ -184,19 +184,42 @@ export class CatalogueHttpError extends Error {
+   readonly status: number;
+   constructor(status: number) {
+     super(
+-      status === 429
++      status === 429 || status === 503
+         ? 'The online catalogue is rate-limiting requests — try again in a few minutes.'
+-        : `The online catalogue request failed (${status}).`,
++        : status === 403
++          ? 'The online catalogue refused the request (403) — usually a daily request quota. Try again later.'
++          : `The online catalogue request failed (${status}).`,
+     );
+     this.status = status;
+   }
+ }
+ 
+ /**
+- * JSON from the webview directly; if CORS or the network blocks it, route the
+- * same URL through the desktop-side fetcher and parse its body. HTTP-status
+- * failures skip the fallback (same network, same result); a 404 means the
+- * source simply has no record, which is reported as such, not as a failure.
++ * The desktop fetcher reports an HTTP failure as plain text ("… HTTP status
++ * client error (429 Too Many Requests) for url (…)"). Recover the code so a
++ * rate limit or a "no such record" is told apart from a real outage.
++ */
++export function statusFromFetchError(message: string): number | null {
++  const m = /\((\d{3}) [A-Za-z' -]+\)/.exec(message);
++  return m ? Number(m[1]) : null;
++}
++
++async function viaDesktop<T>(url: string, parse: (body: string) => T): Promise<T> {
++  try {
++    return parse((await fetchWebPage(url)).html);
++  } catch (error) {
++    const status = statusFromFetchError(error instanceof Error ? error.message : String(error));
++    if (status === 404) throw new NotFoundError();
++    if (status) throw new CatalogueHttpError(status);
++    throw error;
++  }
++}
++
++/**
++ * JSON from the webview directly; if CORS, the app's CSP or the network blocks
++ * it, route the same URL through the desktop-side fetcher and parse its body.
++ * HTTP-status failures skip that fallback (same network, same result); a 404
++ * means the source simply has no record, which is reported as such.
+  */
+ async function fetchJson(url: string): Promise<unknown> {
+   try {
+@@ -206,8 +229,7 @@ async function fetchJson(url: string): Promise<unknown> {
+     return await response.json();
+   } catch (error) {
+     if (error instanceof CatalogueHttpError || error instanceof NotFoundError) throw error;
+-    const page = await fetchWebPage(url);
+-    return JSON.parse(page.html);
++    return viaDesktop(url, (body) => JSON.parse(body));
+   }
+ }
+ 
+@@ -219,8 +241,44 @@ async function fetchText(url: string): Promise<string> {
+     return await response.text();
+   } catch (error) {
+     if (error instanceof CatalogueHttpError || error instanceof NotFoundError) throw error;
+-    const page = await fetchWebPage(url);
+-    return page.html;
++    return viaDesktop(url, (body) => body);
++  }
++}
++
++/* ---------- Politeness for sources with strict anonymous quotas ---------- */
++
++// Minimum gap between requests to the same source. Semantic Scholar allows about one
++// request a second to unauthenticated callers; Google Books and NCBI are similarly touchy.
++const THROTTLE_MS: Record<string, number> = { semanticscholar: 1100, googlebooks: 300, pubmed: 350 };
++let backoffMs = [1500, 3500];
++let throttleOn = true;
++const slots: Record<string, Promise<void>> = {};
++
++/** Tests turn the waiting off; the app keeps the defaults. */
++export function setPoliteness(options: { throttle?: boolean; backoff?: number[] }): void {
++  if (options.throttle !== undefined) throttleOn = options.throttle;
++  if (options.backoff) backoffMs = options.backoff;
++}
++
++function takeSlot(source: string): Promise<void> {
++  const gap = throttleOn ? THROTTLE_MS[source] ?? 0 : 0;
++  if (!gap) return Promise.resolve();
++  const turn = slots[source] ?? Promise.resolve();
++  slots[source] = turn.then(() => new Promise<void>((r) => setTimeout(r, gap)));
++  return turn;
++}
++
++/** fetchJson for a rate-limited source: one request at a time per source, and a patient retry on 429/503. */
++async function fetchJsonPolite(source: string, url: string): Promise<unknown> {
++  for (let attempt = 0; ; attempt++) {
++    await takeSlot(source);
++    try {
++      return await fetchJson(url);
++    } catch (error) {
++      const retriable = error instanceof CatalogueHttpError && (error.status === 429 || error.status === 503);
++      if (!retriable || attempt >= backoffMs.length) throw error;
++      await new Promise((r) => setTimeout(r, backoffMs[attempt]));
++    }
+   }
+ }
+ 
+@@ -232,6 +290,12 @@ function api(base: string, params: Record<string, string | number | undefined> =
+   return u.toString();
+ }
+ 
++let googleBooksKey = '';
++/** Optional free key from Google Cloud: lifts the shared anonymous quota that Google Books enforces per IP. */
++export function setGoogleBooksApiKey(key: string): void {
++  googleBooksKey = key.trim();
++}
++
+ let contactEmail = '';
+ /** Crossref/OpenAlex/PubMed answer faster and more reliably to identified clients. */
+ export function setReferenceContactEmail(email: string): void {
+@@ -524,7 +588,7 @@ export const API: Record<string, SourceApi> = {
+       return (j.message?.items ?? []).map(fromCrossref);
+     },
+     async search(q) {
+-      const j = (await fetchJson(api('https://api.crossref.org/works', { 'query.bibliographic': q, rows: 8, mailto: mailto() }))) as { message?: { items?: CrossrefWork[] } };
++      const j = (await fetchJson(api('https://api.crossref.org/works', { 'query.bibliographic': q, rows: 10, mailto: mailto() }))) as { message?: { items?: CrossrefWork[] } };
+       return (j.message?.items ?? []).map(fromCrossref);
+     },
+   },
+@@ -536,7 +600,7 @@ export const API: Record<string, SourceApi> = {
+       return [fromOpenAlex((await fetchJson(api(`https://api.openalex.org/works/pmid:${id}`, { select: OA_SELECT, mailto: mailto() }))) as OpenAlexWork)];
+     },
+     async search(q) {
+-      const j = (await fetchJson(api('https://api.openalex.org/works', { search: q, per_page: 8, select: OA_SELECT, mailto: mailto() }))) as { results?: OpenAlexWork[] };
++      const j = (await fetchJson(api('https://api.openalex.org/works', { search: q, per_page: 10, select: OA_SELECT, mailto: mailto() }))) as { results?: OpenAlexWork[] };
+       return (j.results ?? []).map(fromOpenAlex);
+     },
+   },
+@@ -564,7 +628,7 @@ export const API: Record<string, SourceApi> = {
+   },
+   pubmed: {
+     async pmid(id) {
+-      const j = (await fetchJson(api('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi', { db: 'pubmed', id, retmode: 'json', tool: 'annotate-studio', email: mailto() }))) as { result?: Record<string, PubmedSummary> };
++      const j = (await fetchJsonPolite('pubmed', api('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi', { db: 'pubmed', id, retmode: 'json', tool: 'annotate-studio', email: mailto() }))) as { result?: Record<string, PubmedSummary> };
+       const s = j.result?.[id];
+       if (!s || (s as { error?: unknown }).error || !s.title) throw new NotFoundError();
+       return [fromPubmed(s)];
+@@ -572,10 +636,10 @@ export const API: Record<string, SourceApi> = {
+   },
+   semanticscholar: {
+     async lookup(ext) {
+-      return [fromS2((await fetchJson(api(`https://api.semanticscholar.org/graph/v1/paper/${encodeURI(ext)}`, { fields: S2_FIELDS }))) as S2Paper)];
++      return [fromS2((await fetchJsonPolite('semanticscholar', api(`https://api.semanticscholar.org/graph/v1/paper/${encodeURI(ext)}`, { fields: S2_FIELDS }))) as S2Paper)];
+     },
+     async search(q) {
+-      const j = (await fetchJson(api('https://api.semanticscholar.org/graph/v1/paper/search', { query: q, limit: 6, fields: S2_FIELDS }))) as { data?: S2Paper[] };
++      const j = (await fetchJsonPolite('semanticscholar', api('https://api.semanticscholar.org/graph/v1/paper/search', { query: q, limit: 6, fields: S2_FIELDS }))) as { data?: S2Paper[] };
+       return (j.data ?? []).map(fromS2);
+     },
+   },
+@@ -602,7 +666,7 @@ export const API: Record<string, SourceApi> = {
+       })];
+     },
+     async search(q) {
+-      const j = (await fetchJson(api('https://openlibrary.org/search.json', { q, limit: 6, fields: 'key,title,subtitle,author_name,first_publish_year,publisher,isbn' }))) as { docs?: OpenLibraryDoc[] };
++      const j = (await fetchJson(api('https://openlibrary.org/search.json', { q, limit: 10, fields: 'key,title,subtitle,author_name,first_publish_year,publisher,isbn' }))) as { docs?: OpenLibraryDoc[] };
+       return (j.docs ?? []).map((d) => mk('openlibrary', {
+         type: 'book', title: (d.title || '') + (d.subtitle ? `: ${d.subtitle}` : ''), authors: (d.author_name || []).map((n) => parseName(n) ?? { family: n, given: '' }),
+         year: d.first_publish_year, publisher: d.publisher?.[0] ?? '', isbn: d.isbn?.[0] ?? '', firstPubYear: true,
+@@ -612,7 +676,7 @@ export const API: Record<string, SourceApi> = {
+   },
+   googlebooks: {
+     async query(q: string, n: number) {
+-      const j = (await fetchJson(api('https://www.googleapis.com/books/v1/volumes', { q, maxResults: n, printType: 'books' }))) as { items?: GoogleVolume[] };
++      const j = (await fetchJsonPolite('googlebooks', api('https://www.googleapis.com/books/v1/volumes', { q, maxResults: n, printType: 'books', key: googleBooksKey || undefined }))) as { items?: GoogleVolume[] };
+       return (j.items ?? []).map((it) => {
+         const v = it.volumeInfo || {};
+         const ids = (v.industryIdentifiers || []).map((x) => x.identifier ?? '');
+@@ -623,7 +687,7 @@ export const API: Record<string, SourceApi> = {
+       });
+     },
+     isbn(id: string) { return this.query(`isbn:${id}`, 1); },
+-    search(q: string) { return this.query(q, 6); },
++    search(q: string) { return this.query(q, 10); },
+   },
+ };
+ 
+@@ -1018,7 +1082,8 @@ function mergeVersion(v: { key: string; status: string; records: RefRecord[] },
+     out.editors = (primary.find((r) => r.editors.length) || { editors: [] }).editors;
+   }
+   out.isbn = recs.find((r) => r.isbn)?.isbn || '';
+-  out.note = recs.map((r) => r.note).find(Boolean) || '';
++  const hasEditionYear = recs.some((r) => !r.firstPubYear && Number(r.year));
++  out.note = recs.find((r) => r.note && !(r.firstPubYear && hasEditionYear))?.note || '';
+   out.pmid = recs.find((r) => r.pmid)?.pmid || '';
+   Object.keys(prov).forEach((k) => {
+     if (!prov[k]) delete prov[k];
+@@ -1122,12 +1187,69 @@ function clusterScore(recs: RefRecord[]): number {
+ 
+ interface ClusterRec { recs: RefRecord[]; score: number }
+ 
++/**
++ * Editions of one book are different references (year, publisher, ISBN), so a
++ * cluster made only of books is split per edition instead of being merged into
++ * one record with a voted year. Records that share an ISBN or a year stay
++ * together; "first published" records (Open Library search) join the edition
++ * they share an ISBN with, else the one from the same year, else the earliest.
++ */
++function splitEditions(clusters: RefRecord[][]): RefRecord[][] {
++  const out: RefRecord[][] = [];
++  for (const recs of clusters) {
++    const bookish = recs.every((r) => (r.type === 'book' || r.type === 'other') && r.status === 'published' && !r.dataset);
++    const fixed = recs.filter((r) => !r.firstPubYear && Number(r.year));
++    if (!bookish || new Set(fixed.map((r) => r.year)).size < 2) {
++      out.push(recs);
++      continue;
++    }
++    const floating = recs.filter((r) => !fixed.includes(r));
++    const parent = fixed.map((_, i) => i);
++    const find = (x: number): number => {
++      while (parent[x] !== x) {
++        parent[x] = parent[parent[x]];
++        x = parent[x];
++      }
++      return x;
++    };
++    for (let i = 0; i < fixed.length; i++) {
++      for (let j = i + 1; j < fixed.length; j++) {
++        if (fixed[i].year === fixed[j].year || fixed[i].isbns.some((k) => fixed[j].isbns.includes(k))) {
++          const a = find(i), b = find(j);
++          if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
++        }
++      }
++    }
++    const byRoot = new Map<number, RefRecord[]>();
++    fixed.forEach((r, i) => {
++      const root = find(i);
++      byRoot.set(root, [...(byRoot.get(root) ?? []), r]);
++    });
++    const groups = [...byRoot.values()];
++    if (groups.length < 2) {
++      out.push(recs);
++      continue;
++    }
++    const earliest = (g: RefRecord[]) => Math.min(...g.map((r) => Number(r.year)));
++    for (const f of floating) {
++      const target =
++        groups.find((g) => g.some((r) => r.isbns.some((k) => f.isbns.includes(k)))) ??
++        (f.firstPubYear ? groups.find((g) => g.some((r) => r.year === f.year)) : undefined) ??
++        groups.reduce((a, b) => (earliest(a) <= earliest(b) ? a : b));
++      target.push(f);
++    }
++    out.push(...groups);
++  }
++  return out;
++}
++
+ function rankClusters(records: RefRecord[], kind: RefKind, id: string): ClusterRec[] {
+-  const clusters = cluster(records).map((recs) => ({ recs, score: 0 }));
++  const clusters = splitEditions(cluster(records)).map((recs) => ({ recs, score: 0 }));
+   if (kind === 'title') {
+     clusters.forEach((c) => {
+       c.recs.forEach((r) => (r.score = recordMatch(r, id)));
+-      c.score = clusterScore(c.recs);
++      // The year only breaks exact ties, newest edition first.
++      c.score = clusterScore(c.recs) + Math.max(0, ...c.recs.map((r) => Number(r.year) || 0)) / 1e7;
+     });
+   } else {
+     const q = new Set<string>();
+@@ -1149,6 +1271,8 @@ function rankClusters(records: RefRecord[], kind: RefKind, id: string): ClusterR
+ 
+ /* ---------- One lookup: ask every source, expand, cluster, merge ---------- */
+ 
++/** How many distinct matches a title search offers (editions count separately). */
++const MAX_CANDIDATES = 10;
+ const PHASE_BUDGET = 16000;
+ const EXPAND_BUDGET = 10000;
+ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+@@ -1173,6 +1297,8 @@ export interface LookupEntry {
+   rec: MergedRef | null;
+   cands: { score: number; versions: RefVersion[]; chosen: number; rec: MergedRef }[];
+   progress: Record<string, SourceProgress>;
++  /** Every raw record the sources returned — kept so a retry can merge new answers with the old ones */
++  records: RefRecord[];
+ }
+ 
+ export interface LookupOptions {
+@@ -1180,6 +1306,10 @@ export interface LookupOptions {
+   enabled?: Record<string, boolean>;
+   /** Called whenever a source starts or finishes answering, with a snapshot of every source's state */
+   onProgress?: (progress: Record<string, SourceProgress>) => void;
++  /** Ask only these sources (used to retry the ones that failed) */
++  only?: string[];
++  /** Records already collected; new answers are merged into them */
++  keep?: RefRecord[];
+ }
+ 
+ /** A detached copy, safe to hand to UI state. */
+@@ -1206,17 +1336,21 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
+   en.rec = null;
+   en.versions = [];
+   en.cands = [];
+-  en.progress = {};
++  // A retry keeps what the other sources already said and only starts the retried ones afresh.
++  const retrying = !!opts.only;
++  const priorProgress = retrying ? en.progress : {};
++  en.progress = { ...priorProgress };
++  for (const src of opts.only ?? []) delete en.progress[src];
+   if (en.invalid) {
+     en.status = 'error';
+     en.error = 'This looks like an ISBN, but its check digit does not match. Check it for a typing mistake.';
+     return en;
+   }
+-  const records: RefRecord[] = [];
++  const records: RefRecord[] = opts.keep ? [...opts.keep] : [];
+   const done = new Set<string>();
+   let closed = false;
+   const enabled = opts.enabled ?? {};
+-  const isEnabled = (src: string) => enabled[src] !== false;
++  const isEnabled = (src: string) => enabled[src] !== false && (!opts.only || opts.only.includes(src));
+ 
+   const call = (src: string, fn: string, arg: string): Promise<unknown> | null => {
+     const key = `${src}:${fn}:${arg}`;
+@@ -1274,9 +1408,67 @@ export async function lookupEntry(en: LookupEntry, opts: LookupOptions = {}): Pr
+     if (tasks.length) await withBudget(tasks, EXPAND_BUDGET);
+   }
+   closed = true;
++  en.records = records;
+   return finish(en, records);
+ }
+ 
++/** Sources that errored and never produced a record — the ones worth asking again. */
++export function failedSourceKeys(progress: Record<string, SourceProgress>): string[] {
++  return Object.entries(progress)
++    .filter(([, p]) => !p.pending && p.errors.length > 0 && p.found === 0)
++    .map(([key]) => key);
++}
++
++/**
++ * Ask again only the sources that failed (rate-limited, timed out, refused) and
++ * merge their answers with the records already collected. Mutates and returns the entry.
++ */
++export async function retryFailedSources(en: LookupEntry, opts: LookupOptions = {}): Promise<LookupEntry> {
++  const failed = failedSourceKeys(en.progress).filter((k) => (opts.enabled ?? {})[k] !== false);
++  if (!failed.length) return en;
++  return lookupEntry(en, { ...opts, only: failed, keep: en.records });
++}
++
++/** A one-word reason for a failed source, so "rate-limited" is not mistaken for "broken". */
++export function errorReason(errors: string[]): string {
++  const text = errors.join(' ');
++  if (/rate-limiting|rate limit/i.test(text)) return 'rate-limited';
++  if (/refused|quota|\(403\)/i.test(text)) return 'refused';
++  if (/timed out|timeout/i.test(text)) return 'timed out';
++  return 'failed';
++}
++
++export interface ProgressSummary {
++  total: number;
++  checking: number;
++  found: number;
++  none: number;
++  failed: { key: string; label: string; reason: string }[];
++  /** One plain-language sentence for the whole lookup */
++  text: string;
++}
++
++/** "Checked 7 sources — 4 found a record, 2 had none; Semantic Scholar was rate-limited." */
++export function summarizeProgress(progress: Record<string, SourceProgress>): ProgressSummary {
++  const entries = Object.entries(progress);
++  const checking = entries.filter(([, p]) => p.pending > 0).length;
++  const found = entries.filter(([, p]) => !p.pending && p.found > 0).length;
++  const failed = entries
++    .filter(([, p]) => !p.pending && p.found === 0 && p.errors.length > 0)
++    .map(([key, p]) => ({ key, label: SOURCE_LABELS[key] ?? key, reason: errorReason(p.errors) }));
++  const none = entries.length - checking - found - failed.length;
++  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
++  let text: string;
++  if (!entries.length) text = '';
++  else if (checking > 0) text = `Checking ${entries.length - checking} of ${plural(entries.length, 'source')}…`;
++  else {
++    const parts = [`${found} found a record`, `${none} had none`].filter((_, i) => (i === 0 ? true : none > 0));
++    const bad = failed.length ? `; ${failed.map((f) => `${f.label} ${f.reason === 'failed' ? 'failed' : `was ${f.reason}`}`).join(', ')}` : '';
++    text = `Checked ${plural(entries.length, 'source')} — ${parts.join(', ')}${bad}.`;
++  }
++  return { total: entries.length, checking, found, none, failed, text };
++}
++
+ function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
+   if (!records.length) {
+     en.status = 'error';
+@@ -1295,7 +1487,10 @@ function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
+   }
+   const ranked = rankClusters(records, en.kind, en.id);
+   if (en.kind === 'title') {
+-    const good = ranked.filter((c) => c.score >= 0.45).slice(0, 4);
++    // Close matches only: above the floor and within reach of the best one, so a long tail of loosely
++    // related papers does not bury the real choices (editions of one book score alike and all stay).
++    const floor = Math.max(0.45, (ranked[0]?.score ?? 0) - 0.35);
++    const good = ranked.filter((c) => c.score >= floor).slice(0, MAX_CANDIDATES);
+     if (!good.length) {
+       en.status = 'error';
+       en.error = 'No close matches found. Try more of the title, or add the first author’s surname.';
+@@ -1303,7 +1498,9 @@ function finish(en: LookupEntry, records: RefRecord[]): LookupEntry {
+     }
+     en.cands = good.map((c) => ({ score: c.score, ...analyseCluster(c.recs) }));
+     const [a, b] = en.cands;
+-    if (a.score >= 0.95 && (!b || a.score - b.score >= 0.04)) applyCand(en, 0);
++    // Never pick silently between two records with the same title (editions, duplicate DOIs): the user chooses.
++    const sameTitleRival = !!b && titleSimilarity(a.rec.title, b.rec.title) >= 0.9;
++    if (a.score >= 0.95 && !sameTitleRival && (!b || a.score - b.score >= 0.04)) applyCand(en, 0);
+     else en.status = 'choose';
+   } else {
+     en.cands = [{ score: 1, ...analyseCluster(ranked[0].recs) }];
+@@ -1327,6 +1524,7 @@ export async function lookupLine(raw: string, opts: LookupOptions = {}): Promise
+     rec: null,
+     cands: [],
+     progress: {},
++    records: [],
+   };
+   return lookupEntry(en, opts);
+ }
+diff --git a/src/lib/utils.ts b/src/lib/utils.ts
+index f8cc710..8849c97 100644
+--- a/src/lib/utils.ts
++++ b/src/lib/utils.ts
+@@ -93,6 +93,46 @@ export function debounce<T extends unknown[]>(fn: (...args: T) => void, delay: n
+   return debounced;
+ }
+ 
++/**
++ * Copy formatted text so a paste into Word, Docs or Pages keeps italics and the
++ * hanging indent, while a paste into a plain-text field still gets the text.
++ * Falls back to plain text when the webview cannot write rich content.
++ */
++export async function copyRichText(html: string, text: string): Promise<boolean> {
++  try {
++    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
++      await navigator.clipboard.write([
++        new ClipboardItem({
++          'text/html': new Blob([html], { type: 'text/html' }),
++          'text/plain': new Blob([text], { type: 'text/plain' }),
++        }),
++      ]);
++      return true;
++    }
++  } catch {
++    // fall through to the selection-based copy
++  }
++  try {
++    const holder = document.createElement('div');
++    holder.contentEditable = 'true';
++    holder.style.cssText = 'position:fixed;left:-9999px;top:0;';
++    holder.innerHTML = html;
++    document.body.appendChild(holder);
++    const range = document.createRange();
++    range.selectNodeContents(holder);
++    const selection = window.getSelection();
++    selection?.removeAllRanges();
++    selection?.addRange(range);
++    const ok = document.execCommand('copy');
++    selection?.removeAllRanges();
++    holder.remove();
++    if (ok) return true;
++  } catch {
++    // fall through
++  }
++  return copyText(text);
++}
++
+ export async function copyText(text: string): Promise<boolean> {
+   try {
+     await navigator.clipboard.writeText(text);

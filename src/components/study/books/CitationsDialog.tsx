@@ -1,14 +1,21 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BookMarked, Check, Copy, Download, Loader2, X } from 'lucide-react';
+import { AlertTriangle, BookMarked, Check, Copy, Download, Eye, Loader2, RotateCw, X } from 'lucide-react';
 import { toast } from '@/store/toast';
 import { useBooks, type BookCitation, type BookFile } from '@/store/books';
-import { extractCitationFromFile, isCitationCapable, lookupByIsbn } from '@/lib/book-citations';
-import { CITATION_STYLES, EXPORT_FORMATS, renderExport, type CitationStyle, type ExportFormat } from '@/lib/citation-formats';
+import { citationReview, extractCitationFromFile, findDuplicates, isCitationCapable, lookupByIsbn } from '@/lib/book-citations';
+import {
+  CITATION_STYLES,
+  EXPORT_FORMATS,
+  renderBibliographyRich,
+  renderExport,
+  type CitationStyle,
+  type ExportFormat,
+} from '@/lib/citation-formats';
 import { saveExportedFile } from '@/lib/export-file';
 import { errorMessage } from '@/lib/tauri-commands';
-import { copyText } from '@/lib/utils';
+import { copyRichText, copyText } from '@/lib/utils';
 import Dialog from '@/components/ui/Dialog';
 import { AddCitationDialog } from './AddCitationDialog';
 
@@ -19,7 +26,16 @@ interface CitationsDialogProps {
   fileIds: string[];
 }
 
-type RowStatus = 'missing' | 'working' | 'saved' | 'error';
+type RowStatus = 'missing' | 'working' | 'matched' | 'review' | 'error';
+type RowFilter = 'all' | 'review' | 'error' | 'missing';
+
+const STATUS_LABEL: Record<RowStatus, string> = {
+  missing: 'No citation',
+  working: 'Working…',
+  matched: 'Verified',
+  review: 'Needs review',
+  error: 'Failed',
+};
 
 /**
  * Batch citation tool: pick the books, preview their citations in the chosen
@@ -42,6 +58,9 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Books whose online check could not complete (offline, rate-limited): they kept their file metadata */
+  const [lookupFailed, setLookupFailed] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState<RowFilter>('all');
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const [style, setStyle] = useState<CitationStyle>('apa');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('txt');
@@ -63,14 +82,44 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
     [withCitations, exportFormat, style],
   );
 
+  const duplicates = useMemo(() => findDuplicates(citatable), [citatable]);
+  const duplicateName = (id: string): string | null => {
+    const original = duplicates.of.get(id);
+    const file = original ? citatable.find((f) => f.id === original) : null;
+    return file ? file.displayName || file.name : null;
+  };
+  /** Duplicates among the books currently ticked — the ones that would be listed twice. */
+  const checkedRepeats = useMemo(
+    () => [...duplicates.of.keys()].filter((id) => checked.has(id) && checked.has(duplicates.of.get(id) as string)),
+    [duplicates, checked],
+  );
+
   if (!open) return null;
 
   const statusOf = (file: BookFile): RowStatus => {
     if (working.has(file.id)) return 'working';
-    if (errors[file.id]) return 'error';
-    if (file.citation) return 'saved';
-    return 'missing';
+    if (errors[file.id] || (lookupFailed[file.id] && !file.citation)) return 'error';
+    if (!file.citation) return 'missing';
+    if (lookupFailed[file.id]) return 'review';
+    return citationReview(file.citation).state === 'review' ? 'review' : 'matched';
   };
+  const reasonsOf = (file: BookFile): string[] => {
+    const reasons: string[] = [];
+    if (errors[file.id]) reasons.push(errors[file.id]);
+    if (lookupFailed[file.id]) reasons.push(lookupFailed[file.id]);
+    reasons.push(...citationReview(file.citation).reasons);
+    return [...new Set(reasons)];
+  };
+  const statusCounts = citatable.reduce(
+    (acc, f) => {
+      const st = statusOf(f);
+      if (st === 'review' || st === 'error' || st === 'missing') acc[st] += 1;
+      return acc;
+    },
+    { review: 0, error: 0, missing: 0 } as Record<'review' | 'error' | 'missing', number>,
+  );
+  const visible = citatable.filter((f) => filter === 'all' || statusOf(f) === filter);
+  const failedIds = citatable.filter((f) => statusOf(f) === 'error').map((f) => f.id);
 
   const toggle = (id: string) =>
     setChecked((current) => {
@@ -85,6 +134,14 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
       const next = new Set(current);
       if (on) next.add(id);
       else next.delete(id);
+      return next;
+    });
+
+  const setLookupNote = (id: string, message?: string) =>
+    setLookupFailed((current) => {
+      const next = { ...current };
+      if (message) next[id] = message;
+      else delete next[id];
       return next;
     });
 
@@ -104,6 +161,7 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
   const readOne = async (file: BookFile): Promise<void> => {
     setWorkingOne(file.id, true);
     setErrorOne(file.id);
+    setLookupNote(file.id);
     try {
       const seed = file.citation ?? (await extractCitationFromFile(file));
       if (seed.isbn) {
@@ -114,8 +172,9 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
             updateFile(file.id, { citation: found });
             return;
           }
-        } catch {
-          // offline or blocked — the embedded seed is still worth saving
+        } catch (error) {
+          // offline or blocked — the embedded seed is still worth saving, but say it was not checked
+          setLookupNote(file.id, `Online check did not finish: ${errorMessage(error).replace(/\.+$/, '')}`);
         }
       }
       if (!file.citation) updateFile(file.id, { citation: seed });
@@ -126,8 +185,7 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
     }
   };
 
-  const generateMissing = async () => {
-    const targets = citatable.filter((f) => checked.has(f.id) && !f.citation);
+  const runBatch = async (targets: BookFile[], verb: string) => {
     if (targets.length === 0) return;
     setBulk({ done: 0, total: targets.length });
     for (let index = 0; index < targets.length; index += 1) {
@@ -136,12 +194,40 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
     }
     setBulk(null);
     const good = targets.filter((f) => useBooks.getState().files[f.id]?.citation).length;
-    toast.success(`Citations ready for ${good} of ${targets.length} book${targets.length === 1 ? '' : 's'}`);
+    toast.success(`${verb} ${good} of ${targets.length} book${targets.length === 1 ? '' : 's'}`);
   };
+
+  const generateMissing = () => runBatch(citatable.filter((f) => checked.has(f.id) && !f.citation), 'Citations ready for');
+
+  /** Try again the books whose read or online check failed; the ones that worked are left alone. */
+  const retryFailed = () =>
+    runBatch(
+      citatable.filter((f) => failedIds.includes(f.id) || (lookupFailed[f.id] && statusOf(f) !== 'working')),
+      'Retried',
+    );
+
+  const deselectRepeats = () =>
+    setChecked((current) => {
+      const next = new Set(current);
+      checkedRepeats.forEach((id) => next.delete(id));
+      return next;
+    });
 
   const handleCopy = async () => {
     if (!withCitations.length) return;
-    if (await copyText(previewText)) toast.success(`Copied ${withCitations.length} citation${withCitations.length === 1 ? '' : 's'}`);
+    // Formatted references are copied as rich text (italics + hanging indent for Word/Docs);
+    // BibTeX, RIS and JSON are code, so they stay plain.
+    let copied: boolean;
+    if (exportFormat === 'txt') {
+      const { html, text } = renderBibliographyRich(
+        withCitations.map((f) => f.citation as BookCitation),
+        style,
+      );
+      copied = await copyRichText(html, text);
+    } else {
+      copied = await copyText(previewText);
+    }
+    if (copied) toast.success(`Copied ${withCitations.length} citation${withCitations.length === 1 ? '' : 's'}`);
     else toast.error('Could not copy to the clipboard');
   };
 
@@ -174,6 +260,12 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
               ? `Generating… ${bulk.done} of ${bulk.total}`
               : `${checkedCount} of ${citatable.length} selected · ${withCitations.length} with citations${missingCheckedCount ? ` · ${missingCheckedCount} to generate` : ''}`}
           </span>
+          {failedIds.length > 0 && bulk === null && (
+            <button type="button" className="btn btn-sm btn-secondary" onClick={retryFailed} title="Try again the books whose read or online check failed">
+              <RotateCw size={13} />
+              Retry failed ({failedIds.length})
+            </button>
+          )}
           {missingCheckedCount > 0 && (
             <button type="button" className="btn btn-sm btn-primary" onClick={generateMissing} disabled={bulk !== null}>
               {bulk ? <Loader2 size={14} className="btn-spin" /> : <BookMarked size={14} />}
@@ -181,6 +273,53 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
             </button>
           )}
         </div>
+
+        {bulk && (
+          <div
+            className="citations-progress"
+            role="progressbar"
+            aria-label="Generating citations"
+            aria-valuemin={0}
+            aria-valuemax={bulk.total}
+            aria-valuenow={bulk.done}
+          >
+            <div className="citations-progress-bar" style={{ width: `${Math.round((bulk.done / bulk.total) * 100)}%` }} />
+          </div>
+        )}
+
+        <div className="citations-filters" role="group" aria-label="Show books">
+          {(
+            [
+              ['all', 'All', citatable.length],
+              ['review', 'Needs review', statusCounts.review],
+              ['error', 'Failed', statusCounts.error],
+              ['missing', 'No citation', statusCounts.missing],
+            ] as [RowFilter, string, number][]
+          ).map(([id, label, count]) => (
+            <button
+              key={id}
+              type="button"
+              className={`citations-filter${filter === id ? ' citations-filter-active' : ''}`}
+              onClick={() => setFilter(id)}
+              aria-pressed={filter === id}
+              disabled={id !== 'all' && count === 0}
+            >
+              {label} {count > 0 || id === 'all' ? `(${count})` : ''}
+            </button>
+          ))}
+        </div>
+
+        {checkedRepeats.length > 0 && (
+          <p className="citations-duplicates" role="alert">
+            <AlertTriangle size={13} />
+            <span>
+              {checkedRepeats.length} selected book{checkedRepeats.length === 1 ? ' repeats' : 's repeat'} another one and would be listed twice.
+            </span>
+            <button type="button" className="citation-link-btn" onClick={deselectRepeats}>
+              Keep one of each
+            </button>
+          </p>
+        )}
 
         <div className="citations-selectbar">
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setChecked(new Set(citatable.map((f) => f.id)))} disabled={!citatable.length}>
@@ -204,23 +343,30 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
           {citatable.length === 0 && (
             <p className="citation-hint citations-preview-empty">No citatable books in this view — only PDF and ebook files carry citations.</p>
           )}
-          {citatable.map((file) => {
+          {citatable.length > 0 && visible.length === 0 && (
+            <p className="citation-hint citations-preview-empty">No books match this filter.</p>
+          )}
+          {visible.map((file) => {
             const status = statusOf(file);
+            const reasons = reasonsOf(file);
+            const repeatOf = duplicateName(file.id);
             return (
               <div key={file.id} className="citations-row">
                 <div className="citations-row-main">
                   <label className="book-file-checkbox citations-row-check">
                     <input type="checkbox" checked={checked.has(file.id)} onChange={() => toggle(file.id)} />
                   </label>
-                  <span className={`citations-status citations-status-${status}`}>
+                  <span className={`citations-status citations-status-${status}`} title={reasons.join(' · ') || STATUS_LABEL[status]}>
                     {status === 'working' && <Loader2 size={13} className="btn-spin" />}
-                    {status === 'saved' && <Check size={13} />}
+                    {status === 'matched' && <Check size={13} />}
+                    {status === 'review' && <Eye size={13} />}
                     {status === 'error' && <AlertTriangle size={13} />}
                     {status === 'missing' && <X size={13} />}
                   </span>
                   <span className="citations-row-name" title={file.filePath}>
                     {file.displayName || file.name}
                   </span>
+                  <span className={`citations-status-label citations-status-label-${status}`}>{STATUS_LABEL[status]}</span>
                   <div className="citations-row-actions">
                     {!file.citation && status !== 'working' && (
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => readOne(file)}>
@@ -235,10 +381,12 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
                       title="Search online catalogues with title, author, ISBN or a pasted reference"
                     >
                       <BookMarked size={13} />
-                      Add citation
+                      {status === 'review' ? 'Review' : 'Add citation'}
                     </button>
                   </div>
                 </div>
+                {status === 'review' && reasons.length > 0 && <p className="citations-row-note">{reasons.join(' · ')}</p>}
+                {repeatOf && <p className="citations-row-note citations-row-repeat">Same book as “{repeatOf}”</p>}
                 {errors[file.id] && <p className="citation-error">{errors[file.id]}</p>}
               </div>
             );

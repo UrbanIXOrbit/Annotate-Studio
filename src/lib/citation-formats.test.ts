@@ -4,6 +4,8 @@ import {
   bibtexKey,
   CITATION_STYLES,
   formatCitation,
+  formatCitationHtml,
+  renderBibliographyRich,
   renderExport,
   splitAuthor,
   toBibtex,
@@ -160,4 +162,58 @@ test('renderExport joins formatted citations for text output', () => {
   assert.match(renderExport([book], 'bib', 'apa'), /^@book\{/);
   assert.match(renderExport([book], 'ris', 'apa'), /^TY  - BOOK/);
   assert.match(renderExport([book], 'json', 'apa'), /^\[/);
+});
+
+const thematic: BookCitation = {
+  title: 'Using thematic analysis in psychology',
+  authors: ['Braun, Virginia', 'Clarke, Victoria'],
+  structuredAuthors: [
+    { family: 'Braun', given: 'Virginia' },
+    { family: 'Clarke', given: 'Victoria' },
+  ],
+  container: 'Qualitative Research in Psychology',
+  volume: '3',
+  issue: '2',
+  pages: '77-101',
+  year: '2006',
+  doi: '10.1191/1478088706qp063oa',
+  type: 'article',
+  source: 'manual',
+  retrievedAt: '2026-10-30T00:00:00.000Z',
+};
+
+test('rich output italicises journal, volume and book titles; the plain text is unchanged', () => {
+  const apa = formatCitationHtml('apa', thematic);
+  assert.ok(apa.includes('<i>Qualitative Research in Psychology</i>, <i>3</i>(2), 77–101.'), apa);
+  assert.ok(formatCitationHtml('apa', book).includes('<i>War and Peace</i> (2nd ed.).'));
+  assert.ok(formatCitationHtml('mla', thematic).includes('<i>Qualitative Research in Psychology</i>, vol. 3'));
+  assert.ok(formatCitationHtml('chicago', book).includes('<i>War and Peace</i>.'));
+  assert.equal(formatCitationHtml('vancouver', thematic).includes('<i>'), false, 'Vancouver uses no italics');
+  for (const style of CITATION_STYLES.map((s) => s.id)) {
+    assert.equal(formatCitation(style, thematic).includes('<i>'), false);
+    assert.equal(/[\uE000\uE001]/.test(formatCitation(style, thematic)), false, 'no private marks leak into plain text');
+  }
+});
+
+test('a title ending in a question mark is not given an extra full stop inside italics', () => {
+  const asks: BookCitation = { ...book, title: 'Who Moved My Cheese?' };
+  assert.ok(formatCitationHtml('mla', asks).includes('<i>Who Moved My Cheese?</i>'));
+  assert.equal(formatCitationHtml('mla', asks).includes('?</i>.'), false);
+});
+
+test('rich output escapes HTML in titles', () => {
+  const nasty: BookCitation = { ...book, title: 'Tom & <b>Jerry</b>' };
+  const html = formatCitationHtml('apa', nasty);
+  assert.ok(html.includes('Tom &amp; &lt;b&gt;Jerry&lt;/b&gt;'));
+  assert.equal(html.includes('<b>'), false);
+});
+
+test('a rich bibliography has hanging-indent paragraphs and numbers Vancouver entries', () => {
+  const { html, text } = renderBibliographyRich([thematic, book], 'apa');
+  assert.equal((html.match(/<p /g) ?? []).length, 2);
+  assert.ok(html.includes('text-indent:-36pt'));
+  assert.equal(text.split('\n\n').length, 2);
+  const van = renderBibliographyRich([thematic, book], 'vancouver');
+  assert.ok(van.text.startsWith('1. '));
+  assert.ok(van.text.includes('\n\n2. '));
 });

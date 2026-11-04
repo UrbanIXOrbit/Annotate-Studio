@@ -8146,6 +8146,10 @@ input[type='checkbox'] {
   flex-direction: column;
   gap: 4px;
   margin-top: 6px;
+  /* A search can return up to ten matches (every edition separately): scroll rather than grow the dialog. */
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .citation-candidate {
@@ -8249,7 +8253,7 @@ input[type='checkbox'] {
   border-radius: var(--radius-pill);
 }
 
-.citations-status-saved {
+.citations-status-matched {
   color: var(--success);
   background: color-mix(in srgb, var(--success) 13%, var(--bg-card));
 }
@@ -8468,4 +8472,276 @@ input[type='checkbox'] {
   line-height: 1.4;
   color: var(--text-muted);
   margin-top: 3px;
+}
+
+/* Reference-engine UI: per-source status chips (live while a lookup runs) */
+.citation-source-status {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.citation-source-status-item {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.citation-source-status-ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+}
+
+.citation-source-status-err {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.citation-source-status-wait {
+  opacity: 0.7;
+}
+
+/* Match list: formatted preview + what would change */
+.citation-candidate-preview {
+  margin-top: 4px;
+  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.citation-candidate-diff {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.citation-candidate-same {
+  color: var(--success);
+}
+
+.citation-style-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+}
+
+/* One-sentence summary of how the sources answered, with a retry for the ones that failed */
+.citation-source-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* Edit form: authors list, inline checks, fetch buttons */
+.citation-authors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.citation-author-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.citation-author-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.citation-icon-btn {
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.citation-add-author {
+  align-self: flex-start;
+}
+
+.citation-input-action {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.citation-input-action .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.citation-field-problem {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--warning);
+}
+
+.citation-more-fields {
+  grid-column: 1 / -1;
+  justify-self: flex-start;
+}
+
+/* Saved citation: completeness, retraction, repeats, confidence */
+.citation-gaps,
+.citation-retracted,
+.citation-warning-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.citation-gaps,
+.citation-warning-line {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 11%, var(--bg-card));
+}
+
+.citation-gaps svg,
+.citation-retracted svg,
+.citation-warning-line svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.citation-retracted {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, var(--bg-card));
+  font-weight: 600;
+}
+
+.citation-link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.citation-confidence-high {
+  background: color-mix(in srgb, var(--success) 15%, var(--bg-card));
+  color: var(--success);
+}
+
+.citation-confidence-medium {
+  background: color-mix(in srgb, var(--warning) 15%, var(--bg-card));
+  color: var(--warning);
+}
+
+.citation-confidence-low {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+/* Batch dialog: progress, filters, status labels, repeats */
+.citations-progress {
+  height: 5px;
+  margin: 8px 0 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.citations-progress-bar {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
+
+.citations-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.citations-filter {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.citations-filter:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.citations-filter-active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.citations-duplicates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 11%, var(--bg-card));
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.citations-status-review {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 13%, var(--bg-card));
+}
+
+.citations-status-label {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.citations-status-label-matched {
+  color: var(--success);
+}
+
+.citations-status-label-review,
+.citations-status-label-error {
+  color: var(--warning);
+}
+
+.citations-row-note {
+  margin: 2px 0 0 52px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.citations-row-repeat {
+  color: var(--warning);
 }
