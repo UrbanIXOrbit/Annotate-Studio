@@ -76,6 +76,9 @@ function SearchScopePicker({
         type="button"
         className="btn btn-sm btn-ghost books-scope-btn"
         onClick={() => setOpen((was) => !was)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label="Choose which projects to search"
         title="Choose which projects to search"
       >
         <FolderSearch size={14} />
@@ -153,14 +156,21 @@ function undoAge(ts: number): string {
 function BooksShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const rows: Array<[string, string, string]> = [
     ['⌘/Ctrl + F', 'Focus the search box', 'Search'],
-    ['⌘/Ctrl + A', 'Select every file in the current view', 'Selection'],
     ['Click / checkbox', 'Select one file / add to selection', 'Selection'],
+    ['⌘/Ctrl + Click', 'Add a file to (or remove it from) the selection', 'Selection'],
+    ['⇧ + Click', 'Select every file from the last clicked one to this one', 'Selection'],
+    ['↑ / ↓', 'Move the selection through the list', 'Selection'],
+    ['⇧ + ↑ / ↓', 'Extend the selection up or down', 'Selection'],
+    ['Space', 'Add or remove the selected file', 'Selection'],
+    ['⌘/Ctrl + A', 'Select every file in the current view', 'Selection'],
     ['⌘/Ctrl + C', 'Copy the selection', 'Clipboard'],
     ['⌘/Ctrl + X', 'Cut the selection', 'Clipboard'],
     ['⌘/Ctrl + V', 'Paste into the viewed folder or project', 'Clipboard'],
     ['Drag', 'Move files or folders onto any project, folder or file row', 'Drag & drop'],
     ['⌥/Alt + drag', 'Copy instead of move', 'Drag & drop'],
+    ['Hover folder + drag', 'A collapsed folder opens itself after a moment', 'Drag & drop'],
     ['Double-click', 'Open the file on the canvas', 'Files'],
+    ['Enter', 'Open the selected file on the canvas', 'Files'],
     ['F2', 'Rename the selected file', 'Files'],
     ['⌫ / Delete', 'Remove the selection from the library', 'Files'],
     ['Esc', 'Cancel a cut, close dialogs', 'General'],
@@ -379,6 +389,7 @@ export default function BooksTab() {
               placeholder="Search files, tags, notes… (⌘F)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Search files, tags, and notes"
               dir="auto"
             />
           </div>

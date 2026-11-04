@@ -29,6 +29,8 @@ export default function Dialog({ open, onClose, title, children, footer, width =
   closeRef.current = onClose;
   const dismissableRef = useRef(dismissable);
   dismissableRef.current = dismissable;
+  // Screen readers announce the dialog by its title
+  const titleId = React.useId();
 
   useEffect(() => {
     if (!open) return;
@@ -93,11 +95,12 @@ export default function Dialog({ open, onClose, title, children, footer, width =
           className={cn('dialog', className)}
           role="dialog"
           aria-modal="true"
+          aria-labelledby={titleId}
           tabIndex={-1}
           style={{ width }}
         >
           <div className="dialog-header">
-            <h2>{title}</h2>
+            <h2 id={titleId}>{title}</h2>
             {dismissable && (
               <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
                 <X size={15} />

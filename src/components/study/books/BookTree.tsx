@@ -74,6 +74,12 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
         moveFolder(payload.folderId, folderId, folder.projectId);
       }
     },
+    // Resting a drag on a collapsed folder opens it, so nested drops need no
+    // detour through the chevron
+    autoExpand:
+      folder && folder.collapsed && getFolderChildren(folderId).length > 0
+        ? () => toggleFolderCollapse(folderId)
+        : undefined,
   });
 
   if (!folder) return null;
@@ -132,6 +138,23 @@ function FolderNode({ folderId, level }: { folderId: string; level: number }) {
         style={{ paddingLeft: 5 + level * INDENT }}
         onPointerDown={isEditing ? undefined : handleDragStart}
         onClick={handleSelect}
+        role="treeitem"
+        aria-expanded={hasChildren ? !folder.collapsed : undefined}
+        aria-selected={isSelected}
+        tabIndex={isEditing ? -1 : 0}
+        onKeyDown={(event) => {
+          if (isEditing) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleSelect();
+          } else if (event.key === 'ArrowRight' && hasChildren && folder.collapsed) {
+            event.preventDefault();
+            toggleFolderCollapse(folderId);
+          } else if (event.key === 'ArrowLeft' && hasChildren && !folder.collapsed) {
+            event.preventDefault();
+            toggleFolderCollapse(folderId);
+          }
+        }}
       >
         {isEditing ? (
           <input
@@ -376,7 +399,18 @@ function ProjectNode({
           isSelected && 'selected',
           containsSelection && 'contains-selection',
         )}
+        role="treeitem"
+        aria-expanded={expanded}
+        aria-selected={isSelected}
+        tabIndex={editing ? -1 : 0}
         onClick={handleOpen}
+        onKeyDown={(event) => {
+          if (editing) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleOpen();
+          }
+        }}
       >
         {editing ? (
           <input
@@ -565,6 +599,7 @@ export function BookTree({ newProjectOpen, onNewProjectOpenChange }: BookTreePro
             className="icon-btn icon-btn-sm"
             title={activeProjectId ? 'New folder in current project' : 'Create a project first'}
             disabled={!activeProjectId}
+            aria-label="New folder"
             onClick={() => activeProjectId && startCreateFolder(activeProjectId)}
           >
             <FolderPlus size={15} />
@@ -573,6 +608,7 @@ export function BookTree({ newProjectOpen, onNewProjectOpenChange }: BookTreePro
             type="button"
             className="icon-btn icon-btn-sm"
             title="New project"
+            aria-label="New project"
             onClick={() => {
               newProjectCommitted.current = false;
               onNewProjectOpenChange(true);
@@ -583,7 +619,7 @@ export function BookTree({ newProjectOpen, onNewProjectOpenChange }: BookTreePro
         </div>
       </div>
 
-      <div className="folder-tree-list">
+      <div className="folder-tree-list" role="tree" aria-label="Projects and folders">
         {projects.map((project) => (
           <ProjectNode
             key={project.id}

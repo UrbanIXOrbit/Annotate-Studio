@@ -37,10 +37,10 @@ import { appConfirm } from '@/lib/ui-dialogs';
 import { isCitationCapable } from '@/lib/book-citations';
 import { CitationsDialog } from './CitationsDialog';
 import { AddCitationDialog } from './AddCitationDialog';
-import { useCanvas } from '@/store/canvas';
-import { useApp } from '@/store/app';
+import { openBookFileOnCanvas } from './canvas-open';
+import { useBooksVirtualRows } from './useVirtualRows';
+import { IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
 import { cn, formatBytes } from '@/lib/utils';
-import { BOOK_EXTENSIONS, IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
 
 const DOC_EXTENSIONS = ['docx', 'doc', 'odt', 'epub', 'mobi', 'rtf'];
 
@@ -72,6 +72,7 @@ function FileRow({
   onAddCitation,
   onSelectRow,
   onToggleCheck,
+  measureRef,
 }: {
   file: BookFile;
   selected: boolean;
@@ -87,8 +88,11 @@ function FileRow({
   onRenameOpened?: () => void;
   /** Open the Add citation dialog for this file — only set for citatable formats */
   onAddCitation?: () => void;
-  onSelectRow: () => void;
+  /** Row click — receives the event so Shift/⌘/Ctrl modifiers can extend the selection */
+  onSelectRow: (event: React.MouseEvent) => void;
   onToggleCheck: () => void;
+  /** Virtualizer measurement — receives the row element on mount */
+  measureRef?: (el: HTMLElement | null) => void;
 }) {
   const {
     updateFile,
@@ -155,6 +159,15 @@ function FileRow({
     },
   });
 
+  // The row is both a registered drop target and a measured virtual row
+  const setRowRef = React.useCallback(
+    (el: HTMLDivElement | null) => {
+      dropRef.current = el;
+      measureRef?.(el);
+    },
+    [measureRef],
+  );
+
   const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
     if (isBooksDragBlockedTarget(event.target as Element)) return;
     const ids = selected && selectedFileIds.length > 1 ? selectedFileIds : [file.id];
@@ -193,33 +206,7 @@ function FileRow({
     }
   };
 
-  const handleOpenOnCanvas = () => {
-    const ext = file.extension.toLowerCase();
-    let type: 'pdf' | 'image' | 'note' | 'book' | null = null;
-
-    if (ext === 'pdf') {
-      type = 'pdf';
-    } else if (IMAGE_EXTENSIONS.includes(ext)) {
-      type = 'image';
-    } else if (NOTE_EXTENSIONS.includes(ext)) {
-      type = 'note';
-    } else if (BOOK_EXTENSIONS.includes(ext)) {
-      type = 'book';
-    }
-
-    if (!type) {
-      alert('This file type cannot be opened on the canvas. Only PDFs, e-books, images, and text notes are supported.');
-      return;
-    }
-
-    try {
-      const canvas = useCanvas.getState();
-      canvas.openResource({ type, title: label, filePath: file.filePath }, { isExternal: true });
-      useApp.getState().setView('canvas');
-    } catch (error) {
-      alert(`Failed to open file on canvas: ${error}`);
-    }
-  };
+  const handleOpenOnCanvas = () => openBookFileOnCanvas(file);
 
   const handleRemove = async () => {
     if (await appConfirm(`Remove "${label}" from the library? The actual file will not be deleted.`)) {
@@ -229,10 +216,28 @@ function FileRow({
 
   return (
     <div
-      ref={dropRef}
+      ref={setRowRef}
       data-books-drop=""
+      data-file-id={file.id}
+      role="option"
+      aria-selected={selected}
+      tabIndex={0}
       className={cn('book-file', selected && 'selected', cut && 'cut', missing && 'missing')}
       onPointerDown={editing ? undefined : handleDragStart}
+      onKeyDown={(event) => {
+        if (editing) return;
+        // Enter opens on canvas, Space toggles the row in the selection —
+        // the same actions as double-click and the checkbox
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          void handleOpenOnCanvas();
+        } else if (event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleCheck();
+        }
+      }}
       title={searching ? undefined : dropLocation ? `Drop files here to add them to this location` : undefined}
     >
       {editing ? (
@@ -287,10 +292,10 @@ function FileRow({
           </div>
 
           <div className="book-file-actions">
-            <button type="button" className="icon-btn icon-btn-sm" onClick={handleOpenOnCanvas} title="Open on canvas">
+            <button type="button" className="icon-btn icon-btn-sm" onClick={handleOpenOnCanvas} title="Open on canvas" aria-label="Open on canvas">
               <LayoutGrid size={15} />
             </button>
-            <button type="button" className="icon-btn icon-btn-sm" onClick={handleOpen} title="Open file">
+            <button type="button" className="icon-btn icon-btn-sm" onClick={handleOpen} title="Open file" aria-label="Open file">
               <ExternalLink size={15} />
             </button>
             <RowMenu
@@ -404,6 +409,12 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   const [noticeExpanded, setNoticeExpanded] = useState(false);
   /** Row id that a keyboard F2 requested to rename */
   const [renameId, setRenameId] = useState<string | null>(null);
+  /**
+   * Anchor row for range selection: Shift-click / Shift-arrow extend from
+   * here, plain clicks and ⌘-clicks move it. View-scoped, so it resets with
+   * the component.
+   */
+  const selectionAnchorRef = useRef<string | null>(null);
   /** Batch citations dialog, with the file scope frozen at open time */
   const [citationsOpen, setCitationsOpen] = useState(false);
   const [citationScope, setCitationScope] = useState<string[]>([]);
@@ -417,6 +428,12 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   const files = searchQuery
     ? searchFiles(searchQuery, searchProjectIds ?? projectId)
     : getProjectFiles(projectId, selectedFolderId);
+
+  // Windowed rendering: only the visible slice of rows mounts. The ref is
+  // read through a stable handle because the panel's key listener binds once.
+  const virtual = useBooksVirtualRows(files.map((f) => f.id));
+  const virtualRef = useRef(virtual);
+  virtualRef.current = virtual;
 
   // Banners describe the view they were produced for — swap folder/project or
   // start another search and the stale report would only confuse.
@@ -576,6 +593,10 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
       const store = useBooks.getState();
       if (!store.activeProjectId) return;
 
+      // The library tree handles its own arrow/space/enter keys (expand,
+      // collapse, select) — never double-handle them here
+      const inTree = !!(event.target as HTMLElement | null)?.closest?.('.folder-tree-list');
+
       // ⌘/Ctrl+A — select every file in the current view (native text-select
       // still works while typing: the guard above returns first)
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
@@ -610,6 +631,66 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
         if (!visibleRef.current.fileIds.includes(onlyId)) return;
         event.preventDefault();
         setRenameId(onlyId);
+      }
+
+      // ↑/↓ — move the selection through the visible list; Shift extends the
+      // range from the anchor instead of collapsing to one row. Focus follows
+      // the selection so keyboard users stay oriented.
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (inTree) return;
+        const { fileIds } = visibleRef.current;
+        if (fileIds.length === 0) return;
+        event.preventDefault();
+        const anchorId = selectionAnchorRef.current;
+        const anchor = anchorId && fileIds.includes(anchorId) ? fileIds.indexOf(anchorId) : -1;
+        const current =
+          anchor !== -1
+            ? anchor
+            : store.selectedFileIds.length > 0
+              ? fileIds.indexOf(store.selectedFileIds[store.selectedFileIds.length - 1])
+              : -1;
+        const next =
+          event.key === 'ArrowDown'
+            ? Math.min(current + 1, fileIds.length - 1)
+            : Math.max(current === -1 ? 0 : current - 1, 0);
+        const nextId = fileIds[next];
+        if (!nextId) return;
+        if (event.shiftKey && anchor !== -1) {
+          const [start, end] = anchor <= next ? [anchor, next] : [next, anchor];
+          store.setSelectedFiles(fileIds.slice(start, end + 1));
+        } else {
+          store.setSelectedFiles([nextId]);
+        }
+        selectionAnchorRef.current = nextId;
+        // Route through the virtualizer: if the row is outside the rendered
+        // window it is scrolled into view and focused after it mounts
+        virtualRef.current.scrollToId(nextId);
+        return;
+      }
+
+      // Enter — open the single selected file on the canvas
+      if (event.key === 'Enter') {
+        if (inTree) return;
+        if (store.selectedFileIds.length !== 1) return;
+        const [onlyId] = store.selectedFileIds;
+        const target = store.files[onlyId];
+        if (!target || !visibleRef.current.fileIds.includes(onlyId)) return;
+        event.preventDefault();
+        void openBookFileOnCanvas(target);
+        return;
+      }
+
+      // Space — toggle the focused file in or out of the selection (skipped
+      // when a button/checkbox has focus: Space must keep activating it)
+      if (event.key === ' ') {
+        if (inTree) return;
+        const el = event.target as HTMLElement | null;
+        if (el?.closest?.('button, input, textarea, select, a, label')) return;
+        if (store.selectedFileIds.length !== 1) return;
+        const [onlyId] = store.selectedFileIds;
+        if (!visibleRef.current.fileIds.includes(onlyId)) return;
+        event.preventDefault();
+        store.toggleFileSelection(onlyId);
       }
     };
 
@@ -692,10 +773,12 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
 
       {selectedFileIds.length > 0 && (
         <div className="book-file-selection">
-          {/* key restarts the bump animation on every count change */}
-          <span key={selectedFileIds.length} className="books-selection-count">
+          {/* key restarts the bump animation on every count change; the hidden
+              status node announces the count to screen readers */}
+          <span key={selectedFileIds.length} className="books-selection-count" aria-hidden="true">
             {selectedFileIds.length} selected
           </span>
+          <span className="sr-only" role="status">{selectedFileIds.length} file{selectedFileIds.length === 1 ? '' : 's'} selected</span>
           <span className="book-file-selection-spacer" />
           <button
             type="button"
@@ -799,9 +882,15 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
       )}
 
       <div
-        ref={bodyDropRef}
+        ref={(el) => {
+          bodyDropRef.current = el;
+          virtual.scrollRef.current = el;
+        }}
         data-books-drop=""
         className="book-file-body"
+        {...(files.length > 0
+          ? { role: 'listbox', 'aria-multiselectable': true, 'aria-label': 'Files in view' }
+          : {})}
       >
         {files.length === 0 && !searchQuery && (
           <div className="books-panel-empty">
@@ -826,7 +915,14 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           </div>
         )}
 
-        {files.map((file) => {
+        {files.length > 0 && (
+          <>
+            {/* Window spacers: each is one flex-gap shorter than the virtual
+                padding it represents, because the gap itself adds the rest */}
+            {virtual.padTop > 0 && (
+              <div style={{ height: Math.max(0, virtual.padTop - 6) }} aria-hidden="true" />
+            )}
+            {files.slice(virtual.range.start, virtual.range.end).map((file) => {
           const selected = selectedFileIds.includes(file.id);
           // The row's drop target: the viewed folder normally; in search
           // results, the file's own home so results accept drops again
@@ -847,13 +943,42 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
               onAddCitation={
                 isCitationCapable(file.extension) ? () => setAddCitationFileId(file.id) : undefined
               }
-              onSelectRow={() => {
-                if (!booksClickSuppressed()) setSelectedFiles(selected && selectedFileIds.length === 1 ? [] : [file.id]);
+              onSelectRow={(event) => {
+                if (booksClickSuppressed()) return;
+                const ids = files.map((f) => f.id);
+                const index = ids.indexOf(file.id);
+
+                // Shift-click — select the range from the anchor to this row
+                if (event.shiftKey && selectionAnchorRef.current) {
+                  const from = ids.indexOf(selectionAnchorRef.current);
+                  if (from !== -1) {
+                    const [start, end] = from <= index ? [from, index] : [index, from];
+                    setSelectedFiles(ids.slice(start, end + 1));
+                    return;
+                  }
+                }
+
+                // ⌘/Ctrl-click — add or remove just this row from the selection
+                if (event.metaKey || event.ctrlKey) {
+                  toggleFileSelection(file.id);
+                  selectionAnchorRef.current = file.id;
+                  return;
+                }
+
+                // Plain click — this row only, and it becomes the new anchor
+                setSelectedFiles([file.id]);
+                selectionAnchorRef.current = file.id;
               }}
               onToggleCheck={() => toggleFileSelection(file.id)}
+              measureRef={(el) => virtual.measure(file.id, el)}
             />
           );
-        })}
+            })}
+            {virtual.padBottom > 0 && (
+              <div style={{ height: Math.max(0, virtual.padBottom - 6) }} aria-hidden="true" />
+            )}
+          </>
+        )}
       </div>
 
       <CitationsDialog open={citationsOpen} onClose={() => setCitationsOpen(false)} fileIds={citationScope} />

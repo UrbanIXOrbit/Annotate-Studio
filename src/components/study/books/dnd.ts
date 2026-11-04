@@ -25,6 +25,11 @@ export type BooksDropMode = 'copy' | 'move';
 export interface BooksDropSpec {
   accepts?: (payload: BooksDragPayload, mode: BooksDropMode) => boolean;
   onDrop: (payload: BooksDragPayload, mode: BooksDropMode) => void;
+  /**
+   * Called after the drag hovers this zone continuously for ~600ms — used by
+   * collapsed tree folders to auto-expand so nested drops need no detour.
+   */
+  autoExpand?: () => void;
 }
 
 interface DragActor {
@@ -41,6 +46,16 @@ let actor: DragActor | null = null;
 let listenersBound = false;
 
 const DRAG_THRESHOLD = 5;
+/** How long a drag must rest on a collapsed folder before it opens itself */
+const AUTO_EXPAND_DELAY = 600;
+let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearAutoExpand(): void {
+  if (autoExpandTimer !== null) {
+    clearTimeout(autoExpandTimer);
+    autoExpandTimer = null;
+  }
+}
 
 const dropZones = new WeakMap<HTMLElement, BooksDropSpec>();
 
@@ -115,6 +130,17 @@ function setZoneHover(nextHovered: DragActor['hovered'], copyMode: boolean): voi
     if (nextHovered?.zone) {
       nextHovered.zone.classList.add('drop-target');
       nextHovered.zone.classList.toggle('drop-copy', copyMode && nextHovered.accepted);
+    }
+    // Restart the auto-expand window whenever the hovered zone changes
+    clearAutoExpand();
+    if (nextHovered?.spec.autoExpand) {
+      const zone = nextHovered.zone;
+      const expand = nextHovered.spec.autoExpand;
+      autoExpandTimer = setTimeout(() => {
+        autoExpandTimer = null;
+        // Only expand if the drag is still resting on the same zone
+        if (actor?.hovered?.zone === zone) expand();
+      }, AUTO_EXPAND_DELAY);
     }
   } else if (nextHovered?.zone) {
     nextHovered.zone.classList.toggle('drop-copy', copyMode);
@@ -208,6 +234,7 @@ function onWindowPointerUp(event: PointerEvent): void {
   const mode: BooksDropMode = event.altKey ? 'copy' : 'move';
   actor.ghost?.remove();
   clearDragVisuals(actor);
+  clearAutoExpand();
   const spec = finished && hovered?.accepted ? hovered.spec : null;
   if (finished) suppressClickUntil = Date.now() + 200;
   actor = null;
@@ -224,6 +251,7 @@ function onWindowKeyDown(event: KeyboardEvent): void {
 }
 
 function finishDrag(): void {
+  clearAutoExpand();
   if (actor) {
     clearDragVisuals(actor);
     actor.ghost?.remove();
@@ -269,6 +297,9 @@ export function useBooksDropTarget<E extends HTMLElement = HTMLElement>(
     const entry: BooksDropSpec = {
       accepts: (payload, mode) => specRef.current.accepts?.(payload, mode) ?? true,
       onDrop: (payload, mode) => specRef.current.onDrop(payload, mode),
+      // Forwarded live through specRef so the engine always sees the current
+      // callback (e.g. it disappears once the folder has expanded)
+      autoExpand: () => specRef.current.autoExpand?.(),
     };
     registerBooksDropZone(element, entry);
     return () => unregisterBooksDropZone(element);
