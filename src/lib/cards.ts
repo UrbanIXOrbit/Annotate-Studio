@@ -1,5 +1,6 @@
 import type { Box, Point } from './connectors.ts';
 import { LAYOUT } from './layout.ts';
+import { pushDown } from './placement.ts';
 
 export const CARD_WIDTH = 320;
 export const CARD_MIN_HEIGHT = 150;
@@ -47,20 +48,6 @@ export function estimateCardSize(content: string, note = ''): { width: number; h
   return { width: CARD_WIDTH, height };
 }
 
-function overlaps(a: Box, b: Box, gap: number): boolean {
-  return a.x < b.x + b.width + gap && a.x + a.width + gap > b.x && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
-}
-
-function pushDown(items: PlacementItem[], rect: Box): Point {
-  let y = rect.y;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const blocker = items.find((item) => overlaps(item, { ...rect, y }, CARD_GAP / 2));
-    if (!blocker) break;
-    y = blocker.y + blocker.height + CARD_GAP;
-  }
-  return { x: rect.x, y: Math.round(y) };
-}
-
 /**
  * Where a new highlight card should land. Cards from the same PDF stack in a column
  * to the right of the PDF window; anything in the way pushes the card further down.
@@ -76,12 +63,12 @@ export function planCardPosition(
       x: Math.round(fallbackCenter.x - size.width / 2),
       y: Math.round(fallbackCenter.y - size.height / 2),
       ...size,
-    });
+    }, CARD_GAP);
   }
   const x = Math.round(anchor.x + anchor.width + COLUMN_GAP);
   const siblings = live.filter(
     (item) => item.type === 'card' && filePath !== undefined && item.source?.filePath === filePath && Math.abs(item.x - x) < 40,
   );
   const y = siblings.length > 0 ? Math.max(...siblings.map((item) => item.y + item.height)) + CARD_GAP : anchor.y;
-  return pushDown(live, { x, y, ...size });
+  return pushDown(live, { x, y, ...size }, CARD_GAP);
 }

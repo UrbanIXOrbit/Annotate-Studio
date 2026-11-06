@@ -4,7 +4,8 @@ import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
 import { useCardsClip } from '@/store/cards-clip';
 import { toast } from '@/store/toast';
 import { alignItems, distributeItems, orderItems, planLayout, type AlignMode, type Layout, type Order, type Sortable, type Spacing } from '@/lib/arrange';
-import { planTidy, planOverlapTidy } from '@/lib/tidy';
+import { clearOfOthers } from '@/lib/placement';
+import { frameMargin, planTidy, planOverlapTidy } from '@/lib/tidy';
 import type { Group } from '@/lib/groups';
 import type { CardClip } from '@/lib/note-clip';
 import type { MenuEntry } from '@/components/ui/ContextMenu';
@@ -27,6 +28,16 @@ export function itemsFor(ids: string[]): Sortable[] {
     .map((r) => ({ id: r.id, x: r.x, y: r.y, width: r.width, height: r.height, title: r.title, color: r.color, source: r.source?.title, page: r.source?.page }));
 }
 
+/** The visible windows that are not part of `ids`: what a re-arranged selection must not land on. */
+function windowsOutside(ids: string[]) {
+  const workspace = activeWorkspace(useCanvas.getState());
+  const hidden = hiddenResourceIds(workspace);
+  const mine = new Set(ids);
+  return workspace.resources
+    .filter((r) => !mine.has(r.id) && !r.minimized && !r.maximized && !hidden.has(r.id))
+    .map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
+}
+
 export function arrangeIds(ids: string[], options: { layout: Layout; order: Order; spacing: Spacing; chain?: boolean }): void {
   const items = itemsFor(ids);
   if (items.length < 2) {
@@ -34,7 +45,9 @@ export function arrangeIds(ids: string[], options: { layout: Layout; order: Orde
     return;
   }
   const canvas = useCanvas.getState();
-  canvas.placeResources(planLayout(items, { ...options, selectionOrder: ids }));
+  const plan = planLayout(items, { ...options, selectionOrder: ids });
+  // A re-arranged block is usually bigger than the spot it came from: keep it off the windows around it.
+  canvas.placeResources(clearOfOthers(plan, items, windowsOutside(ids), frameMargin(ids, activeWorkspace(canvas).groups)));
   if (options.chain) canvas.chainResources(orderItems(items, options.order, ids).map((item) => item.id));
 }
 
@@ -205,7 +218,8 @@ export function tidySelection(): void {
     return;
   }
   const workspace = activeWorkspace(useCanvas.getState());
-  useCanvas.getState().placeResources(planTidy(items, workspace.groups, linksAmong(ids)));
+  const plan = planTidy(items, workspace.groups, linksAmong(ids));
+  useCanvas.getState().placeResources(clearOfOthers(plan, items, windowsOutside(ids), frameMargin(ids, workspace.groups)));
   toast.success(`Tidied ${items.length} item${items.length === 1 ? '' : 's'}`, 'Groups and links stayed together');
 }
 

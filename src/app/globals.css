@@ -1657,6 +1657,74 @@ input[type='checkbox'] {
   height: 1px;
 }
 
+/* Equal-gap marker: a short line across the gap with end caps and its size as a label. */
+.canvas-gap {
+  position: absolute;
+  pointer-events: none;
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.canvas-gap-x {
+  height: 1px;
+}
+
+.canvas-gap-y {
+  width: 1px;
+}
+
+.canvas-gap::before,
+.canvas-gap::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+
+.canvas-gap-x::before,
+.canvas-gap-x::after {
+  top: -4px;
+  width: 1px;
+  height: 9px;
+}
+
+.canvas-gap-x::before {
+  left: 0;
+}
+
+.canvas-gap-x::after {
+  right: 0;
+}
+
+.canvas-gap-y::before,
+.canvas-gap-y::after {
+  left: -4px;
+  width: 9px;
+  height: 1px;
+}
+
+.canvas-gap-y::before {
+  top: 0;
+}
+
+.canvas-gap-y::after {
+  bottom: 0;
+}
+
+.canvas-gap-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
 .canvas-empty {
   position: absolute;
   top: 50%;

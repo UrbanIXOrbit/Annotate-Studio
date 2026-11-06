@@ -1,0 +1,1939 @@
+diff --git a/src/app/globals.css b/src/app/globals.css
+index 46d6236..2d15f1a 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -1657,6 +1657,74 @@ input[type='checkbox'] {
+   height: 1px;
+ }
+ 
++/* Equal-gap marker: a short line across the gap with end caps and its size as a label. */
++.canvas-gap {
++  position: absolute;
++  pointer-events: none;
++  background: var(--accent);
++  opacity: 0.9;
++}
++
++.canvas-gap-x {
++  height: 1px;
++}
++
++.canvas-gap-y {
++  width: 1px;
++}
++
++.canvas-gap::before,
++.canvas-gap::after {
++  content: '';
++  position: absolute;
++  background: var(--accent);
++}
++
++.canvas-gap-x::before,
++.canvas-gap-x::after {
++  top: -4px;
++  width: 1px;
++  height: 9px;
++}
++
++.canvas-gap-x::before {
++  left: 0;
++}
++
++.canvas-gap-x::after {
++  right: 0;
++}
++
++.canvas-gap-y::before,
++.canvas-gap-y::after {
++  left: -4px;
++  width: 9px;
++  height: 1px;
++}
++
++.canvas-gap-y::before {
++  top: 0;
++}
++
++.canvas-gap-y::after {
++  bottom: 0;
++}
++
++.canvas-gap-label {
++  position: absolute;
++  left: 50%;
++  top: 50%;
++  transform: translate(-50%, -50%);
++  padding: 1px 5px;
++  border-radius: 6px;
++  background: var(--accent);
++  color: var(--accent-ink, #fff);
++  font-size: 11px;
++  font-weight: 600;
++  line-height: 1.3;
++  white-space: nowrap;
++}
++
+ .canvas-empty {
+   position: absolute;
+   top: 50%;
+diff --git a/src/components/canvas/AlignmentGuides.tsx b/src/components/canvas/AlignmentGuides.tsx
+index 23f7bec..edbe5a6 100644
+--- a/src/components/canvas/AlignmentGuides.tsx
++++ b/src/components/canvas/AlignmentGuides.tsx
+@@ -5,10 +5,13 @@ import { useAlignmentGuides } from '@/store/guides';
+ import { cn } from '@/lib/utils';
+ 
+ /** Displays hint lines inside the canvas world while an item's edges or centre
+- * align with other items — rendered inside the transformed `.canvas-world`. */
++ * align with other items, plus a marker (labelled with its size) for each of two
++ * equal gaps — rendered inside the transformed `.canvas-world`. Only things that
++ * really hold at the current position are ever passed in. */
+ export default function AlignmentGuides() {
+   const guides = useAlignmentGuides((state) => state.guides);
+-  if (guides.length === 0) return null;
++  const spacing = useAlignmentGuides((state) => state.spacing);
++  if (guides.length === 0 && spacing.length === 0) return null;
+   return (
+     <div className="canvas-guides" aria-hidden>
+       {guides.map((guide, index) => (
+@@ -18,6 +21,22 @@ export default function AlignmentGuides() {
+           style={guide.axis === 'x' ? { left: guide.at } : { top: guide.at }}
+         />
+       ))}
++      {spacing.map((gap, index) => {
++        const length = Math.round(gap.to - gap.from);
++        return (
++          <span
++            key={`gap-${gap.axis}-${gap.from}-${gap.across}-${index}`}
++            className={cn('canvas-gap', gap.axis === 'x' ? 'canvas-gap-x' : 'canvas-gap-y')}
++            style={
++              gap.axis === 'x'
++                ? { left: gap.from, top: gap.across, width: length }
++                : { left: gap.across, top: gap.from, height: length }
++            }
++          >
++            <span className="canvas-gap-label">{length}</span>
++          </span>
++        );
++      })}
+     </div>
+   );
+ }
+diff --git a/src/components/canvas/CanvasWindow.tsx b/src/components/canvas/CanvasWindow.tsx
+index 7dea610..ad77a2a 100644
+--- a/src/components/canvas/CanvasWindow.tsx
++++ b/src/components/canvas/CanvasWindow.tsx
+@@ -22,6 +22,7 @@ import {
+ import { ArrowUpRight } from 'lucide-react';
+ import {
+   activeWorkspace,
++  hiddenResourceIds,
+   minSizeFor,
+   useCanvas,
+   type Resource,
+@@ -33,7 +34,7 @@ import { baseName, copyText, cn, stripExtension } from '@/lib/utils';
+ import { setContentWindow } from '@/lib/window-keys';
+ import { setLiveRect } from '@/lib/live-rects';
+ import { dragWindows, linkedComponent } from '@/lib/drag-windows';
+-import { planDragDelta } from '@/lib/layout';
++import { LAYOUT, snapResize } from '@/lib/layout';
+ import { useAlignmentGuides } from '@/store/guides';
+ import { openCardSource } from '@/lib/card-actions';
+ import { toast } from '@/store/toast';
+@@ -189,43 +190,18 @@ function CanvasWindow({ resource }: { resource: Resource }) {
+       });
+       return;
+     }
+-    handle.setPointerCapture(event.pointerId);
+-    const zoom = currentZoom();
+-    const start = { x: event.clientX, y: event.clientY };
+-    const origin = { x: resource.x, y: resource.y };
+-    const others = activeWorkspace(useCanvas.getState()).resources.filter(
+-      (candidate) => candidate.id !== resource.id && !candidate.minimized && !candidate.maximized,
+-    );
+-    let next = origin;
+-    let moved = false;
+-
+-    const onMove = (e: PointerEvent) => {
+-      const dx = e.clientX - start.x;
+-      const dy = e.clientY - start.y;
+-      if (!moved && Math.hypot(dx, dy) < 3) return;
+-      if (!moved) {
+-        moved = true;
+-        setInteraction('dragging');
+-      }
+-      const plan = planDragDelta([resource], others, dx / zoom, dy / zoom, e.shiftKey, zoom);
+-      next = { x: origin.x + plan.offsetX, y: origin.y + plan.offsetY };
+-      useAlignmentGuides.getState().set(plan.guides);
+-      frame.style.transform = `translate(${next.x}px, ${next.y}px)`;
+-      setLiveRect(resource.id, { ...next, width: resource.width, height: resource.height });
+-    };
+-    const onEnd = () => {
+-      handle.removeEventListener('pointermove', onMove);
+-      handle.removeEventListener('pointerup', onEnd);
+-      handle.removeEventListener('pointercancel', onEnd);
+-      useAlignmentGuides.getState().set([]);
+-      if (!moved) return;
+-      setInteraction(null);
+-      useCanvas.getState().placeResources({ [resource.id]: next }, { reconcile: true });
+-      setLiveRect(resource.id, null);
+-    };
+-    handle.addEventListener('pointermove', onMove);
+-    handle.addEventListener('pointerup', onEnd);
+-    handle.addEventListener('pointercancel', onEnd);
++    // One window drags through the same engine as a group: it never snaps to windows hidden inside a
++    // collapsed group, and gets Alt (free move), Escape (cancel) and edge auto-pan like every other drag.
++    dragWindows({
++      ids: [resource.id],
++      start: { x: event.clientX, y: event.clientY },
++      zoom: currentZoom(),
++      handle,
++      pointerId: event.pointerId,
++      reconcile: true,
++      onMoveStart: () => setInteraction('dragging'),
++      onFinish: () => setInteraction(null),
++    });
+   };
+ 
+   const startResize = (event: React.PointerEvent<HTMLDivElement>, edge: Handle) => {
+@@ -242,12 +218,19 @@ function CanvasWindow({ resource }: { resource: Resource }) {
+     const start = { x: event.clientX, y: event.clientY };
+     const origin = { x: resource.x, y: resource.y, width: resource.width, height: resource.height };
+     const min = minSizeFor(resource.type);
++    const workspace = activeWorkspace(useCanvas.getState());
++    const hidden = hiddenResourceIds(workspace);
++    // Only windows that are on screen are worth lining up with.
++    const others = workspace.resources.filter((r) => r.id !== resource.id && !r.minimized && !r.maximized && !hidden.has(r.id));
++    const pointer = { x: start.x, y: start.y, alt: false };
++    const frameEl: HTMLElement = frame;
+     let next = origin;
++    let finished = false;
+     setInteraction('resizing');
+ 
+-    const onMove = (e: PointerEvent) => {
+-      const dx = (e.clientX - start.x) / zoom;
+-      const dy = (e.clientY - start.y) / zoom;
++    const update = () => {
++      const dx = (pointer.x - start.x) / zoom;
++      const dy = (pointer.y - start.y) / zoom;
+       let { x, y, width, height } = origin;
+       if (edge.includes('e')) width = Math.max(min.width, origin.width + dx);
+       if (edge.includes('s')) height = Math.max(min.height, origin.height + dy);
+@@ -259,23 +242,74 @@ function CanvasWindow({ resource }: { resource: Resource }) {
+         height = Math.max(min.height, origin.height - dy);
+         y = origin.y + origin.height - height;
+       }
+-      next = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
++      if (pointer.alt || others.length === 0) {
++        // Alt resizes freely: no magnets, no guides.
++        next = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
++        useAlignmentGuides.getState().clear();
++      } else {
++        const snapped = snapResize(
++          { x, y, width, height },
++          { left: edge.includes('w'), right: edge.includes('e'), top: edge.includes('n'), bottom: edge.includes('s') },
++          others,
++          Math.max(1, LAYOUT.guideDistance / zoom),
++          min,
++        );
++        next = snapped.rect;
++        useAlignmentGuides.getState().set(snapped.guides);
++      }
+       frame.style.transform = `translate(${next.x}px, ${next.y}px)`;
+       frame.style.width = `${next.width}px`;
+       frame.style.height = `${next.height}px`;
+       setLiveRect(resource.id, next);
+     };
+-    const onEnd = () => {
++    const onMove = (e: PointerEvent) => {
++      pointer.x = e.clientX;
++      pointer.y = e.clientY;
++      pointer.alt = e.altKey;
++      update();
++    };
++    const stop = () => {
++      finished = true;
+       handle.removeEventListener('pointermove', onMove);
+       handle.removeEventListener('pointerup', onEnd);
+       handle.removeEventListener('pointercancel', onEnd);
++      window.removeEventListener('keydown', onKey, true);
++      window.removeEventListener('keyup', onKey, true);
++      useAlignmentGuides.getState().clear();
+       setInteraction(null);
++    };
++    function onEnd() {
++      if (finished) return;
++      stop();
+       useCanvas.getState().setResourceRect(resource.id, next);
+       setLiveRect(resource.id, null);
+-    };
++    }
++    function onKey(e: KeyboardEvent) {
++      if (finished) return;
++      if (e.key === 'Escape') {
++        // Cancel: put the frame back exactly as it was and commit nothing.
++        e.preventDefault();
++        e.stopImmediatePropagation();
++        stop();
++        frameEl.style.transform = `translate(${origin.x}px, ${origin.y}px)`;
++        frameEl.style.width = `${origin.width}px`;
++        frameEl.style.height = `${origin.height}px`;
++        setLiveRect(resource.id, null);
++        try {
++          handle.releasePointerCapture(event.pointerId);
++        } catch {
++          // already released
++        }
++      } else if (e.key === 'Alt') {
++        pointer.alt = e.altKey;
++        update();
++      }
++    }
+     handle.addEventListener('pointermove', onMove);
+     handle.addEventListener('pointerup', onEnd);
+     handle.addEventListener('pointercancel', onEnd);
++    window.addEventListener('keydown', onKey, true);
++    window.addEventListener('keyup', onKey, true);
+   };
+ 
+   const rename = async () => {
+diff --git a/src/components/study/SettingsTab.tsx b/src/components/study/SettingsTab.tsx
+index 6dc80da..dd2aa0c 100644
+--- a/src/components/study/SettingsTab.tsx
++++ b/src/components/study/SettingsTab.tsx
+@@ -90,6 +90,8 @@ const SHORTCUTS: { keys: string; action: string }[] = [
+   { keys: 'Double-click canvas', action: 'Create a note at that spot' },
+   { keys: 'Double-click title bar', action: 'Maximize or restore a window' },
+   { keys: 'Shift while dragging', action: 'Snap windows to a 20px grid' },
++  { keys: 'Alt while dragging or resizing', action: 'Move freely, with no snapping or guides' },
++  { keys: 'Esc while dragging or resizing', action: 'Cancel the move and put everything back' },
+   { keys: 'Esc', action: 'Restore a maximized window / deselect' },
+   { keys: 'Ctrl + Alt + N', action: 'New note' },
+   { keys: 'V H P M T R O A E', action: 'PDF tools: select, highlight, pen, marker, text, rectangle, ellipse, arrow, eraser' },
+diff --git a/src/lib/cards.ts b/src/lib/cards.ts
+index dba9d3a..7114b77 100644
+--- a/src/lib/cards.ts
++++ b/src/lib/cards.ts
+@@ -1,5 +1,6 @@
+ import type { Box, Point } from './connectors.ts';
+ import { LAYOUT } from './layout.ts';
++import { pushDown } from './placement.ts';
+ 
+ export const CARD_WIDTH = 320;
+ export const CARD_MIN_HEIGHT = 150;
+@@ -47,20 +48,6 @@ export function estimateCardSize(content: string, note = ''): { width: number; h
+   return { width: CARD_WIDTH, height };
+ }
+ 
+-function overlaps(a: Box, b: Box, gap: number): boolean {
+-  return a.x < b.x + b.width + gap && a.x + a.width + gap > b.x && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
+-}
+-
+-function pushDown(items: PlacementItem[], rect: Box): Point {
+-  let y = rect.y;
+-  for (let attempt = 0; attempt < 200; attempt += 1) {
+-    const blocker = items.find((item) => overlaps(item, { ...rect, y }, CARD_GAP / 2));
+-    if (!blocker) break;
+-    y = blocker.y + blocker.height + CARD_GAP;
+-  }
+-  return { x: rect.x, y: Math.round(y) };
+-}
+-
+ /**
+  * Where a new highlight card should land. Cards from the same PDF stack in a column
+  * to the right of the PDF window; anything in the way pushes the card further down.
+@@ -76,12 +63,12 @@ export function planCardPosition(
+       x: Math.round(fallbackCenter.x - size.width / 2),
+       y: Math.round(fallbackCenter.y - size.height / 2),
+       ...size,
+-    });
++    }, CARD_GAP);
+   }
+   const x = Math.round(anchor.x + anchor.width + COLUMN_GAP);
+   const siblings = live.filter(
+     (item) => item.type === 'card' && filePath !== undefined && item.source?.filePath === filePath && Math.abs(item.x - x) < 40,
+   );
+   const y = siblings.length > 0 ? Math.max(...siblings.map((item) => item.y + item.height)) + CARD_GAP : anchor.y;
+-  return pushDown(live, { x, y, ...size });
++  return pushDown(live, { x, y, ...size }, CARD_GAP);
+ }
+diff --git a/src/lib/drag-windows.ts b/src/lib/drag-windows.ts
+index 080cdee..5e1d217 100644
+--- a/src/lib/drag-windows.ts
++++ b/src/lib/drag-windows.ts
+@@ -1,4 +1,5 @@
+ import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
++import { edgePanVelocity } from '@/lib/edge-pan';
+ import { setLiveRect } from '@/lib/live-rects';
+ import { planDragDelta, snapToUnit } from '@/lib/layout';
+ import { useAlignmentGuides } from '@/store/guides';
+@@ -49,9 +50,13 @@ export interface DragWindowsOptions {
+ }
+ 
+ /**
+- * Drag several windows as one. Like a single-window drag, the frames are moved directly in the page while the
+- * pointer moves (cheap, and connectors and group frames follow through the live-rect channel); the store only
+- * learns the final positions on release, as one undo step.
++ * Drag several windows as one (or a single window — it is the same drag). The frames are moved directly in the
++ * page while the pointer moves (cheap, and connectors and group frames follow through the live-rect channel);
++ * the store only learns the final positions on release, as one undo step.
++ *
++ * While dragging: Shift snaps to the 20px grid, Alt moves freely (no magnets, no grid, no guides), Escape
++ * cancels the move (windows and view go back where they were), and holding the pointer near the edge of the
++ * canvas pans the view so the windows can be carried further.
+  */
+ export function dragWindows(options: DragWindowsOptions): void {
+   const { ids, start, zoom, handle, pointerId } = options;
+@@ -65,24 +70,25 @@ export function dragWindows(options: DragWindowsOptions): void {
+   const others = workspace.resources.filter(
+     (r) => !movedIds.has(r.id) && !r.minimized && !r.maximized && !hidden.has(r.id),
+   );
+-  const anchor = targets[0];
+   const frames = new Map(targets.map((r) => [r.id, document.querySelector<HTMLElement>(`[data-window-id="${r.id}"]`)]));
++  const surface = handle.closest<HTMLElement>('[data-canvas-surface]');
++  const view0 = workspace.view;
+   handle.setPointerCapture(pointerId);
+ 
+   let moved = false;
++  let finished = false;
+   let delta = { x: 0, y: 0 };
++  let raf = 0;
++  const pointer = { x: start.x, y: start.y, shift: false, alt: false };
+ 
+-  const onMove = (event: PointerEvent) => {
+-    const dx = event.clientX - start.x;
+-    const dy = event.clientY - start.y;
+-    if (!moved && Math.hypot(dx, dy) < 3) return;
+-    if (!moved) {
+-      moved = true;
+-      options.onMoveStart?.();
+-    }
+-    const plan = planDragDelta(targets, others, dx / zoom, dy / zoom, event.shiftKey, zoom);
++  /** Recompute where the windows go from the latest pointer, modifiers and view (the view may have panned). */
++  const apply = () => {
++    const view = activeWorkspace(useCanvas.getState()).view;
++    const dx = (pointer.x - start.x - (view.x - view0.x)) / zoom;
++    const dy = (pointer.y - start.y - (view.y - view0.y)) / zoom;
++    const plan = planDragDelta(targets, others, dx, dy, { grid: pointer.shift, free: pointer.alt }, zoom);
+     delta = { x: plan.offsetX, y: plan.offsetY };
+-    useAlignmentGuides.getState().set(plan.guides);
++    useAlignmentGuides.getState().set(plan.guides, plan.spacing);
+     for (const r of targets) {
+       const x = r.x + delta.x;
+       const y = r.y + delta.y;
+@@ -92,14 +98,69 @@ export function dragWindows(options: DragWindowsOptions): void {
+     }
+   };
+ 
+-  const finish = () => {
++  const tick = () => {
++    raf = 0;
++    if (finished || !moved || !surface) return;
++    const velocity = edgePanVelocity({ x: pointer.x, y: pointer.y }, surface.getBoundingClientRect());
++    if (velocity.x === 0 && velocity.y === 0) return;
++    useCanvas.getState().panBy(velocity.x, velocity.y);
++    apply();
++    raf = requestAnimationFrame(tick);
++  };
++  const scheduleEdgePan = () => {
++    if (!raf && surface) raf = requestAnimationFrame(tick);
++  };
++
++  const onMove = (event: PointerEvent) => {
++    pointer.x = event.clientX;
++    pointer.y = event.clientY;
++    pointer.shift = event.shiftKey;
++    pointer.alt = event.altKey;
++    if (!moved && Math.hypot(pointer.x - start.x, pointer.y - start.y) < 3) return;
++    if (!moved) {
++      moved = true;
++      options.onMoveStart?.();
++    }
++    apply();
++    scheduleEdgePan();
++  };
++
++  const onKey = (event: KeyboardEvent) => {
++    if (event.key === 'Escape') {
++      event.preventDefault();
++      event.stopImmediatePropagation();
++      finish(true);
++      return;
++    }
++    if (event.key === 'Alt' || event.key === 'Shift') {
++      pointer.alt = event.altKey;
++      pointer.shift = event.shiftKey;
++      if (moved) apply();
++    }
++  };
++
++  const finish = (cancelled = false) => {
++    if (finished) return;
++    finished = true;
++    if (raf) cancelAnimationFrame(raf);
+     handle.removeEventListener('pointermove', onMove);
+-    handle.removeEventListener('pointerup', finish);
+-    handle.removeEventListener('pointercancel', finish);
+-    useAlignmentGuides.getState().set([]);
++    handle.removeEventListener('pointerup', onUp);
++    handle.removeEventListener('pointercancel', onUp);
++    window.removeEventListener('keydown', onKey, true);
++    window.removeEventListener('keyup', onKey, true);
++    useAlignmentGuides.getState().clear();
++    if (cancelled) {
++      try {
++        handle.releasePointerCapture(pointerId);
++      } catch {
++        // already released
++      }
++    }
+     if (moved) {
+-      const positions = Object.fromEntries(targets.map((r) => [r.id, { x: r.x + delta.x, y: r.y + delta.y }]));
+-      useCanvas.getState().placeResources(positions, { reconcile: options.reconcile });
++      const positions = cancelled
++        ? {}
++        : Object.fromEntries(targets.map((r) => [r.id, { x: r.x + delta.x, y: r.y + delta.y }]));
++      if (!cancelled) useCanvas.getState().placeResources(positions, { reconcile: options.reconcile });
+       for (const r of targets) {
+         setLiveRect(r.id, null);
+         // The store position is now authoritative; make sure the frame shows it even if nothing re-rendered.
+@@ -107,11 +168,17 @@ export function dragWindows(options: DragWindowsOptions): void {
+         const latest = activeWorkspace(useCanvas.getState()).resources.find((candidate) => candidate.id === r.id);
+         if (frame && latest) frame.style.transform = `translate(${latest.x}px, ${latest.y}px)`;
+       }
++      // A cancelled move also gives the view back, so the canvas is exactly as it was before the drag.
++      if (cancelled) useCanvas.getState().setView(view0);
+     }
+-    options.onFinish?.(moved);
++    options.onFinish?.(moved && !cancelled);
+   };
++  const onUp = () => finish(false);
+ 
+   handle.addEventListener('pointermove', onMove);
+-  handle.addEventListener('pointerup', finish);
+-  handle.addEventListener('pointercancel', finish);
++  handle.addEventListener('pointerup', onUp);
++  handle.addEventListener('pointercancel', onUp);
++  // Capture phase, so Escape cancels the drag before anything else (the canvas clears the selection on Escape).
++  window.addEventListener('keydown', onKey, true);
++  window.addEventListener('keyup', onKey, true);
+ }
+diff --git a/src/lib/edge-pan.test.ts b/src/lib/edge-pan.test.ts
+new file mode 100644
+index 0000000..d9ae450
+--- /dev/null
++++ b/src/lib/edge-pan.test.ts
+@@ -0,0 +1,38 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { edgePanVelocity, EDGE_MARGIN, EDGE_MAX_SPEED } from './edge-pan.ts';
++
++const rect = { left: 100, top: 50, right: 1100, bottom: 850 };
++
++test('no panning while the pointer is clear of the edges', () => {
++  assert.deepEqual(edgePanVelocity({ x: 600, y: 400 }, rect), { x: 0, y: 0 });
++  assert.deepEqual(edgePanVelocity({ x: 100 + EDGE_MARGIN, y: 50 + EDGE_MARGIN }, rect), { x: 0, y: 0 }, 'the hot zone starts just inside');
++});
++
++test('near the right or bottom edge the view slides the other way, faster the closer the pointer is', () => {
++  const near = edgePanVelocity({ x: 1100 - EDGE_MARGIN / 2, y: 400 }, rect);
++  const at = edgePanVelocity({ x: 1100, y: 400 }, rect);
++  assert.ok(near.x < 0 && near.x > -EDGE_MAX_SPEED);
++  assert.equal(at.x, -EDGE_MAX_SPEED);
++  assert.ok(Math.abs(at.x) > Math.abs(near.x));
++  assert.equal(near.y, 0);
++  assert.ok(edgePanVelocity({ x: 600, y: 850 }, rect).y < 0);
++});
++
++test('near the left or top edge the view slides towards the pointer', () => {
++  assert.ok(edgePanVelocity({ x: 110, y: 400 }, rect).x > 0);
++  assert.ok(edgePanVelocity({ x: 600, y: 55 }, rect).y > 0);
++});
++
++test('past the edge the speed is capped, and corners pan on both axes', () => {
++  assert.equal(edgePanVelocity({ x: 5000, y: 400 }, rect).x, -EDGE_MAX_SPEED);
++  assert.equal(edgePanVelocity({ x: -500, y: 400 }, rect).x, EDGE_MAX_SPEED);
++  const corner = edgePanVelocity({ x: 1095, y: 845 }, rect);
++  assert.ok(corner.x < 0 && corner.y < 0);
++});
++
++test('a tiny rectangle shrinks its hot zones instead of panning everywhere', () => {
++  const tiny = { left: 0, top: 0, right: 90, bottom: 90 };
++  assert.deepEqual(edgePanVelocity({ x: 45, y: 45 }, tiny), { x: 0, y: 0 });
++  assert.deepEqual(edgePanVelocity({ x: 5, y: 5 }, { left: 0, top: 0, right: 0, bottom: 0 }), { x: 0, y: 0 });
++});
+diff --git a/src/lib/edge-pan.ts b/src/lib/edge-pan.ts
+new file mode 100644
+index 0000000..b7113f3
+--- /dev/null
++++ b/src/lib/edge-pan.ts
+@@ -0,0 +1,44 @@
++/**
++ * Auto-pan while dragging: when the pointer nears the edge of the canvas, the view should
++ * scroll so the window can be carried further. Pure — the caller applies the velocity.
++ */
++
++export interface EdgeRect {
++  left: number;
++  top: number;
++  right: number;
++  bottom: number;
++}
++
++/** Width of the hot zone along each edge, in screen px. */
++export const EDGE_MARGIN = 56;
++/** Fastest pan, in screen px per animation frame. */
++export const EDGE_MAX_SPEED = 22;
++
++function axis(position: number, low: number, high: number, margin: number, maxSpeed: number): number {
++  // Closer to (or past) the edge → faster, easing in from 0 at the edge of the hot zone.
++  if (position < low + margin) return Math.min(1, (low + margin - position) / margin) * maxSpeed;
++  if (position > high - margin) return -Math.min(1, (position - (high - margin)) / margin) * maxSpeed;
++  return 0;
++}
++
++/**
++ * How far to move the view this frame (screen px; positive x = content slides right, i.e. the
++ * view reveals what is to the left). Zero while the pointer is clear of the edges, or when the
++ * rectangle is too small to have a hot zone on both sides of an axis.
++ */
++export function edgePanVelocity(
++  pointer: { x: number; y: number },
++  rect: EdgeRect,
++  margin = EDGE_MARGIN,
++  maxSpeed = EDGE_MAX_SPEED,
++): { x: number; y: number } {
++  const width = rect.right - rect.left;
++  const height = rect.bottom - rect.top;
++  const mx = Math.min(margin, width / 3);
++  const my = Math.min(margin, height / 3);
++  return {
++    x: width > 0 ? axis(pointer.x, rect.left, rect.right, mx, maxSpeed) : 0,
++    y: height > 0 ? axis(pointer.y, rect.top, rect.bottom, my, maxSpeed) : 0,
++  };
++}
+diff --git a/src/lib/group-actions.tsx b/src/lib/group-actions.tsx
+index 73a25fc..f864ed8 100644
+--- a/src/lib/group-actions.tsx
++++ b/src/lib/group-actions.tsx
+@@ -4,7 +4,8 @@ import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
+ import { useCardsClip } from '@/store/cards-clip';
+ import { toast } from '@/store/toast';
+ import { alignItems, distributeItems, orderItems, planLayout, type AlignMode, type Layout, type Order, type Sortable, type Spacing } from '@/lib/arrange';
+-import { planTidy, planOverlapTidy } from '@/lib/tidy';
++import { clearOfOthers } from '@/lib/placement';
++import { frameMargin, planTidy, planOverlapTidy } from '@/lib/tidy';
+ import type { Group } from '@/lib/groups';
+ import type { CardClip } from '@/lib/note-clip';
+ import type { MenuEntry } from '@/components/ui/ContextMenu';
+@@ -27,6 +28,16 @@ export function itemsFor(ids: string[]): Sortable[] {
+     .map((r) => ({ id: r.id, x: r.x, y: r.y, width: r.width, height: r.height, title: r.title, color: r.color, source: r.source?.title, page: r.source?.page }));
+ }
+ 
++/** The visible windows that are not part of `ids`: what a re-arranged selection must not land on. */
++function windowsOutside(ids: string[]) {
++  const workspace = activeWorkspace(useCanvas.getState());
++  const hidden = hiddenResourceIds(workspace);
++  const mine = new Set(ids);
++  return workspace.resources
++    .filter((r) => !mine.has(r.id) && !r.minimized && !r.maximized && !hidden.has(r.id))
++    .map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
++}
++
+ export function arrangeIds(ids: string[], options: { layout: Layout; order: Order; spacing: Spacing; chain?: boolean }): void {
+   const items = itemsFor(ids);
+   if (items.length < 2) {
+@@ -34,7 +45,9 @@ export function arrangeIds(ids: string[], options: { layout: Layout; order: Orde
+     return;
+   }
+   const canvas = useCanvas.getState();
+-  canvas.placeResources(planLayout(items, { ...options, selectionOrder: ids }));
++  const plan = planLayout(items, { ...options, selectionOrder: ids });
++  // A re-arranged block is usually bigger than the spot it came from: keep it off the windows around it.
++  canvas.placeResources(clearOfOthers(plan, items, windowsOutside(ids), frameMargin(ids, activeWorkspace(canvas).groups)));
+   if (options.chain) canvas.chainResources(orderItems(items, options.order, ids).map((item) => item.id));
+ }
+ 
+@@ -205,7 +218,8 @@ export function tidySelection(): void {
+     return;
+   }
+   const workspace = activeWorkspace(useCanvas.getState());
+-  useCanvas.getState().placeResources(planTidy(items, workspace.groups, linksAmong(ids)));
++  const plan = planTidy(items, workspace.groups, linksAmong(ids));
++  useCanvas.getState().placeResources(clearOfOthers(plan, items, windowsOutside(ids), frameMargin(ids, workspace.groups)));
+   toast.success(`Tidied ${items.length} item${items.length === 1 ? '' : 's'}`, 'Groups and links stayed together');
+ }
+ 
+diff --git a/src/lib/layout.test.ts b/src/lib/layout.test.ts
+new file mode 100644
+index 0000000..0bf9ce3
+--- /dev/null
++++ b/src/lib/layout.test.ts
+@@ -0,0 +1,166 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import type { Box } from './connectors.ts';
++import { LAYOUT, planDragDelta, snapMove, snapResize, snapToUnit } from './layout.ts';
++
++const box = (x: number, y: number, width = 100, height = 100): Box => ({ x, y, width, height });
++
++/** Whether `box` really has an edge or centre on the guide line. */
++function sitsOn(item: Box, axis: 'x' | 'y', at: number): boolean {
++  const values = axis === 'x' ? [item.x, item.x + item.width / 2, item.x + item.width] : [item.y, item.y + item.height / 2, item.y + item.height];
++  return values.some((v) => Math.abs(v - at) <= 0.5);
++}
++
++test('snapToUnit rounds to the shared grid, or just to whole pixels', () => {
++  assert.equal(snapToUnit(29, true), 20);
++  assert.equal(snapToUnit(31, true), 40);
++  assert.equal(snapToUnit(29.6, false), 30);
++});
++
++test('snapMove lines an edge up with a neighbour and reports that line', () => {
++  const plan = snapMove(box(196, 500), [box(300, 0)], 8);
++  // the moving item's right edge (296) is pulled to the neighbour's left edge (300)
++  assert.equal(plan.offsetX, 4);
++  assert.deepEqual(plan.guides.filter((g) => g.axis === 'x').map((g) => g.at), [300]);
++});
++
++test('snapMove does nothing beyond the magnet distance, apart from rounding', () => {
++  const plan = snapMove(box(150.4, 500.6), [box(300, 0)], 8);
++  assert.ok(Math.abs(plan.offsetX - -0.4) < 1e-9);
++  assert.ok(Math.abs(plan.offsetY - 0.4) < 1e-9);
++  assert.deepEqual(plan.guides, []);
++  assert.deepEqual(plan.spacing, []);
++});
++
++test('equal spacing is measured between facing edges, so items of different widths get equal gaps', () => {
++  // L spans 0..100 and R spans 600..900; a 200-wide item fits between them. The old rule equalised
++  // centre distances and left gaps of 200 and 100; equal gaps are 150 and 150, at x = 250.
++  const others = [box(0, 0, 100, 100), box(600, 0, 300, 100)];
++  for (const x of [244, 250, 256]) {
++    const plan = snapMove(box(x, 0, 200, 100), others, 8);
++    const finalX = x + plan.offsetX;
++    assert.equal(finalX, 250, `x=${x} snaps to 250`);
++    assert.equal(finalX - 100, 600 - (finalX + 200), 'the two gaps are equal');
++    const gaps = plan.spacing.filter((m) => m.axis === 'x');
++    assert.equal(gaps.length, 2, 'one marker per gap');
++    assert.deepEqual(gaps.map((m) => m.to - m.from), [150, 150]);
++  }
++  // x = 300 is where the old centre-based rule would have snapped: the gaps there are 200 and 100.
++  const old = snapMove(box(300, 0, 200, 100), others, 8);
++  assert.equal(300 + old.offsetX, 300, 'unequal gaps are no longer treated as an equal-spacing spot');
++  assert.deepEqual(old.spacing, [], 'and no equal-spacing marker is shown for them');
++});
++
++test('equal spacing also works vertically', () => {
++  const others = [box(0, 0, 100, 100), box(0, 500, 100, 200)];
++  const plan = snapMove(box(0, 244, 100, 100), others, 8);
++  const y = 244 + plan.offsetY;
++  assert.equal(y, 250);
++  assert.equal(y - 100, 500 - (y + 100));
++  assert.equal(plan.spacing.filter((m) => m.axis === 'y').length, 2);
++});
++
++test('a neighbour that is not in the same row does not count for equal spacing', () => {
++  // L is far above the moving item's row, so there is no row to even out.
++  const others = [box(0, 1000, 100, 100), box(600, 0, 100, 100)];
++  const plan = snapMove(box(250, 0, 100, 100), others, 8);
++  assert.deepEqual(plan.spacing, []);
++});
++
++test('no guide is ever drawn for an alignment the final position does not have', () => {
++  // The old code drew an alignment line at 197 and then pulled the item to 200 for equal spacing.
++  const others = [box(0, 0), box(400, 0), box(197, 300)];
++  const plan = snapMove(box(190, 0), others, 8);
++  const final = box(190 + plan.offsetX, 0 + plan.offsetY);
++  assert.ok(plan.guides.length > 0);
++  for (const g of plan.guides) assert.ok(sitsOn(final, g.axis, g.at), `guide ${g.axis}=${g.at} must hold at x=${final.x}`);
++});
++
++test('every guide and marker is true at the final position (randomised layouts)', () => {
++  let seed = 12345;
++  const rand = () => ((seed = (seed * 1664525 + 1013904223) & 0x7fffffff) / 0x7fffffff);
++  const between = (lo: number, hi: number) => Math.round(lo + rand() * (hi - lo));
++  for (let trial = 0; trial < 400; trial += 1) {
++    const others = Array.from({ length: between(1, 7) }, () => box(between(0, 900), between(0, 600), between(60, 360), between(60, 300)));
++    const moving = box(between(0, 900) + rand(), between(0, 600) + rand(), between(60, 360), between(60, 300));
++    const plan = snapMove(moving, others, 8);
++    const final = { ...moving, x: moving.x + plan.offsetX, y: moving.y + plan.offsetY };
++    assert.equal(final.x, Math.round(final.x), 'x is a whole pixel');
++    assert.equal(final.y, Math.round(final.y), 'y is a whole pixel');
++    for (const g of plan.guides) assert.ok(sitsOn(final, g.axis, g.at), `trial ${trial}: guide ${g.axis}=${g.at} does not hold`);
++    for (let i = 0; i < plan.spacing.length; i += 2) {
++      const a = plan.spacing[i]!;
++      const b = plan.spacing[i + 1]!;
++      assert.ok(Math.abs(a.to - a.from - (b.to - b.from)) <= 1, `trial ${trial}: unequal gap markers`);
++      assert.ok(a.to - a.from >= 1);
++    }
++  }
++});
++
++test('planDragDelta: Alt moves freely, Shift snaps to the grid, plain drags use the magnets', () => {
++  const others = [box(300, 0)];
++  const target = [box(100, 500)];
++  // near an alignment: plain drag magnets, Alt does not
++  const plain = planDragDelta(target, others, 96.4, 0, {}, 1);
++  assert.equal(plain.offsetX, 100, 'right edge 296..300 → pulled in by the magnet');
++  assert.ok(plain.guides.length > 0);
++  const free = planDragDelta(target, others, 96.4, 0.6, { free: true }, 1);
++  assert.deepEqual(free, { offsetX: 96, offsetY: 1, guides: [], spacing: [] });
++  const grid = planDragDelta(target, others, 96.4, 3, { grid: true }, 1);
++  assert.equal((100 + grid.offsetX) % LAYOUT.unit, 0);
++  assert.equal((500 + grid.offsetY) % LAYOUT.unit, 0);
++  assert.deepEqual(grid.guides, []);
++  // Alt wins over Shift: free movement means free movement
++  assert.deepEqual(planDragDelta(target, others, 96.4, 3, { free: true, grid: true }, 1).guides, []);
++  assert.equal(planDragDelta(target, others, 96.4, 3, { free: true, grid: true }, 1).offsetX, 96);
++});
++
++test('planDragDelta keeps the unsnapped axis on whole pixels when only one axis snaps', () => {
++  const plan = planDragDelta([box(100, 500)], [box(300, 0)], 96.4, 20.7, {}, 1);
++  assert.equal(Number.isInteger(plan.offsetX), true);
++  assert.equal(Number.isInteger(plan.offsetY), true, 'the free axis used to stay fractional once the other axis snapped');
++});
++
++test('planDragDelta scales the magnet distance with zoom (8 screen pixels)', () => {
++  const others = [box(300, 0)];
++  // 18 world px away: too far at zoom 1 (8px), within reach at zoom 0.4 (20 world px)
++  assert.equal(planDragDelta([box(100, 500)], others, 82, 0, {}, 1).guides.length, 0);
++  assert.ok(planDragDelta([box(100, 500)], others, 82, 0, {}, 0.4).guides.length > 0);
++});
++
++test('planDragDelta with nothing to snap to just rounds', () => {
++  assert.deepEqual(planDragDelta([box(0, 0)], [], 10.6, -3.4, {}, 1), { offsetX: 11, offsetY: -3, guides: [], spacing: [] });
++  assert.deepEqual(planDragDelta([], [box(0, 0)], 10.6, -3.4, {}, 1), { offsetX: 11, offsetY: -3, guides: [], spacing: [] });
++});
++
++test('a multi-window drag snaps by the bounding box of the whole set', () => {
++  const targets = [box(0, 0, 100, 100), box(200, 0, 100, 100)]; // together 0..300 wide
++  const plan = planDragDelta(targets, [box(600, 0, 100, 100)], 296, 400, {}, 1);
++  // the group's right edge (300+296 = 596) is pulled to 600
++  assert.equal(plan.offsetX, 300);
++  assert.ok(plan.guides.some((g) => g.axis === 'x' && g.at === 600));
++});
++
++test('snapResize pulls the dragged edge to a neighbour and reports only that line', () => {
++  const others = [box(500, 0, 200, 200)];
++  const { rect, guides } = snapResize(box(0, 0, 496, 300), { right: true }, others, 8, { width: 200, height: 100 });
++  assert.deepEqual(rect, { x: 0, y: 0, width: 500, height: 300 });
++  assert.deepEqual(guides, [{ axis: 'x', at: 500 }]);
++});
++
++test('snapResize from the left or top edge keeps the opposite edge fixed', () => {
++  const others = [box(0, 0, 200, 200)];
++  const { rect } = snapResize(box(205, 203, 400, 400), { left: true, top: true }, others, 8, { width: 100, height: 100 });
++  assert.deepEqual(rect, { x: 200, y: 200, width: 405, height: 403 });
++  assert.equal(rect.x + rect.width, 605, 'right edge unchanged');
++  assert.equal(rect.y + rect.height, 603, 'bottom edge unchanged');
++});
++
++test('snapResize never snaps below the minimum size and ignores edges that are not being dragged', () => {
++  const others = [box(150, 0, 100, 100)]; // its left edge (150) is a tempting but too-small target
++  const small = snapResize(box(0, 0, 146, 300), { right: true }, others, 8, { width: 200, height: 100 });
++  assert.equal(small.rect.width, 146, 'would be 150 wide: not below the 200 minimum… so the free width is kept');
++  const untouched = snapResize(box(0, 0, 400, 300), { bottom: true }, [box(10, 10, 200, 200), box(396, 0, 10, 10)], 8, { width: 100, height: 100 });
++  assert.equal(untouched.rect.width, 400, 'the right edge was not being dragged, so it does not snap');
++  assert.ok(!untouched.guides.some((g) => g.axis === 'x'));
++});
+diff --git a/src/lib/layout.ts b/src/lib/layout.ts
+index a880cab..5d57fc4 100644
+--- a/src/lib/layout.ts
++++ b/src/lib/layout.ts
+@@ -7,7 +7,7 @@ import type { Box } from './connectors.ts';
+  * after an auto-place or a tidy-up.
+  */
+ export const LAYOUT = {
+-  /** Snap grid in world px (held Shift while dragging snaps to this). */
++  /** Snap grid in world px (held Shift while dragging snaps to this; held Alt turns all snapping off). */
+   unit: 20,
+   /** Gap between stacking windows, and the padding used when dodging overlaps. */
+   gap: 24,
+@@ -24,32 +24,47 @@ export function snapToUnit(value: number, enabled: boolean): number {
+   return enabled ? Math.round(value / LAYOUT.unit) * LAYOUT.unit : Math.round(value);
+ }
+ 
+-/** A guide line shown while an item is being dragged. */
++/** A guide line shown while an item is being dragged or resized: something on the item lines up here. */
+ export interface Guide {
+   axis: 'x' | 'y';
+   /** World position of the line on that axis. */
+   at: number;
+ }
+ 
++/**
++ * An equal-spacing marker: the gap between two items along `axis` (`'x'` = a horizontal gap
++ * between items side by side). Drawn from `from` to `to`, at position `across` on the other axis,
++ * with the gap's size as its label.
++ */
++export interface SpacingGuide {
++  axis: 'x' | 'y';
++  from: number;
++  to: number;
++  across: number;
++}
++
+ export interface DragPlan {
+   /** Offset to add to every dragged window's current position. */
+   offsetX: number;
+   offsetY: number;
+-  /** Guide lines to display for this drag step. */
++  /** Alignment lines that really hold at the final position. */
+   guides: Guide[];
++  /** Equal-gap markers that really hold at the final position. */
++  spacing: SpacingGuide[];
+ }
+ 
+ const xOffsets = (box: Box) => [box.x, box.x + box.width / 2, box.x + box.width];
+ const yOffsets = (box: Box) => [box.y, box.y + box.height / 2, box.y + box.height];
+ 
+-const closestDelta = (movingValues: number[], targets: number[], distance: number): { delta: number; at: number } | null => {
+-  let best: { delta: number; at: number } | null = null;
++/** How close (in world px) counts as "on" a line. Positions are whole pixels, so half a pixel covers odd widths. */
++const ON_LINE = 0.5;
++
++const closestDelta = (movingValues: number[], targets: number[], distance: number): number | null => {
++  let best: number | null = null;
+   for (const movingValue of movingValues) {
+     for (const target of targets) {
+       const delta = target - movingValue;
+-      if (Math.abs(delta) <= distance && (best === null || Math.abs(delta) < Math.abs(best.delta))) {
+-        best = { delta, at: target };
+-      }
++      if (Math.abs(delta) <= distance && (best === null || Math.abs(delta) < Math.abs(best))) best = delta;
+     }
+   }
+   return best;
+@@ -58,48 +73,105 @@ const closestDelta = (movingValues: number[], targets: number[], distance: numbe
+ const centerX = (box: Box) => box.x + box.width / 2;
+ const centerY = (box: Box) => box.y + box.height / 2;
+ 
+-/** Magnets for one moving item: align its edges and centre with other items,
+- * and pull it into equal spacing between two neighbours. Pure, no store access. */
+-export function snapMove(moving: Box, others: Box[], distance: number): DragPlan {
++type Axis = 'x' | 'y';
++const start = (box: Box, axis: Axis) => (axis === 'x' ? box.x : box.y);
++const size = (box: Box, axis: Axis) => (axis === 'x' ? box.width : box.height);
++const centre = (box: Box, axis: Axis) => (axis === 'x' ? centerX(box) : centerY(box));
++const end = (box: Box, axis: Axis) => start(box, axis) + size(box, axis);
++const crossAxis = (axis: Axis): Axis => (axis === 'x' ? 'y' : 'x');
++
++/** The items sharing a row (for `axis` 'x') or a column ('y') with `box`, split into those before and after it. */
++function neighbours(box: Box, others: Box[], axis: Axis) {
++  const cross = crossAxis(axis);
++  const inLine = others.filter((o) => start(o, cross) < end(box, cross) && end(o, cross) > start(box, cross));
++  const before = inLine.filter((o) => centre(o, axis) < centre(box, axis));
++  const after = inLine.filter((o) => centre(o, axis) > centre(box, axis));
++  const nearestBefore = before.length ? before.reduce((a, b) => (end(b, axis) > end(a, axis) ? b : a)) : null;
++  const nearestAfter = after.length ? after.reduce((a, b) => (start(b, axis) < start(a, axis) ? b : a)) : null;
++  return { before: nearestBefore, after: nearestAfter };
++}
++
++/**
++ * The move that would make the gaps on either side of `box` equal — measured between the facing
++ * edges of the two nearest items in its row (or column), not between their centres, so items of
++ * different widths still end up with visibly equal gaps. Null when it does not apply or is too far.
++ */
++function equalGapDelta(box: Box, others: Box[], axis: Axis, distance: number): number | null {
++  const { before, after } = neighbours(box, others, axis);
++  if (!before || !after) return null;
++  const room = start(after, axis) - end(before, axis);
++  if (room < size(box, axis)) return null;
++  const delta = end(before, axis) + (room - size(box, axis)) / 2 - start(box, axis);
++  return Math.abs(delta) <= distance ? delta : null;
++}
++
++/** Alignment lines that hold for `box` as it stands: any edge or centre within half a pixel of another item's. */
++function alignmentGuides(box: Box, others: Box[]): Guide[] {
+   const guides: Guide[] = [];
+-  let x = moving.x;
+-  let y = moving.y;
++  const seen = new Set<string>();
++  const check = (axis: Axis, mine: number[], theirs: number[]) => {
++    for (const value of mine) {
++      for (const target of theirs) {
++        if (Math.abs(target - value) <= ON_LINE && !seen.has(`${axis}:${target}`)) {
++          seen.add(`${axis}:${target}`);
++          guides.push({ axis, at: target });
++        }
++      }
++    }
++  };
++  check('x', xOffsets(box), others.flatMap(xOffsets));
++  check('y', yOffsets(box), others.flatMap(yOffsets));
++  return guides;
++}
+ 
+-  const alignedX = closestDelta([x, centerX(moving), x + moving.width], others.flatMap(xOffsets), distance);
+-  if (alignedX) {
+-    x += alignedX.delta;
+-    guides.push({ axis: 'x', at: alignedX.at });
+-  }
+-  const alignedY = closestDelta([y, centerY(moving), y + moving.height], others.flatMap(yOffsets), distance);
+-  if (alignedY) {
+-    y += alignedY.delta;
+-    guides.push({ axis: 'y', at: alignedY.at });
++/** Equal-gap markers that hold for `box` as it stands (both gaps at least a pixel and within a pixel of each other). */
++function spacingGuides(box: Box, others: Box[]): SpacingGuide[] {
++  const markers: SpacingGuide[] = [];
++  for (const axis of ['x', 'y'] as const) {
++    const { before, after } = neighbours(box, others, axis);
++    if (!before || !after) continue;
++    const gapBefore = start(box, axis) - end(before, axis);
++    const gapAfter = start(after, axis) - end(box, axis);
++    if (gapBefore < 1 || gapAfter < 1 || Math.abs(gapBefore - gapAfter) > 1) continue;
++    const cross = crossAxis(axis);
++    const low = Math.max(start(box, cross), start(before, cross), start(after, cross));
++    const high = Math.min(end(box, cross), end(before, cross), end(after, cross));
++    const across = high > low ? (low + high) / 2 : centre(box, cross);
++    markers.push({ axis, from: end(before, axis), to: start(box, axis), across }, { axis, from: end(box, axis), to: start(after, axis), across });
+   }
++  return markers;
++}
+ 
+-  // Equal spacing: when the moving centre sits (nearly) equidistant between the
+-  // two nearest neighbours on an axis, snap to the midpoint to even the row out.
+-  const centered = (movingCenter: number, axis: 'x' | 'y'): number | null => {
+-    const neighborCenters = others
+-      .map((other) => (axis === 'x' ? centerX(other) : centerY(other)))
+-      .filter((center) => (center < movingCenter ? true : center > movingCenter));
+-    const lower = Math.max(...neighborCenters.filter((center) => center < movingCenter));
+-    const upper = Math.min(...neighborCenters.filter((center) => center > movingCenter));
+-    if (!isFinite(lower) || !isFinite(upper) || lower >= upper) return null;
+-    if (Math.abs(movingCenter - lower - (upper - movingCenter)) < distance) return (lower + upper) / 2;
+-    return null;
++/**
++ * Magnets for one moving item: line its edges and centre up with other items, or even out the gaps
++ * between its two neighbours — whichever is closer on each axis. The position is then rounded to
++ * whole pixels, and the guides returned are worked out from that final position, so every line or
++ * marker shown is one the item really sits on. Pure, no store access.
++ */
++export function snapMove(moving: Box, others: Box[], distance: number): DragPlan {
++  const alignX = closestDelta(xOffsets(moving), others.flatMap(xOffsets), distance);
++  const alignY = closestDelta(yOffsets(moving), others.flatMap(yOffsets), distance);
++  // Rows depend on where the item sits vertically, and columns on where it sits horizontally.
++  const rowBox: Box = { ...moving, y: moving.y + (alignY ?? 0) };
++  const columnBox: Box = { ...moving, x: moving.x + (alignX ?? 0) };
++  const gapX = equalGapDelta(rowBox, others, 'x', distance);
++  const gapY = equalGapDelta(columnBox, others, 'y', distance);
++  const pick = (align: number | null, gap: number | null): number => {
++    if (align === null) return gap ?? 0;
++    if (gap === null) return align;
++    return Math.abs(gap) < Math.abs(align) ? gap : align;
+   };
+-  const spacingX = centered(x + moving.width / 2, 'x');
+-  if (spacingX !== null) {
+-    x = spacingX - moving.width / 2;
+-    guides.push({ axis: 'x', at: spacingX });
+-  }
+-  const spacingY = centered(y + moving.height / 2, 'y');
+-  if (spacingY !== null) {
+-    y = spacingY - moving.height / 2;
+-    guides.push({ axis: 'y', at: spacingY });
+-  }
++  const x = Math.round(moving.x + pick(alignX, gapX));
++  const y = Math.round(moving.y + pick(alignY, gapY));
++  const final: Box = { ...moving, x, y };
++  return { offsetX: x - moving.x, offsetY: y - moving.y, guides: alignmentGuides(final, others), spacing: spacingGuides(final, others) };
++}
+ 
+-  return { offsetX: x - moving.x, offsetY: y - moving.y, guides };
++export interface DragModifiers {
++  /** Snap to the 20px grid (Shift). */
++  grid?: boolean;
++  /** Move freely: no magnets, no grid, no guides (Alt). */
++  free?: boolean;
+ }
+ 
+ /**
+@@ -113,24 +185,96 @@ export function planDragDelta(
+   others: Box[],
+   rawX: number,
+   rawY: number,
+-  shiftKey: boolean,
++  modifiers: DragModifiers,
+   zoom: number,
+ ): DragPlan {
+   const anchor = targets[0];
+-  const baseOffsetX = shiftKey && anchor ? snapToUnit(anchor.x + rawX, true) - anchor.x : Math.round(rawX);
+-  const baseOffsetY = shiftKey && anchor ? snapToUnit(anchor.y + rawY, true) - anchor.y : Math.round(rawY);
+-  if (!anchor || shiftKey || others.length === 0) {
+-    return { offsetX: baseOffsetX, offsetY: baseOffsetY, guides: [] };
++  const free = { offsetX: Math.round(rawX), offsetY: Math.round(rawY), guides: [], spacing: [] };
++  if (!anchor) return free;
++  if (modifiers.free) return free;
++  if (modifiers.grid) {
++    return { offsetX: snapToUnit(anchor.x + rawX, true) - anchor.x, offsetY: snapToUnit(anchor.y + rawY, true) - anchor.y, guides: [], spacing: [] };
+   }
++  if (others.length === 0) return free;
+   const left = Math.min(...targets.map((target) => target.x));
+   const top = Math.min(...targets.map((target) => target.y));
+   const right = Math.max(...targets.map((target) => target.x + target.width));
+   const bottom = Math.max(...targets.map((target) => target.y + target.height));
+   const moving: Box = { x: left + rawX, y: top + rawY, width: right - left, height: bottom - top };
+   const snapped = snapMove(moving, others, Math.max(1, LAYOUT.guideDistance / zoom));
+-  if (snapped.guides.length === 0) {
+-    // No magnet fired; keep the old free movement (rounded to whole pixels).
+-    return { offsetX: baseOffsetX, offsetY: baseOffsetY, guides: [] };
++  return {
++    // Rounded so float noise (96.4 + 3.6 = 100.00000000000003) never leaves a window off the pixel grid.
++    offsetX: Math.round(rawX + snapped.offsetX),
++    offsetY: Math.round(rawY + snapped.offsetY),
++    guides: snapped.guides,
++    spacing: snapped.spacing,
++  };
++}
++
++export interface ResizeEdges {
++  left?: boolean;
++  right?: boolean;
++  top?: boolean;
++  bottom?: boolean;
++}
++
++/**
++ * Magnets for a resize: each edge being dragged lines up with another item's edge or centre when
++ * it comes within `distance`, never shrinking the box below `min`. As with moving, the guides
++ * returned are the lines the dragged edges really sit on afterwards.
++ */
++export function snapResize(
++  next: Box,
++  edges: ResizeEdges,
++  others: Box[],
++  distance: number,
++  min: { width: number; height: number },
++): { rect: Box; guides: Guide[] } {
++  let { x, y, width, height } = next;
++  const xTargets = others.flatMap(xOffsets);
++  const yTargets = others.flatMap(yOffsets);
++  const pull = (value: number, targets: number[]): number => {
++    const delta = closestDelta([value], targets, distance);
++    return delta === null ? value : value + delta;
++  };
++  if (edges.right) {
++    const edge = pull(x + width, xTargets);
++    if (edge - x >= min.width) width = edge - x;
++  }
++  if (edges.left) {
++    const right = x + width;
++    const edge = pull(x, xTargets);
++    if (right - edge >= min.width) {
++      x = edge;
++      width = right - edge;
++    }
++  }
++  if (edges.bottom) {
++    const edge = pull(y + height, yTargets);
++    if (edge - y >= min.height) height = edge - y;
++  }
++  if (edges.top) {
++    const bottom = y + height;
++    const edge = pull(y, yTargets);
++    if (bottom - edge >= min.height) {
++      y = edge;
++      height = bottom - edge;
++    }
+   }
+-  return { offsetX: rawX + snapped.offsetX, offsetY: rawY + snapped.offsetY, guides: snapped.guides };
++  const rect: Box = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
++  const guides: Guide[] = [];
++  const seen = new Set<string>();
++  const hit = (axis: Axis, value: number, targets: number[]) => {
++    for (const target of targets) {
++      if (Math.abs(target - value) <= ON_LINE && !seen.has(`${axis}:${target}`)) {
++        seen.add(`${axis}:${target}`);
++        guides.push({ axis, at: target });
++      }
++    }
++  };
++  if (edges.left) hit('x', rect.x, xTargets);
++  if (edges.right) hit('x', rect.x + rect.width, xTargets);
++  if (edges.top) hit('y', rect.y, yTargets);
++  if (edges.bottom) hit('y', rect.y + rect.height, yTargets);
++  return { rect, guides };
+ }
+diff --git a/src/lib/placement.test.ts b/src/lib/placement.test.ts
+new file mode 100644
+index 0000000..48a16d3
+--- /dev/null
++++ b/src/lib/placement.test.ts
+@@ -0,0 +1,150 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { LAYOUT } from './layout.ts';
++import { clearOfOthers, findFreeSpot, overlaps, placeBeside, pushDown, revealRect, type PlacedBox } from './placement.ts';
++
++const box = (id: string, x: number, y: number, width = 300, height = 200): PlacedBox => ({ id, x, y, width, height });
++
++function anyOverlap(boxes: PlacedBox[]): boolean {
++  for (let i = 0; i < boxes.length; i += 1) for (let j = i + 1; j < boxes.length; j += 1) if (overlaps(boxes[i], boxes[j])) return true;
++  return false;
++}
++
++test('overlaps counts shared area, and a pad widens the test on every side', () => {
++  assert.equal(overlaps(box('a', 0, 0), box('b', 299, 0)), true);
++  assert.equal(overlaps(box('a', 0, 0), box('b', 300, 0)), false, 'touching is not overlapping');
++  assert.equal(overlaps(box('a', 0, 0), box('b', 310, 0), 12), true);
++  assert.equal(overlaps(box('a', 0, 0), box('b', -310, 0), 12), true);
++  assert.equal(overlaps(box('a', 0, 0), box('b', 0, 330), 12), false);
++});
++
++test('pushDown slides a box below every blocker, leaving the gap', () => {
++  const items = [box('a', 0, 0), box('b', 0, 240)];
++  const spot = pushDown(items, box('new', 0, 10), 40);
++  assert.deepEqual(spot, { x: 0, y: 480 });
++  assert.deepEqual(pushDown([], box('new', 5, 7), 40), { x: 5, y: 7 });
++});
++
++test('findFreeSpot returns the ideal spot when it is free', () => {
++  const spot = findFreeSpot([box('a', 1000, 1000)], { width: 400, height: 300 }, { center: { x: 500, y: 400 } });
++  assert.deepEqual(spot, { x: 300, y: 250 });
++});
++
++test('findFreeSpot lines a new window up with a neighbour when the centre is taken', () => {
++  const neighbour = box('a', 100, 100, 600, 500);
++  const spot = findFreeSpot([neighbour], { width: 300, height: 200 }, { center: { x: 400, y: 350 } });
++  assert.equal(overlaps(neighbour, { ...spot, width: 300, height: 200 }, LAYOUT.gap / 2), false);
++  const alignedLeft = spot.x === neighbour.x || spot.x === neighbour.x + neighbour.width + LAYOUT.gap || spot.x + 300 === neighbour.x - LAYOUT.gap;
++  const alignedTop = spot.y === neighbour.y || spot.y === neighbour.y + neighbour.height + LAYOUT.gap || spot.y + 200 === neighbour.y - LAYOUT.gap;
++  assert.ok(alignedLeft || alignedTop, `expected an aligned spot, got ${JSON.stringify(spot)}`);
++});
++
++test('findFreeSpot prefers a spot inside the view over a nearer one outside it', () => {
++  const view = { x: 0, y: 0, width: 1000, height: 700 };
++  const blocker = box('a', 600, 100, 350, 500);
++  // The ideal spot is blocked. The nearest aligned spot (above the blocker) is off screen; the left one is on screen.
++  const spot = findFreeSpot([blocker], { width: 300, height: 200 }, { center: { x: 800, y: 250 }, view });
++  assert.deepEqual(spot, { x: 276, y: 100 });
++  const withoutView = findFreeSpot([blocker], { width: 300, height: 200 }, { center: { x: 800, y: 250 } });
++  assert.deepEqual(withoutView, { x: 600, y: -124 }, 'without a view, the nearest aligned spot wins even when it is off screen');
++});
++
++test('findFreeSpot searches the screen for room before settling for an off-screen spot', () => {
++  const view = { x: 0, y: 0, width: 700, height: 500 };
++  // Blockers whose edges only offer off-screen aligned spots, leaving an unaligned hole on screen.
++  const blockers = [box('a', 0, 0, 700, 100), box('b', 400, 124, 300, 376)];
++  const spot = findFreeSpot(blockers, { width: 280, height: 200 }, { center: { x: 200, y: 300 }, view });
++  assert.ok(spot.x >= 0 && spot.y >= 0 && spot.x + 280 <= 700 && spot.y + 200 <= 500, JSON.stringify(spot));
++  for (const b of blockers) assert.equal(overlaps(b, { ...spot, width: 280, height: 200 }, LAYOUT.gap / 2), false);
++});
++
++test('findFreeSpot still finds room when every neighbour-aligned spot is taken', () => {
++  // A dense wall of windows with no gaps big enough anywhere near the centre.
++  const wall: PlacedBox[] = [];
++  for (let col = 0; col < 8; col += 1) for (let row = 0; row < 8; row += 1) wall.push(box(`w${col}-${row}`, col * 310, row * 210, 300, 200));
++  const spot = findFreeSpot(wall, { width: 300, height: 200 }, { center: { x: 1200, y: 800 } });
++  for (const w of wall) assert.equal(overlaps(w, { ...spot, width: 300, height: 200 }, LAYOUT.gap / 2), false, `overlaps ${w.id}`);
++});
++
++test('placing many windows one after another never overlaps (deterministic pseudo-random sizes)', () => {
++  let seed = 7;
++  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
++  const placed: PlacedBox[] = [];
++  const view = { x: 0, y: 0, width: 1400, height: 800 };
++  for (let i = 0; i < 40; i += 1) {
++    const size = { width: 260 + Math.round(rand() * 400), height: 180 + Math.round(rand() * 400) };
++    const spot = findFreeSpot(placed, size, { center: { x: 700, y: 400 }, view });
++    placed.push({ id: `p${i}`, ...spot, ...size });
++  }
++  assert.equal(anyOverlap(placed), false);
++});
++
++test('placeBeside puts a window to the right of its anchor, never on top of it (anchor near the right edge)', () => {
++  // This is the case that used to overlap by 100px: the planned spot was clamped back into the view.
++  const anchor = box('anchor', 740, 60, 500, 600);
++  const spot = placeBeside([anchor], anchor, { width: 680, height: 560 });
++  assert.equal(spot.x, 740 + 500 + LAYOUT.columnGap);
++  assert.equal(spot.y, 60);
++  assert.equal(overlaps(anchor, { ...spot, width: 680, height: 560 }), false);
++});
++
++test('a run of windows opened from one anchor stacks in columns and wraps without overlapping', () => {
++  const anchor = box('w0', 60, 60, 500, 400);
++  const placed: PlacedBox[] = [anchor];
++  for (let i = 1; i <= 12; i += 1) {
++    const size = { width: 400, height: 260 };
++    const spot = placeBeside(placed, anchor, size);
++    placed.push({ id: `w${i}`, ...spot, ...size });
++  }
++  assert.equal(anyOverlap(placed), false);
++  const columns = new Set(placed.slice(1).map((p) => p.x));
++  assert.equal(columns.size, Math.ceil(12 / LAYOUT.maxColumn), 'wraps to a new column after maxColumn windows');
++  for (const x of columns) assert.equal(placed.filter((p) => p.id !== 'w0' && p.x === x).length <= LAYOUT.maxColumn, true);
++});
++
++test('revealRect pans the least amount needed and leaves the zoom alone', () => {
++  const viewport = { width: 1280, height: 800 };
++  const view = { x: 0, y: 0, zoom: 1 };
++  assert.equal(revealRect(view, viewport, box('in', 100, 100, 400, 300)), view, 'already visible: same view back');
++  const right = revealRect(view, viewport, box('r', 1288, 60, 680, 560));
++  assert.equal(right.zoom, 1);
++  assert.equal(right.y, 0);
++  assert.equal(right.x, -(1288 + 680 - (1280 - 32)), 'the right edge ends 32px inside the viewport');
++  const left = revealRect({ x: -500, y: 0, zoom: 1 }, viewport, box('l', 100, 100, 300, 300));
++  assert.equal(left.x, -500 + (32 - (100 - 500)), 'panned just far enough to bring the left edge to the margin');
++  const zoomed = revealRect({ x: 0, y: 0, zoom: 2 }, viewport, box('z', 700, 100, 200, 100));
++  assert.equal(zoomed.x, -(1400 + 400 - (1280 - 32)), 'zoom is respected when converting to screen pixels');
++  const wide = revealRect(view, viewport, box('wide', 2000, 100, 3000, 300));
++  assert.equal(wide.x, 32 - 2000, 'a window too big to fit lines up with the left margin');
++  assert.equal(revealRect(view, { width: 0, height: 0 }, box('x', 5000, 0)), view, 'no viewport size known: leave the view alone');
++});
++
++test('clearOfOthers leaves a block alone when it already clears its neighbours', () => {
++  const items = [box('a', 0, 0), box('b', 400, 0)];
++  const placement = { a: { x: 0, y: 0 }, b: { x: 400, y: 0 } };
++  assert.equal(clearOfOthers(placement, items, [box('far', 2000, 2000)]), placement);
++  assert.equal(clearOfOthers(placement, items, []), placement);
++});
++
++test('clearOfOthers moves a whole block, keeping its inner layout, when it would land on a bystander', () => {
++  const items = [box('a', 0, 0), box('b', 400, 0)];
++  const placement = { a: { x: 0, y: 0 }, b: { x: 400, y: 0 } };
++  const bystander = box('x', 100, 150, 300, 200); // under the block
++  const moved = clearOfOthers(placement, items, [bystander]);
++  assert.notDeepEqual(moved, placement);
++  assert.equal(moved.b.x - moved.a.x, 400, 'inner offsets are untouched');
++  assert.equal(moved.b.y - moved.a.y, 0);
++  for (const id of ['a', 'b']) {
++    const item = items.find((i) => i.id === id)!;
++    assert.equal(overlaps(bystander, { ...item, ...moved[id] }, LAYOUT.gap / 2), false, `${id} clears the bystander`);
++  }
++});
++
++test('clearOfOthers honours a margin such as a group frame’s padding and header', () => {
++  const items = [box('a', 0, 0)];
++  const placement = { a: { x: 0, y: 0 } };
++  const neighbour = box('n', 0, 235); // 35px below: fine for bare windows
++  assert.equal(clearOfOthers(placement, items, [neighbour]), placement);
++  const withFrame = clearOfOthers(placement, items, [neighbour], { top: 68, right: 28, bottom: 28, left: 28 });
++  assert.notEqual(withFrame, placement, 'the frame’s padding would touch the neighbour, so the block moves');
++});
+diff --git a/src/lib/placement.ts b/src/lib/placement.ts
+new file mode 100644
+index 0000000..262a3ae
+--- /dev/null
++++ b/src/lib/placement.ts
+@@ -0,0 +1,214 @@
++import type { Box, Point } from './connectors.ts';
++import { LAYOUT } from './layout.ts';
++
++/**
++ * Where things go on the canvas: the one place that knows how to find room for a
++ * window, stack a column beside an anchor, push a card out of the way and keep a
++ * re-arranged block off the windows around it. Pure and deterministic so the store,
++ * the card planner and the tidy planner all share the same collision rules.
++ */
++
++export interface Size {
++  width: number;
++  height: number;
++}
++
++/** A box on the canvas that can be told apart from the others. */
++export interface PlacedBox extends Box {
++  id: string;
++  minimized?: boolean;
++  maximized?: boolean;
++}
++
++export type Spots = Record<string, { x: number; y: number }>;
++
++/** Whether two boxes overlap once `b` is grown by `pad` on every side. */
++export function overlaps(a: Box, b: Box, pad = 0): boolean {
++  return a.x < b.x + b.width + pad && a.x + a.width + pad > b.x && a.y < b.y + b.height + pad && a.y + a.height + pad > b.y;
++}
++
++function boundsOf(boxes: Box[]): Box | null {
++  if (boxes.length === 0) return null;
++  const left = Math.min(...boxes.map((b) => b.x));
++  const top = Math.min(...boxes.map((b) => b.y));
++  const right = Math.max(...boxes.map((b) => b.x + b.width));
++  const bottom = Math.max(...boxes.map((b) => b.y + b.height));
++  return { x: left, y: top, width: right - left, height: bottom - top };
++}
++
++/** Slide a box straight down until nothing is in its way. */
++export function pushDown(items: Box[], rect: Box, gap: number): Point {
++  let y = rect.y;
++  for (let attempt = 0; attempt < 200; attempt += 1) {
++    const blocker = items.find((item) => overlaps(item, { ...rect, y }, gap / 2));
++    if (!blocker) break;
++    y = blocker.y + blocker.height + gap;
++  }
++  return { x: rect.x, y: Math.round(y) };
++}
++
++export interface FreeSpotOptions {
++  /** Where the new box would ideally be centred. */
++  center: Point;
++  /** Prefer spots fully inside this rectangle (the visible part of the canvas). */
++  view?: Box;
++  /** Air to leave around other boxes. Defaults to the layout gap. */
++  gap?: number;
++}
++
++/**
++ * The nearest spot to `center` where a box of `size` overlaps nothing. Spots that line
++ * up with a neighbour's edge (beside it, below it, above it) are tried first so new
++ * windows sit on the same lines as the ones already there. If none is free on screen, an
++ * outward search over the snap grid finds room on screen before any off-screen spot is used,
++ * and a final search guarantees a free spot exists before the planner gives up.
++ */
++export function findFreeSpot(boxes: Box[], size: Size, options: FreeSpotOptions): Point {
++  const gap = options.gap ?? LAYOUT.gap;
++  const { center, view } = options;
++  const free = (x: number, y: number) => !boxes.some((box) => overlaps(box, { x, y, width: size.width, height: size.height }, gap / 2));
++  const inView = (x: number, y: number) =>
++    !view || (x >= view.x && y >= view.y && x + size.width <= view.x + view.width && y + size.height <= view.y + view.height);
++
++  const ideal = { x: center.x - size.width / 2, y: center.y - size.height / 2 };
++  const candidates: Point[] = [ideal];
++  for (const box of boxes) {
++    candidates.push(
++      { x: box.x + box.width + gap, y: box.y },
++      { x: box.x - size.width - gap, y: box.y },
++      { x: box.x, y: box.y + box.height + gap },
++      { x: box.x, y: box.y - size.height - gap },
++    );
++  }
++  const distance = (c: Point) => Math.hypot(c.x - ideal.x, c.y - ideal.y);
++  const ordered = candidates.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y) })).sort((a, b) => distance(a) - distance(b));
++  // Best: lined up with a neighbour and on screen. Next: anywhere on screen (on the snap grid), so the
++  // canvas does not have to pan away from what the user is looking at. Then lined up but off screen
++  // (the view pans to it), and last of all anywhere at all.
++  const alignedInView = ordered.find((c) => free(c.x, c.y) && inView(c.x, c.y));
++  if (alignedInView) return alignedInView;
++
++  const step = LAYOUT.unit;
++  const baseX = Math.round(ideal.x / step) * step;
++  const baseY = Math.round(ideal.y / step) * step;
++  const search = (maxRing: number, onScreen: boolean): Point | null => {
++    for (let ring = 1; ring <= maxRing; ring += 1) {
++      const ringSpots: Point[] = [];
++      for (let dx = -ring; dx <= ring; dx += 1) {
++        for (let dy = -ring; dy <= ring; dy += 1) {
++          if (Math.max(Math.abs(dx), Math.abs(dy)) === ring) ringSpots.push({ x: baseX + dx * step, y: baseY + dy * step });
++        }
++      }
++      ringSpots.sort((a, b) => distance(a) - distance(b));
++      const spot = ringSpots.find((c) => free(c.x, c.y) && (!onScreen || inView(c.x, c.y)));
++      if (spot) return spot;
++    }
++    return null;
++  };
++  if (view) {
++    const onScreen = search(40, true);
++    if (onScreen) return onScreen;
++  }
++  const alignedAnywhere = ordered.find((c) => free(c.x, c.y));
++  if (alignedAnywhere) return alignedAnywhere;
++  const anywhere = search(80, false);
++  if (anywhere) return anywhere;
++  return { x: Math.round(ideal.x), y: Math.round(ideal.y) };
++}
++
++/**
++ * Lands a new window in the cascade column beside `anchor`: it stacks below what is
++ * already there, wraps to a fresh column once that slot is full, and nudges itself out
++ * of any overlap. Reused for every window type so opening a run of items keeps them in
++ * tidy columns instead of scattering.
++ */
++export function placeBeside(boxes: PlacedBox[], anchor: PlacedBox, size: Size): Point {
++  const gap = LAYOUT.gap;
++  const live = boxes.filter((r) => !r.minimized);
++  const inSlot = (x: number) => live.filter((r) => r.id !== anchor.id && !r.maximized && Math.abs(r.x - x) < gap);
++  let x = anchor.x + anchor.width + LAYOUT.columnGap;
++  let members = inSlot(x);
++  let attempts = 0;
++  while (members.length >= LAYOUT.maxColumn && attempts < 20) {
++    x = Math.max(...members.map((r) => r.x + r.width)) + LAYOUT.columnGap;
++    members = inSlot(x);
++    attempts += 1;
++  }
++  const y = members.length === 0 ? anchor.y : Math.max(...members.map((member) => member.y + member.height)) + gap;
++  // Nudge downwards out of overlapping windows, like card placement does.
++  let top = y;
++  for (let attempt = 0; attempt < 60; attempt += 1) {
++    const blocker = live.find((r) => !r.maximized && overlaps(r, { x, y: top, width: size.width, height: size.height }, gap / 2));
++    if (!blocker || blocker.id === anchor.id) break;
++    top = blocker.y + blocker.height + gap;
++  }
++  return { x: Math.round(x), y: Math.round(top) };
++}
++
++export interface ViewPort {
++  x: number;
++  y: number;
++  zoom: number;
++}
++
++/**
++ * The smallest pan that brings `rect` fully into the viewport (with `margin` screen pixels of air),
++ * leaving the zoom alone. A rect too big to fit lines up with the top-left instead. Returns the
++ * same view when nothing needs to move.
++ */
++export function revealRect(view: ViewPort, viewport: Size, rect: Box, margin = 32): ViewPort {
++  if (viewport.width <= 0 || viewport.height <= 0) return view;
++  const left = rect.x * view.zoom + view.x;
++  const top = rect.y * view.zoom + view.y;
++  const right = left + rect.width * view.zoom;
++  const bottom = top + rect.height * view.zoom;
++  const axis = (start: number, end: number, room: number): number => {
++    if (end - start > room - margin * 2) return margin - start;
++    if (start < margin) return margin - start;
++    if (end > room - margin) return room - margin - end;
++    return 0;
++  };
++  const dx = Math.round(axis(left, right, viewport.width));
++  const dy = Math.round(axis(top, bottom, viewport.height));
++  return dx === 0 && dy === 0 ? view : { ...view, x: view.x + dx, y: view.y + dy };
++}
++
++export interface FootprintMargin {
++  top?: number;
++  right?: number;
++  bottom?: number;
++  left?: number;
++}
++
++/**
++ * Keep a re-arranged block off the windows around it. If the block's footprint (its bounds plus
++ * `margin`, e.g. a group frame's padding and header) would touch any of `others`, the whole block
++ * moves, as one piece, to the nearest free spot; its inner layout is untouched. Returns the
++ * placement unchanged when it already clears everything.
++ */
++export function clearOfOthers<T extends Box & { id: string }>(
++  placement: Spots,
++  items: T[],
++  others: Box[],
++  margin: FootprintMargin = {},
++): Spots {
++  if (others.length === 0 || items.length === 0) return placement;
++  const placed = items.map((item) => ({ ...item, ...(placement[item.id] ?? {}) }));
++  const bounds = boundsOf(placed);
++  if (!bounds) return placement;
++  const footprint: Box = {
++    x: bounds.x - (margin.left ?? 0),
++    y: bounds.y - (margin.top ?? 0),
++    width: bounds.width + (margin.left ?? 0) + (margin.right ?? 0),
++    height: bounds.height + (margin.top ?? 0) + (margin.bottom ?? 0),
++  };
++  if (!others.some((other) => overlaps(other, footprint, LAYOUT.gap / 2))) return placement;
++  const spot = findFreeSpot(others, footprint, {
++    center: { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 },
++  });
++  const dx = Math.round(spot.x - footprint.x);
++  const dy = Math.round(spot.y - footprint.y);
++  const shifted: Spots = {};
++  for (const item of placed) shifted[item.id] = { x: Math.round(item.x + dx), y: Math.round(item.y + dy) };
++  return shifted;
++}
+diff --git a/src/lib/tidy.test.ts b/src/lib/tidy.test.ts
+index a3f4538..2cd3657 100644
+--- a/src/lib/tidy.test.ts
++++ b/src/lib/tidy.test.ts
+@@ -1,8 +1,9 @@
+ import { test } from 'node:test';
+ import assert from 'node:assert/strict';
+ import type { Sortable } from './arrange.ts';
+-import type { Group } from './groups.ts';
+-import { planTidy, planOverlapTidy, tidyMovesSomething } from './tidy.ts';
++import { frameRect, GROUP_HEADER, GROUP_PAD, type Group } from './groups.ts';
++import { overlaps } from './placement.ts';
++import { frameMargin, planTidy, planOverlapTidy, tidyMovesSomething } from './tidy.ts';
+ 
+ const item = (id: string, x: number, y: number, width = 200, height = 150): Sortable => ({ id, x, y, width, height, title: id });
+ 
+@@ -19,9 +20,10 @@ test('planTidy keeps a group as one block: its members stay clustered', () => {
+   assert.equal(bSpot.y, aSpot.y);
+   assert.equal(cSpot.y, aSpot.y + 150 + 36);
+   assert.ok(Math.abs(bSpot.x - (aSpot.x + 200 + 36)) < 1);
+-  // ungrouped window sits outside the group block, with the rhythm's column gap of 48
+-  // (the arranged group block is 436 wide: two 200px members + the 36px member gap)
+-  assert.equal(placement['d']!.x, aSpot.x + 436 + 48);
++  // ungrouped window sits outside the group's drawn frame, with the rhythm's column gap of 48 between
++  // them: the arranged group block is 436 wide (two 200px members + the 36px member gap) and its frame
++  // reaches GROUP_PAD (28px) beyond the members.
++  assert.equal(placement['d']!.x, aSpot.x + 436 + GROUP_PAD + 48);
+ });
+ 
+ test('planTidy mirrors spine order: left stays left, high stays high', () => {
+@@ -102,3 +104,77 @@ test('linked but untouched windows are left alone by the overlap tidy', () => {
+   const tidy = planOverlapTidy([a, b], [], [['a', 'b']]);
+   assert.deepEqual(tidy, {});
+ });
++
++const placedAt = (items: Sortable[], placement: Record<string, { x: number; y: number }>) => items.map((i) => ({ ...i, ...(placement[i.id] ?? {}) }));
++
++test('planTidy keeps the reading order of a two-dimensional layout', () => {
++  // [A B / C D]: used to come back transposed as [A C / B D].
++  const two = [item('A', 0, 0), item('B', 400, 0), item('C', 0, 300), item('D', 400, 300)];
++  const p = planTidy(two);
++  assert.ok(p['A']!.x < p['B']!.x && p['A']!.y === p['B']!.y, 'B stays to the right of A');
++  assert.ok(p['A']!.y < p['C']!.y && p['A']!.x === p['C']!.x, 'C stays below A');
++  assert.equal(p['D']!.x, p['B']!.x);
++  assert.equal(p['D']!.y, p['C']!.y);
++
++  // [A B C / D E F]: used to come back as [A D B / E C F].
++  const six = [item('A', 0, 0), item('B', 400, 0), item('C', 800, 0), item('D', 0, 300), item('E', 400, 300), item('F', 800, 300)];
++  const q = planTidy(six);
++  const rowOf = (id: string) => q[id]!.y;
++  assert.ok(rowOf('A') === rowOf('B') && rowOf('B') === rowOf('C'), 'A B C share a row');
++  assert.ok(rowOf('D') === rowOf('E') && rowOf('E') === rowOf('F'), 'D E F share a row');
++  assert.ok(rowOf('D') > rowOf('A'));
++  assert.ok(q['A']!.x < q['B']!.x && q['B']!.x < q['C']!.x, 'A B C run left to right');
++  assert.ok(q['D']!.x < q['E']!.x && q['E']!.x < q['F']!.x, 'D E F run left to right');
++});
++
++test('tidied groups keep their drawn frames clear of each other', () => {
++  const items = [item('a1', 0, 0, 300, 200), item('a2', 350, 0, 300, 200), item('b1', 0, 700, 300, 200), item('b2', 350, 700, 300, 200)];
++  const groups = [group('A', 'A', ['a1', 'a2']), group('B', 'B', ['b1', 'b2'])];
++  const placed = placedAt(items, planTidy(items, groups));
++  const frame = (ids: string[]) => frameRect(placed.filter((i) => ids.includes(i.id)))!;
++  assert.equal(overlaps(frame(['a1', 'a2']), frame(['b1', 'b2'])), false, 'frame A and frame B do not overlap');
++  // and the gap between the frames is the rhythm's column gap, not less
++  const fa = frame(['a1', 'a2']);
++  const fb = frame(['b1', 'b2']);
++  const horizontal = fb.x - (fa.x + fa.width);
++  const vertical = fb.y - (fa.y + fa.height);
++  assert.ok(horizontal >= 48 || vertical >= 48, `frames are ${horizontal}px / ${vertical}px apart`);
++});
++
++test('planTidy keeps the top-left of the original bounds even when the first block is a group', () => {
++  const items = [item('a1', 100, 100), item('a2', 400, 100), item('x', 900, 100)];
++  const p = planTidy(items, [group('A', 'A', ['a1', 'a2'])]);
++  const first = Math.min(p['a1']!.x, p['a2']!.x);
++  assert.equal(first, 100, 'members start where the original bounds started, not shifted by the frame padding');
++  assert.equal(Math.min(p['a1']!.y, p['a2']!.y), 100);
++});
++
++test('frameMargin only applies to blocks that are actually framed', () => {
++  const g = [group('A', 'A', ['a', 'b'])];
++  assert.deepEqual(frameMargin(['a', 'b', 'c'], g), { top: GROUP_PAD + GROUP_HEADER, right: GROUP_PAD, bottom: GROUP_PAD, left: GROUP_PAD });
++  assert.deepEqual(frameMargin(['a', 'c'], g), {}, 'a group with fewer than two members in the set draws no frame');
++  assert.deepEqual(frameMargin(['a', 'b'], [group('A', 'A', ['a', 'b'], true)]), {}, 'a collapsed group is not framed');
++  assert.deepEqual(frameMargin(['a', 'b'], []), {});
++});
++
++test('planOverlapTidy never lands a tidied pile on a window that was not part of it', () => {
++  const pile = [item('p1', 0, 0, 300, 200), item('p2', 150, 50, 300, 200), item('p3', 100, 100, 300, 200)];
++  const bystander = item('x', 0, 330, 300, 200); // just below the pile, not overlapping it
++  const all = [...pile, bystander];
++  const placement = planOverlapTidy(all);
++  assert.equal(placement['x'], undefined, 'the bystander is never moved');
++  const after = placedAt(all, placement);
++  for (let i = 0; i < after.length; i += 1) for (let j = i + 1; j < after.length; j += 1) {
++    assert.equal(overlaps(after[i]!, after[j]!), false, `${after[i]!.id} overlaps ${after[j]!.id}`);
++  }
++});
++
++test('planOverlapTidy keeps two tidied piles off each other', () => {
++  const heapA = [item('a1', 0, 0, 300, 200), item('a2', 100, 50, 300, 200), item('a3', 50, 80, 300, 200)];
++  const heapB = [item('b1', 500, 0, 300, 200), item('b2', 600, 50, 300, 200), item('b3', 550, 80, 300, 200)];
++  const all = [...heapA, ...heapB];
++  const after = placedAt(all, planOverlapTidy(all));
++  for (let i = 0; i < after.length; i += 1) for (let j = i + 1; j < after.length; j += 1) {
++    assert.equal(overlaps(after[i]!, after[j]!), false, `${after[i]!.id} overlaps ${after[j]!.id}`);
++  }
++});
+diff --git a/src/lib/tidy.ts b/src/lib/tidy.ts
+index 7ea0195..40b7c84 100644
+--- a/src/lib/tidy.ts
++++ b/src/lib/tidy.ts
+@@ -1,7 +1,19 @@
+ import { boundsOf, planLayout, readingOrder, type Placement, type Sortable } from './arrange.ts';
+ import type { Box } from './connectors.ts';
+ import { LAYOUT } from './layout.ts';
+-import type { Group } from './groups.ts';
++import { GROUP_HEADER, GROUP_PAD, type Group } from './groups.ts';
++import { clearOfOthers, type FootprintMargin } from './placement.ts';
++
++/**
++ * How far a block's drawn frame reaches beyond its windows: a group is drawn with padding all
++ * round and a title header on top. Tidy spaces blocks by these footprints, not by the bare
++ * windows, so neighbouring groups never overlap each other's frames.
++ */
++export function frameMargin(ids: string[], groups: Group[]): FootprintMargin {
++  const present = new Set(ids);
++  const framed = groups.some((g) => !g.collapsed && g.members.filter((id) => present.has(id)).length >= 2);
++  return framed ? { top: GROUP_PAD + GROUP_HEADER, right: GROUP_PAD, bottom: GROUP_PAD, left: GROUP_PAD } : {};
++}
+ 
+ /**
+  * Group-aware tidy (recommendation 5): windows that belong to a group or are
+@@ -21,14 +33,19 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
+   // groups are skipped outright: for a whole-canvas tidy their members are
+   // hidden and not part of the tidy at all.
+   const used = new Set<string>();
+-  const blocks: { boxes: Sortable[]; bounds: Box; inner: Placement }[] = [];
++  const blocks: { boxes: Sortable[]; bounds: Box; inner: Placement; margin: FootprintMargin }[] = [];
+   const claim = (ids: string[]) => ids.forEach((id) => used.add(id));
+   for (const group of groups) {
+     if (group.collapsed) continue;
+     const members = group.members.filter((id) => inTidy.has(id) && !used.has(id));
+     if (members.length < 2) continue;
+     const boxes = members.map((id) => boxOf.get(id)!);
+-    blocks.push({ boxes, bounds: boundsOf(boxes)!, inner: planLayout(boxes, { layout: 'grid', order: 'position', spacing: 'normal' }) });
++    blocks.push({
++      boxes,
++      bounds: boundsOf(boxes)!,
++      inner: planLayout(boxes, { layout: 'grid', order: 'position', spacing: 'normal' }),
++      margin: frameMargin(members, [group]),
++    });
+     claim(members);
+   }
+   // Linked windows stay attached: each connected component becomes a block and
+@@ -37,12 +54,12 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
+     const boxes = component.map((id) => boxOf.get(id)!);
+     const bounds = boundsOf(boxes)!;
+     const chain = chainOrder(component, links, boxOf);
+-    blocks.push({ boxes, bounds, inner: planLayout(boxes, { layout: 'flow', order: 'selection', spacing: 'normal', selectionOrder: chain }) });
++    blocks.push({ boxes, bounds, inner: planLayout(boxes, { layout: 'flow', order: 'selection', spacing: 'normal', selectionOrder: chain }), margin: {} });
+     claim(component);
+   }
+   for (const item of items) {
+     if (used.has(item.id)) continue;
+-    blocks.push({ boxes: [item], bounds: { x: item.x, y: item.y, width: item.width, height: item.height }, inner: {} });
++    blocks.push({ boxes: [item], bounds: { x: item.x, y: item.y, width: item.width, height: item.height }, inner: {}, margin: {} });
+   }
+ 
+   // The blocks keep their reading order (left-to-right, top-to-bottom of where
+@@ -51,28 +68,37 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
+   const overall = boundsOf(items)!;
+   const originX = Math.round(overall.x / LAYOUT.unit) * LAYOUT.unit;
+   const originY = Math.round(overall.y / LAYOUT.unit) * LAYOUT.unit;
+-  const order = readingOrder(blocks.map((block, index) => ({ id: `block-${index}`, ...block.bounds })));
+-  const byIndex = new Map(order.map((entry) => [entry.id, entry]));
+-  const ordered = [...blocks]
+-    .map((block, index) => ({ block, key: byIndex.get(`block-${index}`)! }))
+-    .sort((a, b) => a.key.x - b.key.x || a.key.y - b.key.y)
+-    .map((entry) => entry.block);
++  // `readingOrder` already returns the blocks in order; each keeps the index it had in `blocks`.
++  const ordered = readingOrder(blocks.map((block, index) => ({ id: `block-${index}`, ...block.bounds }))).map(
++    (entry) => blocks[Number(entry.id.slice('block-'.length))]!,
++  );
+ 
+   const columns = Math.max(1, Math.min(ordered.length, Math.ceil(Math.sqrt(ordered.length))));
+   const rows = Math.ceil(ordered.length / columns);
+-  const columnWidths = Array.from({ length: columns }, (_, column) =>
+-    Math.max(0, ...ordered.filter((_, index) => index % columns === column).map((block) => blockWidth(block))),
+-  );
+-  const rowHeights = Array.from({ length: rows }, (_, row) =>
+-    Math.max(0, ...ordered.slice(row * columns, row * columns + columns).map((block) => blockHeight(block))),
+-  );
++  const inColumn = (column: number) => ordered.filter((_, index) => index % columns === column);
++  const inRow = (row: number) => ordered.slice(row * columns, row * columns + columns);
++  const most = (list: typeof ordered, pick: (b: (typeof ordered)[number]) => number) => Math.max(0, ...list.map(pick));
++  const colLeft = Array.from({ length: columns }, (_, c) => most(inColumn(c), (b) => b.margin.left ?? 0));
++  const colRight = Array.from({ length: columns }, (_, c) => most(inColumn(c), (b) => b.margin.right ?? 0));
++  const colWidth = Array.from({ length: columns }, (_, c) => most(inColumn(c), blockWidth));
++  const rowTop = Array.from({ length: rows }, (_, r) => most(inRow(r), (b) => b.margin.top ?? 0));
++  const rowBottom = Array.from({ length: rows }, (_, r) => most(inRow(r), (b) => b.margin.bottom ?? 0));
++  const rowHeight = Array.from({ length: rows }, (_, r) => most(inRow(r), blockHeight));
++  // Footprints (window bounds plus frame) are `columnGap` apart; the first block's windows keep
++  // the top-left of the original bounds.
++  const columnX = (column: number) =>
++    originX - colLeft[0]! + colLeft[column]! +
++    colLeft.slice(0, column).reduce((sum, _, k) => sum + colLeft[k]! + colWidth[k]! + colRight[k]! + LAYOUT.columnGap, 0);
++  const rowY = (row: number) =>
++    originY - rowTop[0]! + rowTop[row]! +
++    rowTop.slice(0, row).reduce((sum, _, k) => sum + rowTop[k]! + rowHeight[k]! + rowBottom[k]! + LAYOUT.columnGap, 0);
+ 
+   const placement: Placement = {};
+   ordered.forEach((block, index) => {
+     const column = index % columns;
+     const row = Math.floor(index / columns);
+-    const x = originX + columnWidths.slice(0, column).reduce((sum, width) => sum + width + LAYOUT.columnGap, 0);
+-    const y = originY + rowHeights.slice(0, row).reduce((sum, height) => sum + height + LAYOUT.columnGap, 0);
++    const x = columnX(column);
++    const y = rowY(row);
+     for (const item of block.boxes) {
+       const spot = block.inner[item.id] ?? { x: item.x, y: item.y };
+       placement[item.id] = { x: Math.round(x + spot.x - block.bounds.x), y: Math.round(y + spot.y - block.bounds.y) };
+@@ -88,7 +114,7 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
+   }
+ }
+ 
+-/** The overlapping pairs of `windows`, margins inclusive of a small tolerance. */
++/** The overlapping pairs of `windows`: boxes that share any area (merely touching is not overlapping). */
+ export function overlappingPairs<T extends Box & { id: string }>(windows: T[]): [T, T][] {
+   const pairs: [T, T][] = [];
+   for (let i = 0; i < windows.length; i += 1) {
+@@ -139,9 +165,17 @@ export function planOverlapTidy(items: Sortable[], groups: Group[] = [], links:
+     piles.set(root, [...(piles.get(root) ?? []), item]);
+   }
+ 
+-  // Tidy each pile in place, anchored at the pile's own bounds.
++  // Tidy each pile in place, anchored at the pile's own bounds — but a tidied pile is usually bigger
++  // than the heap it came from, so if it would now touch a window that was never part of any pile
++  // (or a pile tidied before it) the whole pile moves, as one piece, to the nearest free spot.
+   const placement: Placement = {};
+-  for (const pile of piles.values()) Object.assign(placement, planTidy(pile, groups, links));
++  const fixed: Box[] = items.filter((item) => !parent.has(item.id));
++  for (const pile of piles.values()) {
++    const tidied = planTidy(pile, groups, links);
++    const cleared = clearOfOthers(tidied, pile, fixed, frameMargin(pile.map((item) => item.id), groups));
++    Object.assign(placement, cleared);
++    fixed.push(...pile.map((item) => ({ ...item, ...(cleared[item.id] ?? {}) })));
++  }
+   return placement;
+ }
+ 
+diff --git a/src/store/canvas.ts b/src/store/canvas.ts
+index 2c7ba59..b89f18a 100644
+--- a/src/store/canvas.ts
++++ b/src/store/canvas.ts
+@@ -3,6 +3,7 @@ import { loadCanvasState, saveCanvasState } from '@/lib/tauri-commands';
+ import { createSaver } from '@/lib/persist';
+ import { addMembers, bucketByColor, bucketBySource, colorName, defaultGroupColor, defaultGroupTitle, hiddenIds, migrateGroups, nextGroupColor, reconcileMembership, removeMembers, type Group } from '@/lib/groups';
+ import { autoSides, chainPairs, type Placement } from '@/lib/arrange';
++import { findFreeSpot, placeBeside, revealRect } from '@/lib/placement';
+ import { bookLabel } from '@/lib/note-clip';
+ import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
+ import { mergeBookView, migrateBookViews, pruneBookViews, removeBookView, renameBookView, type BookViewState } from '@/lib/book-view';
+@@ -437,76 +438,6 @@ export function visibleWorldRect(view: CanvasView, viewport: { width: number; he
+   };
+ }
+ 
+-function intersects(a: Rect, b: Rect) {
+-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+-}
+-
+-function placeWindow(
+-  resources: Resource[],
+-  center: { x: number; y: number },
+-  size: { width: number; height: number },
+-  view: Rect,
+-): { x: number; y: number } {
+-  const visible = resources.filter((r) => !r.minimized);
+-  const gap = LAYOUT.gap;
+-  const free = (x: number, y: number) =>
+-    !visible.some((r) => intersects(r, { x: x - gap / 2, y: y - gap / 2, width: size.width + gap, height: size.height + gap }));
+-  const inView = (x: number, y: number) =>
+-    x >= view.x && y >= view.y && x + size.width <= view.x + view.width && y + size.height <= view.y + view.height;
+-  const candidates: { x: number; y: number }[] = [{ x: center.x - size.width / 2, y: center.y - size.height / 2 }];
+-  for (const r of visible) {
+-    candidates.push(
+-      { x: r.x + r.width + gap, y: r.y },
+-      { x: r.x - size.width - gap, y: r.y },
+-      { x: r.x, y: r.y + r.height + gap },
+-      { x: r.x, y: r.y - size.height - gap },
+-    );
+-  }
+-  const distance = (c: { x: number; y: number }) => Math.hypot(c.x + size.width / 2 - center.x, c.y + size.height / 2 - center.y);
+-  const ordered = candidates.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y) })).sort((a, b) => distance(a) - distance(b));
+-  const best = ordered.find((c) => free(c.x, c.y) && inView(c.x, c.y)) ?? ordered.find((c) => free(c.x, c.y) && inView(c.x, c.y + size.height - 120));
+-  if (best) return best;
+-  let x = Math.round(center.x - size.width / 2);
+-  let y = Math.round(center.y - size.height / 2);
+-  for (let attempt = 0; attempt < 12 && visible.some((r) => Math.abs(r.x - x) < LAYOUT.gap && Math.abs(r.y - y) < LAYOUT.gap); attempt += 1) {
+-    x += LAYOUT.unit;
+-    y += LAYOUT.unit;
+-  }
+-  return { x, y };
+-}
+-
+-/** Lands a new window in the cascade column beside `anchor`: it stacks below
+- * what is already there, wraps to a fresh column once that slot is full, and
+- * nudges itself out of any overlap. Reused for every window type so opening a
+- * run of items keeps them in tidy columns instead of scattering. */
+-function placeBesideAnchor(
+-  resources: Resource[],
+-  anchor: Resource,
+-  size: { width: number; height: number },
+-): { x: number; y: number } {
+-  const gap = LAYOUT.gap;
+-  const live = resources.filter((r) => !r.minimized);
+-  const inSlot = (x: number) =>
+-    live.filter((r) => r.id !== anchor.id && !r.maximized && Math.abs(r.x - x) < gap);
+-  let x = anchor.x + anchor.width + LAYOUT.columnGap;
+-  let members = inSlot(x);
+-  let attempts = 0;
+-  while (members.length >= LAYOUT.maxColumn && attempts < 20) {
+-    x = Math.max(...members.map((r) => r.x + r.width)) + LAYOUT.columnGap;
+-    members = inSlot(x);
+-    attempts += 1;
+-  }
+-  const y = members.length === 0 ? anchor.y : Math.max(...members.map((member) => member.y + member.height)) + gap;
+-  // Nudge downwards out of overlapping windows, like card placement does.
+-  let top = y;
+-  for (let attempt = 0; attempt < 60; attempt += 1) {
+-    const blocker = live.find((r) => !r.maximized && intersects(r, { x: x - gap / 2, y: top - gap / 2, width: size.width + gap, height: size.height + gap }));
+-    if (!blocker || blocker.id === anchor.id) break;
+-    top = blocker.y + blocker.height + gap;
+-  }
+-  return { x: Math.round(x), y: Math.round(top) };
+-}
+-
+ const saver = createSaver<{
+   workspaces: Workspace[];
+   activeWorkspaceId: string;
+@@ -709,18 +640,24 @@ export const useCanvas = create<CanvasStore>((set, get) => {
+       if (anchor && !options.center) {
+         center = { x: anchor.x + anchor.width + 32 + size.width / 2, y: anchor.y + size.height / 2 };
+       }
++      // A spot the caller asked for (a drop point) is kept reachable by clamping it into the
++      // view. A spot the planner chose is never moved afterwards — clamping it used to drag a
++      // cascade window back over its anchor — so the view pans to it instead.
++      const explicit = !!(options.at || options.center);
+       const placed = options.at
+         ? { x: Math.round(options.at.x), y: Math.round(options.at.y) }
+         : options.center
+           ? { x: Math.round(center.x - size.width / 2), y: Math.round(center.y - size.height / 2) }
+           : anchor
+-            ? placeBesideAnchor(resources, anchor, size)
+-            : placeWindow(resources, center, size, visible);
++            ? placeBeside(resources, anchor, size)
++            : findFreeSpot(resources.filter((r) => !r.minimized), size, { center, view: visible });
+       const keep = 140 / view.zoom;
+-      const position = {
+-        x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
+-        y: Math.round(clamp(placed.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
+-      };
++      const position = explicit
++        ? {
++            x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
++            y: Math.round(clamp(placed.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
++          }
++        : placed;
+       const id = uid();
+       const resource: Resource = {
+         id,
+@@ -740,6 +677,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
+       };
+       commitResources([...resources.map((r) => (r.maximized ? { ...r, maximized: false } : r)), resource]);
+       set({ selectedId: id });
++      if (!explicit) setViewInternal(revealRect(view, viewport, { ...position, ...size }));
+       return id;
+     },
+     addCard: (input) => {
+diff --git a/src/store/guides.ts b/src/store/guides.ts
+index 45e4dde..1a4708e 100644
+--- a/src/store/guides.ts
++++ b/src/store/guides.ts
+@@ -1,14 +1,19 @@
+ import { create } from 'zustand';
+-import type { Guide } from '@/lib/layout';
++import type { Guide, SpacingGuide } from '@/lib/layout';
+ 
+ interface GuidesStore {
+   guides: Guide[];
+-  set: (guides: Guide[]) => void;
++  /** Equal-gap markers (with their sizes) shown while the gaps either side of a window match */
++  spacing: SpacingGuide[];
++  set: (guides: Guide[], spacing?: SpacingGuide[]) => void;
++  clear: () => void;
+ }
+ 
+-/** Alignment guide lines shown while windows are being dragged. Transient UI
+- * state; nothing here is persisted. */
++/** Alignment guide lines and equal-spacing markers shown while windows are being
++ * dragged or resized. Transient UI state; nothing here is persisted. */
+ export const useAlignmentGuides = create<GuidesStore>((set) => ({
+   guides: [],
+-  set: (guides) => set({ guides }),
++  spacing: [],
++  set: (guides, spacing = []) => set({ guides, spacing }),
++  clear: () => set({ guides: [], spacing: [] }),
+ }));

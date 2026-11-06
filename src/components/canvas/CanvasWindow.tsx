@@ -22,6 +22,7 @@ import {
 import { ArrowUpRight } from 'lucide-react';
 import {
   activeWorkspace,
+  hiddenResourceIds,
   minSizeFor,
   useCanvas,
   type Resource,
@@ -33,7 +34,7 @@ import { baseName, copyText, cn, stripExtension } from '@/lib/utils';
 import { setContentWindow } from '@/lib/window-keys';
 import { setLiveRect } from '@/lib/live-rects';
 import { dragWindows, linkedComponent } from '@/lib/drag-windows';
-import { planDragDelta } from '@/lib/layout';
+import { LAYOUT, snapResize } from '@/lib/layout';
 import { useAlignmentGuides } from '@/store/guides';
 import { openCardSource } from '@/lib/card-actions';
 import { toast } from '@/store/toast';
@@ -189,43 +190,18 @@ function CanvasWindow({ resource }: { resource: Resource }) {
       });
       return;
     }
-    handle.setPointerCapture(event.pointerId);
-    const zoom = currentZoom();
-    const start = { x: event.clientX, y: event.clientY };
-    const origin = { x: resource.x, y: resource.y };
-    const others = activeWorkspace(useCanvas.getState()).resources.filter(
-      (candidate) => candidate.id !== resource.id && !candidate.minimized && !candidate.maximized,
-    );
-    let next = origin;
-    let moved = false;
-
-    const onMove = (e: PointerEvent) => {
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
-      if (!moved && Math.hypot(dx, dy) < 3) return;
-      if (!moved) {
-        moved = true;
-        setInteraction('dragging');
-      }
-      const plan = planDragDelta([resource], others, dx / zoom, dy / zoom, e.shiftKey, zoom);
-      next = { x: origin.x + plan.offsetX, y: origin.y + plan.offsetY };
-      useAlignmentGuides.getState().set(plan.guides);
-      frame.style.transform = `translate(${next.x}px, ${next.y}px)`;
-      setLiveRect(resource.id, { ...next, width: resource.width, height: resource.height });
-    };
-    const onEnd = () => {
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onEnd);
-      handle.removeEventListener('pointercancel', onEnd);
-      useAlignmentGuides.getState().set([]);
-      if (!moved) return;
-      setInteraction(null);
-      useCanvas.getState().placeResources({ [resource.id]: next }, { reconcile: true });
-      setLiveRect(resource.id, null);
-    };
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onEnd);
-    handle.addEventListener('pointercancel', onEnd);
+    // One window drags through the same engine as a group: it never snaps to windows hidden inside a
+    // collapsed group, and gets Alt (free move), Escape (cancel) and edge auto-pan like every other drag.
+    dragWindows({
+      ids: [resource.id],
+      start: { x: event.clientX, y: event.clientY },
+      zoom: currentZoom(),
+      handle,
+      pointerId: event.pointerId,
+      reconcile: true,
+      onMoveStart: () => setInteraction('dragging'),
+      onFinish: () => setInteraction(null),
+    });
   };
 
   const startResize = (event: React.PointerEvent<HTMLDivElement>, edge: Handle) => {
@@ -242,12 +218,19 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     const start = { x: event.clientX, y: event.clientY };
     const origin = { x: resource.x, y: resource.y, width: resource.width, height: resource.height };
     const min = minSizeFor(resource.type);
+    const workspace = activeWorkspace(useCanvas.getState());
+    const hidden = hiddenResourceIds(workspace);
+    // Only windows that are on screen are worth lining up with.
+    const others = workspace.resources.filter((r) => r.id !== resource.id && !r.minimized && !r.maximized && !hidden.has(r.id));
+    const pointer = { x: start.x, y: start.y, alt: false };
+    const frameEl: HTMLElement = frame;
     let next = origin;
+    let finished = false;
     setInteraction('resizing');
 
-    const onMove = (e: PointerEvent) => {
-      const dx = (e.clientX - start.x) / zoom;
-      const dy = (e.clientY - start.y) / zoom;
+    const update = () => {
+      const dx = (pointer.x - start.x) / zoom;
+      const dy = (pointer.y - start.y) / zoom;
       let { x, y, width, height } = origin;
       if (edge.includes('e')) width = Math.max(min.width, origin.width + dx);
       if (edge.includes('s')) height = Math.max(min.height, origin.height + dy);
@@ -259,23 +242,74 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         height = Math.max(min.height, origin.height - dy);
         y = origin.y + origin.height - height;
       }
-      next = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+      if (pointer.alt || others.length === 0) {
+        // Alt resizes freely: no magnets, no guides.
+        next = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+        useAlignmentGuides.getState().clear();
+      } else {
+        const snapped = snapResize(
+          { x, y, width, height },
+          { left: edge.includes('w'), right: edge.includes('e'), top: edge.includes('n'), bottom: edge.includes('s') },
+          others,
+          Math.max(1, LAYOUT.guideDistance / zoom),
+          min,
+        );
+        next = snapped.rect;
+        useAlignmentGuides.getState().set(snapped.guides);
+      }
       frame.style.transform = `translate(${next.x}px, ${next.y}px)`;
       frame.style.width = `${next.width}px`;
       frame.style.height = `${next.height}px`;
       setLiveRect(resource.id, next);
     };
-    const onEnd = () => {
+    const onMove = (e: PointerEvent) => {
+      pointer.x = e.clientX;
+      pointer.y = e.clientY;
+      pointer.alt = e.altKey;
+      update();
+    };
+    const stop = () => {
+      finished = true;
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onEnd);
       handle.removeEventListener('pointercancel', onEnd);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKey, true);
+      useAlignmentGuides.getState().clear();
       setInteraction(null);
+    };
+    function onEnd() {
+      if (finished) return;
+      stop();
       useCanvas.getState().setResourceRect(resource.id, next);
       setLiveRect(resource.id, null);
-    };
+    }
+    function onKey(e: KeyboardEvent) {
+      if (finished) return;
+      if (e.key === 'Escape') {
+        // Cancel: put the frame back exactly as it was and commit nothing.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        stop();
+        frameEl.style.transform = `translate(${origin.x}px, ${origin.y}px)`;
+        frameEl.style.width = `${origin.width}px`;
+        frameEl.style.height = `${origin.height}px`;
+        setLiveRect(resource.id, null);
+        try {
+          handle.releasePointerCapture(event.pointerId);
+        } catch {
+          // already released
+        }
+      } else if (e.key === 'Alt') {
+        pointer.alt = e.altKey;
+        update();
+      }
+    }
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onEnd);
     handle.addEventListener('pointercancel', onEnd);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKey, true);
   };
 
   const rename = async () => {

@@ -1,7 +1,19 @@
 import { boundsOf, planLayout, readingOrder, type Placement, type Sortable } from './arrange.ts';
 import type { Box } from './connectors.ts';
 import { LAYOUT } from './layout.ts';
-import type { Group } from './groups.ts';
+import { GROUP_HEADER, GROUP_PAD, type Group } from './groups.ts';
+import { clearOfOthers, type FootprintMargin } from './placement.ts';
+
+/**
+ * How far a block's drawn frame reaches beyond its windows: a group is drawn with padding all
+ * round and a title header on top. Tidy spaces blocks by these footprints, not by the bare
+ * windows, so neighbouring groups never overlap each other's frames.
+ */
+export function frameMargin(ids: string[], groups: Group[]): FootprintMargin {
+  const present = new Set(ids);
+  const framed = groups.some((g) => !g.collapsed && g.members.filter((id) => present.has(id)).length >= 2);
+  return framed ? { top: GROUP_PAD + GROUP_HEADER, right: GROUP_PAD, bottom: GROUP_PAD, left: GROUP_PAD } : {};
+}
 
 /**
  * Group-aware tidy (recommendation 5): windows that belong to a group or are
@@ -21,14 +33,19 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
   // groups are skipped outright: for a whole-canvas tidy their members are
   // hidden and not part of the tidy at all.
   const used = new Set<string>();
-  const blocks: { boxes: Sortable[]; bounds: Box; inner: Placement }[] = [];
+  const blocks: { boxes: Sortable[]; bounds: Box; inner: Placement; margin: FootprintMargin }[] = [];
   const claim = (ids: string[]) => ids.forEach((id) => used.add(id));
   for (const group of groups) {
     if (group.collapsed) continue;
     const members = group.members.filter((id) => inTidy.has(id) && !used.has(id));
     if (members.length < 2) continue;
     const boxes = members.map((id) => boxOf.get(id)!);
-    blocks.push({ boxes, bounds: boundsOf(boxes)!, inner: planLayout(boxes, { layout: 'grid', order: 'position', spacing: 'normal' }) });
+    blocks.push({
+      boxes,
+      bounds: boundsOf(boxes)!,
+      inner: planLayout(boxes, { layout: 'grid', order: 'position', spacing: 'normal' }),
+      margin: frameMargin(members, [group]),
+    });
     claim(members);
   }
   // Linked windows stay attached: each connected component becomes a block and
@@ -37,12 +54,12 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
     const boxes = component.map((id) => boxOf.get(id)!);
     const bounds = boundsOf(boxes)!;
     const chain = chainOrder(component, links, boxOf);
-    blocks.push({ boxes, bounds, inner: planLayout(boxes, { layout: 'flow', order: 'selection', spacing: 'normal', selectionOrder: chain }) });
+    blocks.push({ boxes, bounds, inner: planLayout(boxes, { layout: 'flow', order: 'selection', spacing: 'normal', selectionOrder: chain }), margin: {} });
     claim(component);
   }
   for (const item of items) {
     if (used.has(item.id)) continue;
-    blocks.push({ boxes: [item], bounds: { x: item.x, y: item.y, width: item.width, height: item.height }, inner: {} });
+    blocks.push({ boxes: [item], bounds: { x: item.x, y: item.y, width: item.width, height: item.height }, inner: {}, margin: {} });
   }
 
   // The blocks keep their reading order (left-to-right, top-to-bottom of where
@@ -51,28 +68,37 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
   const overall = boundsOf(items)!;
   const originX = Math.round(overall.x / LAYOUT.unit) * LAYOUT.unit;
   const originY = Math.round(overall.y / LAYOUT.unit) * LAYOUT.unit;
-  const order = readingOrder(blocks.map((block, index) => ({ id: `block-${index}`, ...block.bounds })));
-  const byIndex = new Map(order.map((entry) => [entry.id, entry]));
-  const ordered = [...blocks]
-    .map((block, index) => ({ block, key: byIndex.get(`block-${index}`)! }))
-    .sort((a, b) => a.key.x - b.key.x || a.key.y - b.key.y)
-    .map((entry) => entry.block);
+  // `readingOrder` already returns the blocks in order; each keeps the index it had in `blocks`.
+  const ordered = readingOrder(blocks.map((block, index) => ({ id: `block-${index}`, ...block.bounds }))).map(
+    (entry) => blocks[Number(entry.id.slice('block-'.length))]!,
+  );
 
   const columns = Math.max(1, Math.min(ordered.length, Math.ceil(Math.sqrt(ordered.length))));
   const rows = Math.ceil(ordered.length / columns);
-  const columnWidths = Array.from({ length: columns }, (_, column) =>
-    Math.max(0, ...ordered.filter((_, index) => index % columns === column).map((block) => blockWidth(block))),
-  );
-  const rowHeights = Array.from({ length: rows }, (_, row) =>
-    Math.max(0, ...ordered.slice(row * columns, row * columns + columns).map((block) => blockHeight(block))),
-  );
+  const inColumn = (column: number) => ordered.filter((_, index) => index % columns === column);
+  const inRow = (row: number) => ordered.slice(row * columns, row * columns + columns);
+  const most = (list: typeof ordered, pick: (b: (typeof ordered)[number]) => number) => Math.max(0, ...list.map(pick));
+  const colLeft = Array.from({ length: columns }, (_, c) => most(inColumn(c), (b) => b.margin.left ?? 0));
+  const colRight = Array.from({ length: columns }, (_, c) => most(inColumn(c), (b) => b.margin.right ?? 0));
+  const colWidth = Array.from({ length: columns }, (_, c) => most(inColumn(c), blockWidth));
+  const rowTop = Array.from({ length: rows }, (_, r) => most(inRow(r), (b) => b.margin.top ?? 0));
+  const rowBottom = Array.from({ length: rows }, (_, r) => most(inRow(r), (b) => b.margin.bottom ?? 0));
+  const rowHeight = Array.from({ length: rows }, (_, r) => most(inRow(r), blockHeight));
+  // Footprints (window bounds plus frame) are `columnGap` apart; the first block's windows keep
+  // the top-left of the original bounds.
+  const columnX = (column: number) =>
+    originX - colLeft[0]! + colLeft[column]! +
+    colLeft.slice(0, column).reduce((sum, _, k) => sum + colLeft[k]! + colWidth[k]! + colRight[k]! + LAYOUT.columnGap, 0);
+  const rowY = (row: number) =>
+    originY - rowTop[0]! + rowTop[row]! +
+    rowTop.slice(0, row).reduce((sum, _, k) => sum + rowTop[k]! + rowHeight[k]! + rowBottom[k]! + LAYOUT.columnGap, 0);
 
   const placement: Placement = {};
   ordered.forEach((block, index) => {
     const column = index % columns;
     const row = Math.floor(index / columns);
-    const x = originX + columnWidths.slice(0, column).reduce((sum, width) => sum + width + LAYOUT.columnGap, 0);
-    const y = originY + rowHeights.slice(0, row).reduce((sum, height) => sum + height + LAYOUT.columnGap, 0);
+    const x = columnX(column);
+    const y = rowY(row);
     for (const item of block.boxes) {
       const spot = block.inner[item.id] ?? { x: item.x, y: item.y };
       placement[item.id] = { x: Math.round(x + spot.x - block.bounds.x), y: Math.round(y + spot.y - block.bounds.y) };
@@ -88,7 +114,7 @@ export function planTidy(items: Sortable[], groups: Group[] = [], links: [string
   }
 }
 
-/** The overlapping pairs of `windows`, margins inclusive of a small tolerance. */
+/** The overlapping pairs of `windows`: boxes that share any area (merely touching is not overlapping). */
 export function overlappingPairs<T extends Box & { id: string }>(windows: T[]): [T, T][] {
   const pairs: [T, T][] = [];
   for (let i = 0; i < windows.length; i += 1) {
@@ -139,9 +165,17 @@ export function planOverlapTidy(items: Sortable[], groups: Group[] = [], links: 
     piles.set(root, [...(piles.get(root) ?? []), item]);
   }
 
-  // Tidy each pile in place, anchored at the pile's own bounds.
+  // Tidy each pile in place, anchored at the pile's own bounds — but a tidied pile is usually bigger
+  // than the heap it came from, so if it would now touch a window that was never part of any pile
+  // (or a pile tidied before it) the whole pile moves, as one piece, to the nearest free spot.
   const placement: Placement = {};
-  for (const pile of piles.values()) Object.assign(placement, planTidy(pile, groups, links));
+  const fixed: Box[] = items.filter((item) => !parent.has(item.id));
+  for (const pile of piles.values()) {
+    const tidied = planTidy(pile, groups, links);
+    const cleared = clearOfOthers(tidied, pile, fixed, frameMargin(pile.map((item) => item.id), groups));
+    Object.assign(placement, cleared);
+    fixed.push(...pile.map((item) => ({ ...item, ...(cleared[item.id] ?? {}) })));
+  }
   return placement;
 }
 

@@ -3,6 +3,7 @@ import { loadCanvasState, saveCanvasState } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
 import { addMembers, bucketByColor, bucketBySource, colorName, defaultGroupColor, defaultGroupTitle, hiddenIds, migrateGroups, nextGroupColor, reconcileMembership, removeMembers, type Group } from '@/lib/groups';
 import { autoSides, chainPairs, type Placement } from '@/lib/arrange';
+import { findFreeSpot, placeBeside, revealRect } from '@/lib/placement';
 import { bookLabel } from '@/lib/note-clip';
 import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
 import { mergeBookView, migrateBookViews, pruneBookViews, removeBookView, renameBookView, type BookViewState } from '@/lib/book-view';
@@ -437,76 +438,6 @@ export function visibleWorldRect(view: CanvasView, viewport: { width: number; he
   };
 }
 
-function intersects(a: Rect, b: Rect) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-function placeWindow(
-  resources: Resource[],
-  center: { x: number; y: number },
-  size: { width: number; height: number },
-  view: Rect,
-): { x: number; y: number } {
-  const visible = resources.filter((r) => !r.minimized);
-  const gap = LAYOUT.gap;
-  const free = (x: number, y: number) =>
-    !visible.some((r) => intersects(r, { x: x - gap / 2, y: y - gap / 2, width: size.width + gap, height: size.height + gap }));
-  const inView = (x: number, y: number) =>
-    x >= view.x && y >= view.y && x + size.width <= view.x + view.width && y + size.height <= view.y + view.height;
-  const candidates: { x: number; y: number }[] = [{ x: center.x - size.width / 2, y: center.y - size.height / 2 }];
-  for (const r of visible) {
-    candidates.push(
-      { x: r.x + r.width + gap, y: r.y },
-      { x: r.x - size.width - gap, y: r.y },
-      { x: r.x, y: r.y + r.height + gap },
-      { x: r.x, y: r.y - size.height - gap },
-    );
-  }
-  const distance = (c: { x: number; y: number }) => Math.hypot(c.x + size.width / 2 - center.x, c.y + size.height / 2 - center.y);
-  const ordered = candidates.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y) })).sort((a, b) => distance(a) - distance(b));
-  const best = ordered.find((c) => free(c.x, c.y) && inView(c.x, c.y)) ?? ordered.find((c) => free(c.x, c.y) && inView(c.x, c.y + size.height - 120));
-  if (best) return best;
-  let x = Math.round(center.x - size.width / 2);
-  let y = Math.round(center.y - size.height / 2);
-  for (let attempt = 0; attempt < 12 && visible.some((r) => Math.abs(r.x - x) < LAYOUT.gap && Math.abs(r.y - y) < LAYOUT.gap); attempt += 1) {
-    x += LAYOUT.unit;
-    y += LAYOUT.unit;
-  }
-  return { x, y };
-}
-
-/** Lands a new window in the cascade column beside `anchor`: it stacks below
- * what is already there, wraps to a fresh column once that slot is full, and
- * nudges itself out of any overlap. Reused for every window type so opening a
- * run of items keeps them in tidy columns instead of scattering. */
-function placeBesideAnchor(
-  resources: Resource[],
-  anchor: Resource,
-  size: { width: number; height: number },
-): { x: number; y: number } {
-  const gap = LAYOUT.gap;
-  const live = resources.filter((r) => !r.minimized);
-  const inSlot = (x: number) =>
-    live.filter((r) => r.id !== anchor.id && !r.maximized && Math.abs(r.x - x) < gap);
-  let x = anchor.x + anchor.width + LAYOUT.columnGap;
-  let members = inSlot(x);
-  let attempts = 0;
-  while (members.length >= LAYOUT.maxColumn && attempts < 20) {
-    x = Math.max(...members.map((r) => r.x + r.width)) + LAYOUT.columnGap;
-    members = inSlot(x);
-    attempts += 1;
-  }
-  const y = members.length === 0 ? anchor.y : Math.max(...members.map((member) => member.y + member.height)) + gap;
-  // Nudge downwards out of overlapping windows, like card placement does.
-  let top = y;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const blocker = live.find((r) => !r.maximized && intersects(r, { x: x - gap / 2, y: top - gap / 2, width: size.width + gap, height: size.height + gap }));
-    if (!blocker || blocker.id === anchor.id) break;
-    top = blocker.y + blocker.height + gap;
-  }
-  return { x: Math.round(x), y: Math.round(top) };
-}
-
 const saver = createSaver<{
   workspaces: Workspace[];
   activeWorkspaceId: string;
@@ -709,18 +640,24 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       if (anchor && !options.center) {
         center = { x: anchor.x + anchor.width + 32 + size.width / 2, y: anchor.y + size.height / 2 };
       }
+      // A spot the caller asked for (a drop point) is kept reachable by clamping it into the
+      // view. A spot the planner chose is never moved afterwards — clamping it used to drag a
+      // cascade window back over its anchor — so the view pans to it instead.
+      const explicit = !!(options.at || options.center);
       const placed = options.at
         ? { x: Math.round(options.at.x), y: Math.round(options.at.y) }
         : options.center
           ? { x: Math.round(center.x - size.width / 2), y: Math.round(center.y - size.height / 2) }
           : anchor
-            ? placeBesideAnchor(resources, anchor, size)
-            : placeWindow(resources, center, size, visible);
+            ? placeBeside(resources, anchor, size)
+            : findFreeSpot(resources.filter((r) => !r.minimized), size, { center, view: visible });
       const keep = 140 / view.zoom;
-      const position = {
-        x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
-        y: Math.round(clamp(placed.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
-      };
+      const position = explicit
+        ? {
+            x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
+            y: Math.round(clamp(placed.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
+          }
+        : placed;
       const id = uid();
       const resource: Resource = {
         id,
@@ -740,6 +677,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       };
       commitResources([...resources.map((r) => (r.maximized ? { ...r, maximized: false } : r)), resource]);
       set({ selectedId: id });
+      if (!explicit) setViewInternal(revealRect(view, viewport, { ...position, ...size }));
       return id;
     },
     addCard: (input) => {

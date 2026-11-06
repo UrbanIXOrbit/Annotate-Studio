@@ -90,6 +90,8 @@ const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Double-click canvas', action: 'Create a note at that spot' },
   { keys: 'Double-click title bar', action: 'Maximize or restore a window' },
   { keys: 'Shift while dragging', action: 'Snap windows to a 20px grid' },
+  { keys: 'Alt while dragging or resizing', action: 'Move freely, with no snapping or guides' },
+  { keys: 'Esc while dragging or resizing', action: 'Cancel the move and put everything back' },
   { keys: 'Esc', action: 'Restore a maximized window / deselect' },
   { keys: 'Ctrl + Alt + N', action: 'New note' },
   { keys: 'V H P M T R O A E', action: 'PDF tools: select, highlight, pen, marker, text, rectangle, ellipse, arrow, eraser' },
