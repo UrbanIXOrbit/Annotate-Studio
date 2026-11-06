@@ -6,6 +6,7 @@ import CanvasWindow from './CanvasWindow';
 import ConnectorLayer from './ConnectorLayer';
 import GroupLayer from './GroupLayer';
 import AlignmentGuides from './AlignmentGuides';
+import ArrangePreview from './ArrangePreview';
 import SelectionToolbar from './SelectionToolbar';
 import CardsNoteHost from './CardsNoteHost';
 import Minimap from './Minimap';
@@ -21,7 +22,7 @@ import { addWebArticle, createNewNote, importBrowserFiles, importPaths, pickAndI
 import { LAYOUT } from '@/lib/layout';
 import { cn, isEditableTarget, isModalOpen } from '@/lib/utils';
 import { dispatchWindowKey, isContentWindow, setContentWindow } from '@/lib/window-keys';
-import { closeSelectedCards, groupSelection, nudgeSelection, tidyWorkspace, ungroupSelection } from '@/lib/group-actions';
+import { alignIds, closeSelectedCards, distributeIds, groupSelection, nudgeSelection, tidyWorkspace, ungroupSelection } from '@/lib/group-actions';
 
 function gridStep(zoom: number): number {
   let step = LAYOUT.gap * zoom;
@@ -211,6 +212,14 @@ export default function CanvasViewport() {
         else groupSelection();
       } else if (mod && !event.altKey && key === 'l') {
         tidyWorkspace();
+      } else if (event.altKey && !mod && !event.shiftKey && state.selectedIds.length >= 2 && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
+        // Alt + arrows — align the selection's edges; Alt + Shift + arrows — spread it out evenly
+        alignIds(state.selectedIds, key === 'arrowleft' ? 'left' : key === 'arrowright' ? 'right' : key === 'arrowup' ? 'top' : 'bottom');
+      } else if (event.altKey && event.shiftKey && !mod && state.selectedIds.length >= 3 && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
+        distributeIds(state.selectedIds, key === 'arrowleft' || key === 'arrowright' ? 'x' : 'y');
+      } else if (key === 'm' && !mod && !event.altKey && !event.shiftKey) {
+        // M — show or hide the minimap (only reached when no PDF window consumes the key)
+        state.setMinimapCollapsed(!state.minimapCollapsed);
       } else if ((key === 'delete' || key === 'backspace') && !mod && state.selectedIds.length > 0) {
         closeSelectedCards();
       } else if (!mod && !event.altKey && state.selectedIds.length > 0 && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
@@ -478,6 +487,7 @@ export default function CanvasViewport() {
             <CanvasWindow key={resource.id} resource={resource} />
           ))}
         <AlignmentGuides />
+        <ArrangePreview />
       </div>
 
       {hydrated && visible.length === 0 && (

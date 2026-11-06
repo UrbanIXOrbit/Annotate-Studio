@@ -169,6 +169,8 @@ export interface CanvasStore {
   selectedIds: string[];
   selectedConnectorId: string | null;
   locked: boolean;
+  /** Minimap hidden by the user (toggle button or M). Transient, like `locked`. */
+  minimapCollapsed: boolean;
   viewport: { width: number; height: number };
   past: Resource[][];
   future: Resource[][];
@@ -185,6 +187,7 @@ export interface CanvasStore {
   focusResource: (id: string) => void;
   setViewport: (size: { width: number; height: number }) => void;
   setLocked: (locked: boolean) => void;
+  setMinimapCollapsed: (collapsed: boolean) => void;
   openResource: (input: OpenResourceInput, options?: OpenOptions) => string;
   addCard: (input: CardInput) => string;
   addConnector: (input: ConnectorInput) => string | null;
@@ -483,6 +486,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
     selectedIds: [],
     selectedConnectorId: null,
     locked: false,
+    minimapCollapsed: false,
     viewport: { width: 1200, height: 800 },
     past: [],
     future: [],
@@ -609,6 +613,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       set({ viewport: size });
     },
     setLocked: (locked) => set({ locked }),
+    setMinimapCollapsed: (minimapCollapsed) => set({ minimapCollapsed }),
 
     openResource: (input, options = {}) => {
       const resources = active().resources;

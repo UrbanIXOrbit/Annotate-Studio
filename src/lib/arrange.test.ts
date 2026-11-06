@@ -128,3 +128,23 @@ test('connector ends attach to the sides that face each other', () => {
   assert.deepEqual(autoSides(a, card('b', 0, 600)), { fromSide: 's', toSide: 'n' });
   assert.deepEqual(autoSides(a, card('b', 0, -600)), { fromSide: 'n', toSide: 's' });
 });
+
+test('fit collapses a selection into the tightest block', () => {
+  const items = [card('a', 0, 0), card('b', 900, 0), card('c', 0, 700), card('d', 900, 700)];
+  // Four uniform cards: the 2×2 block beats the long row and the tall column
+  const fit = planLayout(items, { layout: 'fit', order: 'position', spacing: 'normal' });
+  assert.deepEqual(fit, planLayout(items, { layout: 'grid', order: 'position', spacing: 'normal', columns: 2 }));
+  // Two cards: the near-square stack beats the wide row
+  const pair = planLayout([card('a', 0, 0), card('b', 900, 0)], { layout: 'fit', order: 'position', spacing: 'normal' });
+  assert.deepEqual(pair, { a: { x: 0, y: 0 }, b: { x: 0, y: 236 } });
+});
+
+test('custom spacing uses the given gap, and falls back to normal without one', () => {
+  const items = [card('a', 0, 0), card('b', 500, 0), card('c', 900, 0)];
+  const placed = planLayout(items, { layout: 'row', order: 'position', spacing: 'custom', gap: 100 });
+  assert.deepEqual(placed, { a: { x: 0, y: 0 }, b: { x: 420, y: 0 }, c: { x: 840, y: 0 } });
+  assert.deepEqual(
+    planLayout(items, { layout: 'row', order: 'position', spacing: 'custom' }),
+    planLayout(items, { layout: 'row', order: 'position', spacing: 'normal' }),
+  );
+});

@@ -19,7 +19,8 @@ export default function Minimap() {
   const workspace = useActiveWorkspace();
   const viewport = useCanvas((state) => state.viewport);
   const selectedId = useCanvas((state) => state.selectedId);
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapsed state lives in the canvas store so the M shortcut can toggle it
+  const collapsed = useCanvas((state) => state.minimapCollapsed);
   const [frozen, setFrozen] = useState<MinimapLayout | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const dragLayout = useRef<MinimapLayout | null>(null);
@@ -51,7 +52,7 @@ export default function Minimap() {
 
   if (collapsed) {
     return (
-      <button type="button" data-canvas-ui className="minimap-toggle" onClick={() => setCollapsed(false)} title="Show minimap">
+      <button type="button" data-canvas-ui className="minimap-toggle" onClick={() => useCanvas.getState().setMinimapCollapsed(false)} title="Show minimap (M)" aria-label="Show minimap">
         <MapIcon size={14} />
       </button>
     );
@@ -108,7 +109,7 @@ export default function Minimap() {
         ))}
         <div className="minimap-viewport" style={project(viewRect)} />
       </div>
-      <button type="button" className="minimap-close" onClick={() => setCollapsed(true)} title="Hide minimap">
+      <button type="button" className="minimap-close" onClick={() => useCanvas.getState().setMinimapCollapsed(true)} title="Hide minimap (M)" aria-label="Hide minimap">
         <X size={11} />
       </button>
     </div>

@@ -38,7 +38,7 @@ function windowsOutside(ids: string[]) {
     .map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
 }
 
-export function arrangeIds(ids: string[], options: { layout: Layout; order: Order; spacing: Spacing; chain?: boolean }): void {
+export function arrangeIds(ids: string[], options: { layout: Layout; order: Order; spacing: Spacing; gap?: number; chain?: boolean }): void {
   const items = itemsFor(ids);
   if (items.length < 2) {
     toast.info('Select at least two items to arrange');

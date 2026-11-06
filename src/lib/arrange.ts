@@ -15,13 +15,14 @@ export interface Sortable extends Item {
   page?: number;
 }
 
-export type Layout = 'grid' | 'row' | 'column' | 'flow';
+export type Layout = 'grid' | 'row' | 'column' | 'flow' | 'fit';
 export type Order = 'position' | 'page' | 'color' | 'title' | 'selection';
-export type Spacing = 'tight' | 'normal' | 'roomy';
+export type Spacing = 'tight' | 'normal' | 'roomy' | 'custom';
 export type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 
-/** Spacing presets for the arrange panel, multiples of the shared rhythm. */
-export const GAPS: Record<Spacing, number> = { tight: 16, normal: 36, roomy: 72 };
+/** Spacing presets for the arrange panel, multiples of the shared rhythm.
+ * 'custom' is not here — it takes its gap from `LayoutOptions.gap` instead. */
+export const GAPS: Record<Exclude<Spacing, 'custom'>, number> = { tight: 16, normal: 36, roomy: 72 };
 const FLOW_WIDTH = 1500;
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -93,6 +94,8 @@ export interface LayoutOptions {
   order: Order;
   spacing: Spacing;
   selectionOrder?: string[];
+  /** World-px gap used when spacing is 'custom'. */
+  gap?: number;
   /** Grid column count. Defaults to a roughly square arrangement. */
   columns?: number;
   /** Where flow layouts wrap. */
@@ -106,7 +109,7 @@ export function planLayout<T extends Sortable>(items: T[], options: LayoutOption
   const bounds = boundsOf(items);
   if (!bounds) return {};
   const ordered = orderItems(items, options.order, options.selectionOrder);
-  const gap = GAPS[options.spacing];
+  const gap = options.spacing === 'custom' ? Math.max(0, Math.round(options.gap ?? GAPS.normal)) : GAPS[options.spacing];
   const placement: Placement = {};
   const put = (item: T, x: number, y: number) => {
     placement[item.id] = { x: Math.round(x), y: Math.round(y) };
@@ -124,18 +127,47 @@ export function planLayout<T extends Sortable>(items: T[], options: LayoutOption
       put(item, bounds.x, y);
       y += item.height + gap;
     }
-  } else if (options.layout === 'grid') {
-    const columns = Math.max(1, Math.min(ordered.length, options.columns ?? Math.ceil(Math.sqrt(ordered.length))));
-    const rows = Math.ceil(ordered.length / columns);
-    const widths = Array.from({ length: columns }, (_, c) => Math.max(0, ...ordered.filter((_, i) => i % columns === c).map((i) => i.width)));
-    const heights = Array.from({ length: rows }, (_, r) => Math.max(0, ...ordered.slice(r * columns, r * columns + columns).map((i) => i.height)));
-    ordered.forEach((item, index) => {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const x = bounds.x + widths.slice(0, column).reduce((sum, w) => sum + w + gap, 0);
-      const y = bounds.y + heights.slice(0, row).reduce((sum, h) => sum + h + gap, 0);
-      put(item, x, y);
-    });
+  } else if (options.layout === 'grid' || options.layout === 'fit') {
+    // A table whose column widths and row heights follow their contents.
+    // 'fit' tries every column count and keeps the arrangement with the
+    // smallest footprint (near-ties go to the squarer block), so a scattered
+    // selection collapses into one tight block.
+    const gridPlacement = (columns: number): Placement => {
+      const cols = Math.max(1, Math.min(ordered.length, columns));
+      const rows = Math.ceil(ordered.length / cols);
+      const widths = Array.from({ length: cols }, (_, c) => Math.max(0, ...ordered.filter((_, i) => i % cols === c).map((i) => i.width)));
+      const heights = Array.from({ length: rows }, (_, r) => Math.max(0, ...ordered.slice(r * cols, r * cols + cols).map((i) => i.height)));
+      const result: Placement = {};
+      ordered.forEach((item, index) => {
+        const column = index % cols;
+        const row = Math.floor(index / cols);
+        result[item.id] = {
+          x: Math.round(bounds.x + widths.slice(0, column).reduce((sum, w) => sum + w + gap, 0)),
+          y: Math.round(bounds.y + heights.slice(0, row).reduce((sum, h) => sum + h + gap, 0)),
+        };
+      });
+      return result;
+    };
+    if (options.layout === 'grid') {
+      Object.assign(placement, gridPlacement(options.columns ?? Math.ceil(Math.sqrt(ordered.length))));
+    } else {
+      let best: Placement | null = null;
+      let bestScore = Infinity;
+      for (let columns = 1; columns <= ordered.length; columns++) {
+        const trial = gridPlacement(columns);
+        const laid = ordered.map((item) => ({ ...item, ...trial[item.id] }));
+        const fit = boundsOf(laid)!;
+        // The side of the smallest square containing the block. Raw area would
+        // favour long strips (they pay fewer gap penalties); this prefers the
+        // compact block "fit" promises.
+        const score = Math.max(fit.width, fit.height) ** 2;
+        if (score < bestScore) {
+          bestScore = score;
+          best = trial;
+        }
+      }
+      Object.assign(placement, best!);
+    }
   } else {
     // flow: like a row, but wrapping so a long chain stays on screen
     const limit = options.maxRowWidth ?? FLOW_WIDTH;

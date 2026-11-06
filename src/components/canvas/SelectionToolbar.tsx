@@ -87,7 +87,8 @@ export default function SelectionToolbar({ containerRef }: { containerRef: RefOb
 
   return (
     <div className="selection-toolbar" data-canvas-ui style={{ left: centerX, top }} onPointerDown={stop} onDoubleClick={stop} onContextMenu={(event) => event.preventDefault()} role="toolbar" aria-label="Selection">
-      <span className="selection-count">{items.length} selected</span>
+      {/* role=status makes the count a polite live region: selection changes are announced */}
+      <span className="selection-count" role="status">{items.length} selected</span>
       <button type="button" className="sel-btn" title="Clear selection (Esc)" aria-label="Clear selection" onClick={() => useCanvas.getState().select(null)}>
         <X size={ICON} />
       </button>
