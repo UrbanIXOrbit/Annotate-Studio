@@ -362,6 +362,7 @@ export default function SettingsTab() {
   const primaryColor = useSettings((state) => state.primaryColor);
   const appScale = useSettings((state) => state.appScale);
   const notificationsEnabled = useSettings((state) => state.notificationsEnabled);
+  const newItemAtPointer = useSettings((state) => state.newItemAtPointer);
   const update = useSettings((state) => state.update);
   const scales = useMemo(() => [90, 100, 110, 125, 150], []);
 
@@ -452,6 +453,13 @@ export default function SettingsTab() {
               <label className="checkbox-row">
                 <input type="checkbox" checked={notificationsEnabled} onChange={(event) => update({ notificationsEnabled: event.target.checked })} />
                 Notify me when a Pomodoro phase ends and when flashcards are due
+              </label>
+            </div>
+            <div className="settings-card">
+              <h3>Canvas</h3>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={newItemAtPointer} onChange={(event) => update({ newItemAtPointer: event.target.checked })} />
+                Place new items where the mouse pointer is, instead of auto-placing them in free space
               </label>
             </div>
           </div>

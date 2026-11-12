@@ -1,8 +1,26 @@
 'use client';
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { useAlignmentGuides } from '@/store/guides';
 import { cn } from '@/lib/utils';
+import type { SpacingGuide } from '@/lib/layout';
+
+const GapMarker = memo(function GapMarker({ gap }: { gap: SpacingGuide }) {
+  const { length, style } = useMemo(() => {
+    const length = Math.round(gap.to - gap.from);
+    return {
+      length,
+      style: gap.axis === 'x'
+        ? { left: gap.from, top: gap.across, width: length }
+        : { left: gap.across, top: gap.from, height: length },
+    };
+  }, [gap]);
+  return (
+    <span className={cn('canvas-gap', gap.axis === 'x' ? 'canvas-gap-x' : 'canvas-gap-y')} style={style}>
+      <span className="canvas-gap-label">{length}</span>
+    </span>
+  );
+});
 
 /** Displays hint lines inside the canvas world while an item's edges or centre
  * align with other items, plus a marker (labelled with its size) for each of two
@@ -21,22 +39,7 @@ export default function AlignmentGuides() {
           style={guide.axis === 'x' ? { left: guide.at } : { top: guide.at }}
         />
       ))}
-      {spacing.map((gap, index) => {
-        const length = Math.round(gap.to - gap.from);
-        return (
-          <span
-            key={`gap-${gap.axis}-${gap.from}-${gap.across}-${index}`}
-            className={cn('canvas-gap', gap.axis === 'x' ? 'canvas-gap-x' : 'canvas-gap-y')}
-            style={
-              gap.axis === 'x'
-                ? { left: gap.from, top: gap.across, width: length }
-                : { left: gap.across, top: gap.from, height: length }
-            }
-          >
-            <span className="canvas-gap-label">{length}</span>
-          </span>
-        );
-      })}
+      {spacing.map((gap, index) => <GapMarker key={`gap-${gap.axis}-${gap.from}-${gap.across}-${index}`} gap={gap} />)}
     </div>
   );
 }

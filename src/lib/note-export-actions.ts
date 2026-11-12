@@ -3,9 +3,10 @@ import { NOTE_FORMATS, NOTE_FORMAT_ORDER, noteFileName, noteToMarkdown, noteToTe
 import { buildNotePdf } from './note-pdf';
 import { resolveNoteImage } from './image-resolve';
 import { loadFont, saveExportedFile, type ExportResult } from './export-file';
-import { readNote } from './tauri-commands';
+import { readExternalFileBytes, readNote } from './tauri-commands';
 import { useNotes } from '@/store/notes';
 import { toast } from '@/store/toast';
+import { isExternalPath } from './utils';
 import type { MenuEntry } from '@/components/ui/ContextMenu';
 
 export interface NoteExportInput {
@@ -63,5 +64,9 @@ export function noteExportMenu(getInput: () => Promise<NoteExportInput> | NoteEx
 export async function currentNoteText(path: string): Promise<string> {
   const buffer = useNotes.getState().buffers[path];
   if (buffer) return buffer.content;
+  if (isExternalPath(path)) {
+    const bytes = await readExternalFileBytes(path);
+    return new TextDecoder().decode(bytes);
+  }
   return (await readNote(path)).content;
 }

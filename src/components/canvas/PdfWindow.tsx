@@ -52,7 +52,7 @@ import {
 import Popover from '@/components/ui/Popover';
 import ColorSwatches from '@/components/ui/ColorSwatches';
 import { getPdfEngine, type SharedPdfEngine } from '@/lib/pdf-engine';
-import { isTauri, readFileBytes, readExternalFileBytes, writeFileBytes } from '@/lib/tauri-commands';
+import { isTauri, readFileBytes, readExternalFileBytes, writeExternalFileBytes, writeFileBytes } from '@/lib/tauri-commands';
 import { registerFlusher } from '@/lib/persist';
 import { registerPdfSaver, trackPdfSave, waitForPdfSaves } from '@/lib/pdf-saves';
 import { openExternal } from '@/lib/external';
@@ -61,6 +61,7 @@ import { copyText, cn, isEditableTarget, stripExtension } from '@/lib/utils';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
 import { useLibrary } from '@/store/library';
+import { useAnnotations } from '@/store/annotations';
 import { toast, useToasts } from '@/store/toast';
 import { usePdfNav } from '@/lib/pdf-nav';
 import NoteClipPicker from './NoteClipPicker';
@@ -185,14 +186,14 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
   }
   return (
     <EmbedPDF engine={engine} plugins={plugins} autoMountDomElements={false}>
-      <PdfDocument resourceId={resourceId} path={path} title={title} active={active} bytes={bytes} />
+      <PdfDocument resourceId={resourceId} path={path} title={title} active={active} bytes={bytes} isExternal={isExternal} />
     </EmbedPDF>
   );
 }
 
-function PdfDocument({ resourceId, path, title, active, bytes }: PdfWindowProps & { bytes: ArrayBuffer }) {
-  const { provides: manager } = useDocumentManagerCapability();
-  const { activeDocumentId } = useActiveDocument();
+function PdfDocument({ resourceId, path, title, active, bytes, isExternal }: PdfWindowProps & { bytes: ArrayBuffer; isExternal: boolean }) {
+  const manager = useDocumentManagerCapability()?.provides;
+  const activeDocumentId = useActiveDocument()?.activeDocumentId;
   const [loadError, setLoadError] = useState<string | null>(null);
   const openedRef = useRef(false);
 
@@ -226,12 +227,12 @@ function PdfDocument({ resourceId, path, title, active, bytes }: PdfWindowProps 
       </div>
     );
   }
-  return <PdfWorkspace documentId={activeDocumentId} resourceId={resourceId} path={path} title={title} active={active} />;
+  return <PdfWorkspace documentId={activeDocumentId} resourceId={resourceId} path={path} title={title} active={active} isExternal={isExternal} />;
 }
 
-function useAutosave(documentId: string, path: string) {
-  const { provides: exporter } = useExport(documentId);
-  const { provides: annotations } = useAnnotation(documentId);
+function useAutosave(documentId: string, path: string, isExternal: boolean) {
+  const exporter = useExport(documentId)?.provides;
+  const annotations = useAnnotation(documentId)?.provides;
   const [state, setState] = useState<SaveState>('idle');
   const dirty = useRef(false);
   const discarded = useRef(false);
@@ -254,8 +255,13 @@ function useAutosave(documentId: string, path: string) {
         await annotationsRef.current?.commit().toPromise();
         const buffer = await exporterRef.current!.saveAsCopy().toPromise();
         if (discarded.current) return;
-        const file = await writeFileBytes({ path }, buffer);
-        useLibrary.getState().upsert(file);
+        if (isExternal) {
+          await writeExternalFileBytes(path, buffer);
+        } else {
+          const file = await writeFileBytes({ path }, buffer);
+          useLibrary.getState().upsert(file);
+        }
+        useAnnotations.getState().invalidate(path);
         setState('saved');
       } catch (error) {
         dirty.current = true;
@@ -367,7 +373,7 @@ const SAVED_TO_ENGINE_ZOOM = { 'fit-width': ZoomMode.FitWidth, 'fit-page': ZoomM
 const toEngineZoom = (zoom: PdfZoom): ZoomMode | number => (typeof zoom === 'number' ? zoom : SAVED_TO_ENGINE_ZOOM[zoom]);
 const toSavedZoom = (level: unknown): PdfZoom => sanitizeZoom(level);
 
-function PdfWorkspace({ documentId, resourceId, path, title, active }: Omit<PdfWindowProps, 'bytes'> & { documentId: string }) {
+function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal }: Omit<PdfWindowProps, 'bytes'> & { documentId: string; isExternal: boolean }) {
   // Where you were in this book last time. Read once: it only matters while the window opens.
   const savedViewRef = useRef(useCanvas.getState().pdfViews[path]);
   const restoredRef = useRef(false);
@@ -381,15 +387,21 @@ function PdfWorkspace({ documentId, resourceId, path, title, active }: Omit<PdfW
   const colorAnchor = useRef<HTMLButtonElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  const { provides: annotationScope, state: annotationState } = useAnnotation(documentId);
-  const { provides: annotationCapability } = useAnnotationCapability();
-  const { provides: selection } = useSelectionCapability();
-  const { provides: history } = useHistoryCapability();
-  const { provides: zoom, state: zoomState } = useZoom(documentId);
-  const { provides: scroll, state: scrollState } = useScroll(documentId);
+  const annotationResult = useAnnotation(documentId);
+  const annotationScope = annotationResult?.provides;
+  const annotationState = annotationResult?.state;
+  const annotationCapability = useAnnotationCapability()?.provides;
+  const selection = useSelectionCapability()?.provides;
+  const history = useHistoryCapability()?.provides;
+  const zoomResult = useZoom(documentId);
+  const zoom = zoomResult?.provides;
+  const zoomState = zoomResult?.state;
+  const scrollResult = useScroll(documentId);
+  const scroll = scrollResult?.provides;
+  const scrollState = scrollResult?.state;
   const documentState = useDocumentState(documentId);
-  const { provides: exporter } = useExport(documentId);
-  const { state: saveState, save } = useAutosave(documentId, path);
+  const exporter = useExport(documentId)?.provides;
+  const { state: saveState, save } = useAutosave(documentId, path, isExternal);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const maximized = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.maximized ?? false);
   const canvasZoom = useCanvasZoom();

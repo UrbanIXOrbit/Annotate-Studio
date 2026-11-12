@@ -1,4 +1,5 @@
-import { readBookAnnotationSet as readBookAnnotationSetCommand, writeBookAnnotationSet as writeBookAnnotationSetCommand } from './tauri-commands';
+import { readBookAnnotationSet as readBookAnnotationSetCommand, writeBookAnnotationSet as writeBookAnnotationSetCommand } from './tauri-commands.ts';
+import { normalizeColor, type AnnotationEntry } from './annotations.ts';
 
 export interface EpubAnnotation {
   id: string;
@@ -97,6 +98,37 @@ export function createEpubAnnotation(args: {
 
 export function annotationCfi(annotation: EpubAnnotation): string {
   return annotation.target.selector.find((selector) => selector.type === 'annotateStudio:CFISelector')?.value ?? '';
+}
+
+/**
+ * The 0-based spine position an EPUB CFI points at, derived from the even-numbered
+ * step after the spine marker (`epubcfi(/6/N!/…)`). Whitespace before an item makes
+ * the exact chapter number unknowable from the CFI alone, but the value is monotonic,
+ * which is all grouping and ordering in the Annotations section needs.
+ */
+export function chapterFromCfi(cfi: string): number {
+  const match = /epubcfi\(\s*\/6\/(\d+)/.exec(cfi);
+  const step = match ? Number(match[1]) : 0;
+  return step > 0 ? Math.max(0, Math.floor(step / 2) - 1) : 0;
+}
+
+/** The colour BookWindow paints EPUB highlights with (the stored model is always 'yellow'). */
+const BOOK_HIGHLIGHT_COLOR = '#FFCD45';
+
+/** Map the annotations saved inside a book file to the shared annotation-entry model. */
+export function bookAnnotationEntries(items: EpubAnnotation[]): AnnotationEntry[] {
+  return items.map((item, index) => ({
+    id: item.id,
+    page: chapterFromCfi(annotationCfi(item)) + 1,
+    kind: item.body.highlight === 'underline' ? 'underline' : 'highlight',
+    text: item.body.value,
+    comment: '',
+    color: normalizeColor(item.body.color) ?? BOOK_HIGHLIGHT_COLOR,
+    modified: item.modified || item.created || undefined,
+    x: 0,
+    y: index,
+    cfi: annotationCfi(item),
+  }));
 }
 
 export async function readBookAnnotationSet(path: string, isExternal: boolean, title: string): Promise<EpubAnnotationSet> {

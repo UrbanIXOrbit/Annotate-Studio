@@ -12,13 +12,14 @@ import CardsNoteHost from './CardsNoteHost';
 import Minimap from './Minimap';
 import MinimizedDock from './MinimizedDock';
 import { openContextMenu } from '@/components/ui/ContextMenu';
-import { activeWorkspace, hiddenResourceIds, screenToWorld, useActiveWorkspace, useCanvas, type CanvasStore } from '@/store/canvas';
+import { activeWorkspace, hiddenResourceIds, screenToWorld, useActiveWorkspace, useCanvas, visibleWorldRect, type CanvasStore } from '@/store/canvas';
 import { useApp } from '@/store/app';
 import { toast } from '@/store/toast';
 import { useConnectUi } from '@/store/connect';
 import { webviewZoomFactor } from '@/store/settings';
 import { isTauri } from '@/lib/tauri-commands';
 import { addWebArticle, createNewNote, importBrowserFiles, importPaths, pickAndImport } from '@/lib/workspace-actions';
+import { canvasPointer, trackCanvasPointer } from '@/lib/canvas-pointer';
 import { LAYOUT } from '@/lib/layout';
 import { cn, isEditableTarget, isModalOpen } from '@/lib/utils';
 import { dispatchWindowKey, isContentWindow, setContentWindow } from '@/lib/window-keys';
@@ -51,6 +52,16 @@ function dropPointToClient(position: { x: number; y: number }): { x: number; y: 
   return { x: position.x / divisor, y: position.y / divisor };
 }
 
+/** Keep a generous world-space buffer so a window does not mount/unmount while
+ * it is just outside the edge of the screen or being dragged towards it. */
+function intersectsViewportBuffer(
+  resource: { x: number; y: number; width: number; height: number },
+  rect: { x: number; y: number; width: number; height: number },
+) {
+  return resource.x + resource.width >= rect.x && resource.x <= rect.x + rect.width &&
+    resource.y + resource.height >= rect.y && resource.y <= rect.y + rect.height;
+}
+
 export default function CanvasViewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -60,6 +71,7 @@ export default function CanvasViewport() {
   const workspace = useActiveWorkspace();
   const locked = useCanvas((state) => state.locked);
   const hydrated = useCanvas((state) => state.hydrated);
+  const viewport = useCanvas((state) => state.viewport);
   const [panning, setPanning] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -120,6 +132,21 @@ export default function CanvasViewport() {
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
   }, [markMoving]);
+
+  /** Remember where the pointer last was over the canvas surface, so creation
+   * paths can drop new items at the pointer ("insert at pointer"). Window-level
+   * listener: moves over windows inside the surface count, moves over overlays
+   * (toolbar, chat dock) do not update the remembered spot. */
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-canvas-surface]')) return;
+      const surface = containerRef.current;
+      if (!surface) return;
+      trackCanvasPointer(event.clientX, event.clientY, surface.getBoundingClientRect());
+    };
+    window.addEventListener('pointermove', onMove);
+    return () => window.removeEventListener('pointermove', onMove);
+  }, []);
 
   const startPan = useCallback(
     (event: React.PointerEvent) => {
@@ -445,6 +472,21 @@ export default function CanvasViewport() {
   const step = gridStep(view.zoom);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const hidden = useMemo(() => hiddenResourceIds(workspace), [workspace]);
+  const renderedResources = useMemo(() => {
+    const active = workspace.resources.filter((resource) => !resource.minimized && !hidden.has(resource.id));
+    const maximizedResource = active.find((resource) => resource.maximized);
+    if (maximizedResource) return [maximizedResource];
+    const visibleRect = visibleWorldRect(view, viewport);
+    // Render one complete viewport beyond every edge. Heavy readers therefore
+    // initialize only when their window is within two viewports of the user.
+    const bufferedRect = {
+      x: visibleRect.x - visibleRect.width,
+      y: visibleRect.y - visibleRect.height,
+      width: visibleRect.width * 3,
+      height: visibleRect.height * 3,
+    };
+    return active.filter((resource) => intersectsViewportBuffer(resource, bufferedRect));
+  }, [hidden, viewport, view, workspace.resources]);
 
   return (
     <div
@@ -481,11 +523,9 @@ export default function CanvasViewport() {
       <div ref={worldRef} className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
         <GroupLayer />
         <ConnectorLayer clientToWorld={clientToWorld} />
-        {workspace.resources
-          .filter((resource) => !hidden.has(resource.id))
-          .map((resource) => (
-            <CanvasWindow key={resource.id} resource={resource} />
-          ))}
+        {renderedResources.map((resource) => (
+          <CanvasWindow key={resource.id} resource={resource} />
+        ))}
         <AlignmentGuides />
         <ArrangePreview />
       </div>

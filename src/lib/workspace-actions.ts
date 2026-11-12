@@ -1,11 +1,14 @@
 import { discardPdfSaves, flushPdfSaves, waitForPdfSaves } from './pdf-saves';
 import {
+  createExternalNote,
   createNote,
   deleteWorkspaceFile,
-  importFiles,
+  getDataDir,
   isTauri,
+  readExternalFileBytes,
   readFileBytes,
   readTextFile,
+  renameExternalFile,
   renameWorkspaceFile,
   writeFileBytes,
   writeTextFile,
@@ -13,7 +16,7 @@ import {
 } from './tauri-commands';
 import { extractPdfText, type ExtractedPdfText } from './pdf-engine';
 import { BOOK_EXTENSIONS, extractBookText } from './book-engine';
-import { baseName, extensionOf, stripExtension } from './utils';
+import { baseName, extensionOf, isExternalPath, stripExtension } from './utils';
 import { useApp } from '@/store/app';
 import { useCanvas, type AudioTrack, type OpenOptions, type ResourceType } from '@/store/canvas';
 import { confirmDialog, promptDialog } from '@/store/dialogs';
@@ -26,14 +29,19 @@ export { BOOK_EXTENSIONS };
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'];
 export const NOTE_EXTENSIONS = ['md', 'markdown', 'mdx', 'txt', 'text'];
 export const DOCUMENT_EXTENSIONS = ['docx', 'odt'];
-export const AUDIO_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'm4b', 'aac', 'wav', 'ogg', 'opus', 'flac', 'webm', 'aiff', 'aif'];
-export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg', 'avi', 'mkv', '3gp', 'wmv', 'flv', 'mpeg', 'mpg'];
+export const AUDIO_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'm4b', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac', 'webm', 'aiff', 'aif', 'wma'];
+export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm', 'ogv', 'avi', 'mkv', '3gp', 'wmv', 'flv', 'mpeg', 'mpg'];
 
 const AUDIO_MEDIA_TYPES: Record<string, string> = {
   mp3: 'audio/mpeg', mp4: 'audio/mp4', m4a: 'audio/mp4', m4b: 'audio/mp4', aac: 'audio/aac',
-  wav: 'audio/wav', ogg: 'audio/ogg', opus: 'audio/ogg; codecs=opus', flac: 'audio/flac',
-  webm: 'audio/webm', aiff: 'audio/aiff', aif: 'audio/aiff',
+  wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg; codecs=opus', flac: 'audio/flac',
+  webm: 'audio/webm', aiff: 'audio/aiff', aif: 'audio/aiff', wma: 'audio/x-ms-wma',
 };
+
+/** The MIME type to hand an audio element for a file name, from its extension. */
+export function audioMediaType(name: string): string {
+  return AUDIO_MEDIA_TYPES[extensionOf(name)] ?? 'audio/mpeg';
+}
 
 export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): ResourceType | null {
   switch (file.file_type) {
@@ -43,6 +51,8 @@ export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): Re
       return 'image';
     case 'Book':
       return 'book';
+    case 'Audio':
+      return 'audiobook';
     case 'Markdown':
     case 'Text':
       return 'note';
@@ -53,13 +63,14 @@ export function resourceTypeFor(file: Pick<StudyFile, 'file_type' | 'name'>): Re
       if (NOTE_EXTENSIONS.includes(ext)) return 'note';
       if (BOOK_EXTENSIONS.includes(ext)) return 'book';
       if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+      if (AUDIO_EXTENSIONS.includes(ext)) return 'audiobook';
       return null;
     }
   }
 }
 
 export function displayTitle(file: Pick<StudyFile, 'name' | 'file_type'>): string {
-  return file.file_type === 'Markdown' ? stripExtension(file.name) : file.name;
+  return file.file_type === 'Markdown' || file.file_type === 'Audio' ? stripExtension(file.name) : file.name;
 }
 
 export function openFileOnCanvas(file: StudyFile, options: OpenOptions = {}): string | null {
@@ -68,7 +79,19 @@ export function openFileOnCanvas(file: StudyFile, options: OpenOptions = {}): st
     toast.warning('This file type cannot be opened on the canvas', file.name);
     return null;
   }
-  const id = useCanvas.getState().openResource({ type, title: displayTitle(file), filePath: file.path }, options);
+  const id = useCanvas.getState().openResource(
+    {
+      type,
+      title: displayTitle(file),
+      filePath: file.path,
+      ...(type === 'audiobook'
+        ? { tracks: [{ path: file.path, title: file.name, mediaType: audioMediaType(file.name) }] }
+        : {}),
+    },
+    // Files kept outside the workspace are read in place through the external
+    // file commands; workspace files go through the workspace ones.
+    { ...options, isExternal: options.isExternal ?? isExternalPath(file.path) },
+  );
   useSettings.getState().touchRecent(file.path);
   return id;
 }
@@ -104,18 +127,39 @@ function openImported(files: StudyFile[], at?: { x: number; y: number }) {
   });
 }
 
-export async function importPaths(paths: string[], at?: { x: number; y: number }): Promise<StudyFile[]> {
-  if (paths.length === 0) return [];
-  try {
-    const files = await importFiles(paths);
-    files.forEach((file) => useLibrary.getState().upsert(file));
-    openImported(files.filter((file) => resourceTypeFor(file)), at);
-    const skipped = paths.length - files.length;
-    if (skipped > 0) toast.warning(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`, 'Only PDFs, e-books, images, videos and text notes are supported.');
-    return files;
-  } catch (error) {
-    toast.error('Import failed', error);
-    return [];
+/**
+ * Opens dragged/picked files at their original paths — nothing is copied into
+ * app storage. Each file is referenced in place on the canvas and, via
+ * `openResource`, in the library.
+ */
+export async function importPaths(paths: string[], at?: { x: number; y: number }): Promise<void> {
+  if (paths.length === 0) return;
+  let skipped = 0;
+  paths.forEach((path, index) => {
+    const name = baseName(path);
+    const type = resourceTypeFor({ file_type: 'Unknown', name });
+    if (!type) {
+      skipped += 1;
+      return;
+    }
+    const title = type === 'note' || type === 'audiobook' ? stripExtension(name) : name;
+    useCanvas.getState().openResource(
+      {
+        type,
+        title,
+        filePath: path,
+        ...(type === 'audiobook'
+          ? { tracks: [{ path, title: name, mediaType: audioMediaType(name) }] }
+          : {}),
+      },
+      { at: at ? { x: at.x + index * 40, y: at.y + index * 40 } : undefined, isExternal: true, focusExisting: false },
+    );
+  });
+  if (skipped > 0) {
+    toast.warning(
+      `${skipped} file${skipped > 1 ? 's were' : ' was'} skipped`,
+      'Only PDFs, e-books, images, videos, audio and text notes are supported.',
+    );
   }
 }
 
@@ -125,7 +169,8 @@ export async function importBrowserFiles(files: File[], at?: { x: number; y: num
     const ext = extensionOf(file.name);
     const isNote = NOTE_EXTENSIONS.includes(ext);
     const isBook = BOOK_EXTENSIONS.includes(ext);
-    const supported = ext === 'pdf' || isBook || IMAGE_EXTENSIONS.includes(ext) || isNote || file.type.startsWith('image/');
+    const isAudio = AUDIO_EXTENSIONS.includes(ext) || file.type.startsWith('audio/');
+    const supported = ext === 'pdf' || isBook || IMAGE_EXTENSIONS.includes(ext) || isNote || isAudio || file.type.startsWith('image/');
     if (!supported) {
       toast.warning('Unsupported file', file.name);
       continue;
@@ -160,10 +205,20 @@ export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'audiobook'
             ? [{ name: 'Audio files', extensions: AUDIO_EXTENSIONS }]
             : kind === 'video'
               ? [{ name: 'Video files', extensions: VIDEO_EXTENSIONS }]
-            : [{ name: 'Study files', extensions: ['pdf', ...BOOK_EXTENSIONS, ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS, ...VIDEO_EXTENSIONS] }];
+            : [{ name: 'Study files', extensions: ['pdf', ...BOOK_EXTENSIONS, ...IMAGE_EXTENSIONS, ...NOTE_EXTENSIONS, ...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS] }];
   const selection = await open({ multiple: true, filters });
   if (!selection) return;
   const paths = Array.isArray(selection) ? selection : [selection];
+  if (kind === 'pdf') {
+    for (const path of paths) {
+      const title = baseName(path);
+      useCanvas.getState().openResource(
+        { type: 'pdf', title, filePath: path },
+        { at, isExternal: true, focusExisting: false },
+      );
+    }
+    return;
+  }
   if (kind === 'audiobook') {
     const tracks: AudioTrack[] = paths.map((path) => {
       const title = path.split(/[\\/]/).pop() || 'Audio track';
@@ -188,15 +243,50 @@ export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'audiobook'
   await importPaths(paths, at);
 }
 
-export async function createNewNote(options: { at?: { x: number; y: number }; content?: string; title?: string; near?: string } = {}) {
+/**
+ * The folder new notes go to: the user's chosen notes folder, or a one-time
+ * folder picker (persisted afterwards) exactly like the recording flow. The
+ * picker defaults to the workspace notes folder but may be anywhere on disk.
+ */
+async function resolveNoteFolder(): Promise<string | null> {
+  const settings = useSettings.getState();
+  if (settings.noteFolder) return settings.noteFolder;
+  if (!isTauri()) {
+    toast.warning('Creating notes requires the desktop app');
+    return null;
+  }
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  let defaultPath: string | undefined;
+  try {
+    defaultPath = `${(await getDataDir()).replace(/[\\/]+$/, '')}/notes`;
+  } catch {
+    defaultPath = undefined;
+  }
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    title: 'Choose where new notes are saved',
+    defaultPath,
+  });
+  if (typeof picked !== 'string') return null;
+  settings.update({ noteFolder: picked });
+  return picked;
+}
+
+export async function createNewNote(
+  options: { at?: { x: number; y: number }; content?: string; title?: string; near?: string; directory?: string } = {},
+) {
   try {
     const title = options.title?.trim() || 'Untitled';
     const content = options.content ?? `# ${title}\n\n`;
-    const file = await createNote(title, content);
-    useLibrary.getState().upsert(file);
+    const directory = options.directory ?? await resolveNoteFolder();
+    if (!directory) return null;
+    // The note is created in the chosen folder — never copied into the
+    // workspace — and referenced there by the library and the canvas.
+    const file = await createExternalNote(directory, title, content);
     useCanvas.getState().openResource(
       { type: 'note', title: displayTitle(file), filePath: file.path },
-      { at: options.at, near: options.near, focusExisting: false },
+      { at: options.at, near: options.near, focusExisting: false, isExternal: true },
     );
     return file;
   } catch (error) {
@@ -229,11 +319,17 @@ export async function renameFile(path: string, newName: string): Promise<StudyFi
     const notes = useNotes.getState();
     if (notes.buffers[path]?.dirty) await notes.save(path);
     await flushPdfSaves(path);
-    const file = await renameWorkspaceFile(path, trimmed);
+    const file = isExternalPath(path)
+      ? await renameExternalFile(path, trimmed)
+      : await renameWorkspaceFile(path, trimmed);
     if (file.path !== path) {
       discardPdfSaves(path);
       notes.move(path, file.path);
-      useLibrary.getState().replace(path, file);
+      if (isExternalPath(file.path)) {
+        useLibrary.getState().replaceExternal(path, file);
+      } else {
+        useLibrary.getState().replace(path, file);
+      }
       const settings = useSettings.getState();
       const opened = settings.recentFiles[path];
       settings.forgetRecent(path);
@@ -254,6 +350,15 @@ export async function deleteFile(path: string): Promise<boolean> {
   try {
     discardPdfSaves(path);
     await waitForPdfSaves(path);
+    if (isExternalPath(path)) {
+      // Files outside the workspace stay on the user's device; only the
+      // library reference to them is removed.
+      useCanvas.getState().closeByFilePath(path);
+      useLibrary.getState().removeExternal(path);
+      useNotes.getState().drop(path);
+      useSettings.getState().forgetRecent(path);
+      return true;
+    }
     await deleteWorkspaceFile(path);
     useCanvas.getState().closeByFilePath(path);
     useLibrary.getState().remove(path);
@@ -310,6 +415,27 @@ export async function migrateInlineNotes(): Promise<void> {
   }
 }
 
+/**
+ * Catch-up for external files opened before the library referenced them in
+ * place: every canvas resource whose file lives outside the workspace is
+ * registered in the library at its own path — nothing is copied — so it shows
+ * up in the library like everything opened from now on.
+ */
+export async function registerExternalResources(): Promise<void> {
+  const { workspaces } = useCanvas.getState();
+  const library = useLibrary.getState();
+  for (const workspace of workspaces) {
+    for (const resource of workspace.resources) {
+      if (!resource.isExternal || !resource.filePath || !isExternalPath(resource.filePath)) continue;
+      try {
+        await library.registerExternal(resource.filePath);
+      } catch {
+        continue;
+      }
+    }
+  }
+}
+
 export interface DocumentText {
   name: string;
   text: string;
@@ -320,6 +446,16 @@ export interface DocumentText {
 export async function readDocumentText(path: string, maxChars = 40_000): Promise<DocumentText> {
   const name = baseName(path);
   const ext = extensionOf(name);
+  if (isExternalPath(path)) {
+    // Files referenced in place are read through the external file commands;
+    // only plain-text notes have text worth sending to the AI.
+    if (NOTE_EXTENSIONS.includes(ext)) {
+      const bytes = await readExternalFileBytes(path);
+      const text = new TextDecoder().decode(bytes).replace(/\r\n?/g, '\n');
+      return { name, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+    }
+    return { name, text: '', truncated: false };
+  }
   if (ext === 'pdf') {
     const bytes = await readFileBytes(path);
     const extracted: ExtractedPdfText = await extractPdfText(bytes, maxChars);

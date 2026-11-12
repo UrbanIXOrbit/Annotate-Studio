@@ -246,7 +246,10 @@ pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalImportOut
         }
 
         if !path.is_file() {
-            outcomes.push(outcome_error(path_str, "Path is a folder, not a file".into()));
+            outcomes.push(outcome_error(
+                path_str,
+                "Path is a folder, not a file".into(),
+            ));
             continue;
         }
 
@@ -254,7 +257,10 @@ pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalImportOut
         let metadata = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(error) => {
-                outcomes.push(outcome_error(path_str, format!("Could not read file metadata: {error}")));
+                outcomes.push(outcome_error(
+                    path_str,
+                    format!("Could not read file metadata: {error}"),
+                ));
                 continue;
             }
         };
@@ -419,7 +425,10 @@ pub fn open_external_file(path: String) -> Result<(), String> {
 pub fn reveal_external_file(path: String) -> Result<(), String> {
     let file_path = Path::new(&path);
     let exists = file_path.exists();
-    let parent = file_path.parent().filter(|p| p.exists()).map(|p| p.to_path_buf());
+    let parent = file_path
+        .parent()
+        .filter(|p| p.exists())
+        .map(|p| p.to_path_buf());
 
     if !exists && parent.is_none() {
         return Err(format!("File and its folder were not found: {}", path));
@@ -456,7 +465,11 @@ pub fn reveal_external_file(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         // On Linux, try to reveal in file manager or fall back to opening the parent directory
-        if let Some(target) = if exists { Some(path) } else { parent.map(|p| p.to_string_lossy().into_owned()) } {
+        if let Some(target) = if exists {
+            Some(path)
+        } else {
+            parent.map(|p| p.to_string_lossy().into_owned())
+        } {
             std::process::Command::new("xdg-open")
                 .arg(target)
                 .spawn()

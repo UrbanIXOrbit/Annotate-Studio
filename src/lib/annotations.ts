@@ -51,7 +51,7 @@ export function isTextMarkup(kind: AnnotationKind): boolean {
 export interface AnnotationEntry {
   /** Id assigned by the PDF engine; stable for one scan only. */
   id: string;
-  /** 1-based page number. */
+  /** 1-based page number (or chapter number when the book has no pages). */
   page: number;
   kind: AnnotationKind;
   /** The words covered by a highlight/underline/strikeout. Empty for everything else. */
@@ -66,6 +66,8 @@ export interface AnnotationEntry {
   /** Position on the page (top-left origin), used only to order entries within a page. */
   x: number;
   y: number;
+  /** Books only: where the annotation lives, for jumping straight back to it. */
+  cfi?: string;
 }
 
 export interface BookAnnotations {
@@ -73,6 +75,13 @@ export interface BookAnnotations {
   title: string;
   pageCount: number;
   entries: AnnotationEntry[];
+  /** What `page` counts for this book: PDF pages or e-book chapters. Defaults to pages. */
+  locationUnit?: 'page' | 'chapter';
+}
+
+/** The human label for one group of entries, honouring the book's location unit. */
+export function locationLabel(book: Pick<BookAnnotations, 'locationUnit'>, page: number): string {
+  return `${book.locationUnit === 'chapter' ? 'Chapter' : 'Page'} ${page}`;
 }
 
 // ───────── glyph hit-testing ─────────
@@ -253,6 +262,8 @@ export interface ReportBook {
   pageCount: number;
   count: number;
   pages: ReportPage[];
+  /** What `page` counts for this book: PDF pages or e-book chapters. */
+  locationUnit?: 'page' | 'chapter';
 }
 
 export interface Report {
@@ -274,6 +285,7 @@ export function buildReport(books: BookAnnotations[], filter: EntryFilter, title
       path: book.path,
       pageCount: book.pageCount,
       count: entries.length,
+      locationUnit: book.locationUnit,
       pages: groupByPage(entries).map((group) => ({
         page: group.page,
         items: group.entries.map((entry) => ({
@@ -326,7 +338,7 @@ export function reportToMarkdown(report: Report): string {
     lines.push(`## ${escapeMarkdown(book.title)}`, '');
     lines.push(`*${book.count} annotation${book.count === 1 ? '' : 's'}*`, '');
     for (const page of book.pages) {
-      lines.push(`### Page ${page.page}`, '');
+      lines.push(`### ${book.locationUnit === 'chapter' ? 'Chapter' : 'Page'} ${page.page}`, '');
       for (const item of page.items) {
         const body = item.text || (item.kind === 'note' || item.kind === 'text' ? item.comment : '');
         const comment = item.text ? item.comment : '';

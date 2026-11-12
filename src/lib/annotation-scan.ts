@@ -1,6 +1,7 @@
 import { PdfAnnotationSubtype, type PdfAnnotationObject } from '@embedpdf/models';
 import { getPdfEngine } from './pdf-engine';
-import { readFileBytes, type StudyFile } from './tauri-commands';
+import { readExternalFileBytes, readFileBytes, type StudyFile } from './tauri-commands';
+import { bookAnnotationEntries, readBookAnnotationSet } from './book-annotations';
 import { stripExtension, uid } from './utils';
 import {
   charIndicesInRects,
@@ -108,7 +109,21 @@ export async function scanPdfBytes(bytes: Uint8Array, path: string, title: strin
   }
 }
 
-export async function scanPdfFile(file: StudyFile): Promise<BookAnnotations> {
-  const bytes = await readFileBytes(file.path);
+export async function scanPdfFile(file: StudyFile & { isExternal?: boolean }): Promise<BookAnnotations> {
+  const bytes = file.isExternal ? await readExternalFileBytes(file.path) : await readFileBytes(file.path);
   return scanPdfBytes(bytes, file.path, stripExtension(file.name));
+}
+
+/** Read every annotation saved inside an e-book (embedded in EPUB, sidecar for other formats). */
+export async function scanBookFile(file: StudyFile & { isExternal?: boolean }): Promise<BookAnnotations> {
+  const set = await readBookAnnotationSet(file.path, file.isExternal ?? false, stripExtension(file.name));
+  const entries = bookAnnotationEntries(set.items);
+  return {
+    path: file.path,
+    title: stripExtension(file.name),
+    pageCount: entries.reduce((max, entry) => Math.max(max, entry.page), 0),
+    entries: sortEntries(entries),
+    // E-books are read continuously, so annotations are grouped by chapter, not page.
+    locationUnit: 'chapter',
+  };
 }

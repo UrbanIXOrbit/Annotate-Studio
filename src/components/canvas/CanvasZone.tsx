@@ -28,6 +28,7 @@ import Popover from '@/components/ui/Popover';
 import { MenuList } from '@/components/ui/ContextMenu';
 import { useActiveWorkspace, useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
+import { useSettings } from '@/store/settings';
 import { addWebArticle, createNewNote, pickAndImport } from '@/lib/workspace-actions';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +36,8 @@ function ArrangeMenu({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const canvas = useCanvas.getState;
+  const atPointer = useSettings((state) => state.newItemAtPointer);
+  const updateSettings = useSettings((state) => state.update);
 
   return (
     <>
@@ -60,6 +63,11 @@ function ArrangeMenu({ disabled }: { disabled: boolean }) {
               'separator',
               { label: 'Fit all in view', icon: <Maximize size={13} />, shortcut: 'Shift+1', onSelect: () => canvas().fitToContent() },
               { label: 'Minimize all', icon: <Minus size={13} />, onSelect: () => canvas().minimizeAll() },
+              'separator',
+              {
+                label: atPointer ? '✓ New items at pointer' : 'New items at pointer',
+                onSelect: () => updateSettings({ newItemAtPointer: !atPointer }),
+              },
             ]}
           />
         </div>

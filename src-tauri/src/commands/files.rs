@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::State;
 
-use crate::filesystem::{describe, list_study_files, FileType, StudyFile};
+use crate::filesystem::{describe, describe_absolute, list_study_files, FileType, StudyFile};
 use crate::paths::{
     sanitize_file_name, sanitize_stem, split_name, unique_in_dir, DOCUMENTS_DIR, NOTES_DIR,
 };
@@ -185,6 +185,76 @@ pub fn read_file_bytes(state: State<'_, AppState>, path: String) -> Result<Respo
     Ok(Response::new(bytes))
 }
 
+/// Metadata for a file at any absolute path on disk. Files the user keeps outside the
+/// workspace (recordings, notes in their own folders) are referenced in place, never
+/// copied, and this is how the library learns what they are.
+#[tauri::command(async)]
+pub fn stat_external_file(path: String) -> Result<Option<StudyFile>, String> {
+    let full = PathBuf::from(path.trim());
+    if !full.is_absolute() {
+        return Ok(None);
+    }
+    Ok(describe_absolute(&full))
+}
+
+/// Creates a note in an arbitrary absolute folder, without copying or moving anything
+/// into the workspace. The note lives where the user pointed and is referenced there.
+#[tauri::command(async)]
+pub fn create_external_note(
+    directory: String,
+    name: String,
+    content: String,
+) -> Result<StudyFile, String> {
+    let folder = PathBuf::from(directory.trim());
+    if !folder.is_absolute() || !folder.is_dir() {
+        return Err("Choose an existing folder on this device for the note.".into());
+    }
+    let requested = name.trim();
+    let stem = strip_extension_ignore_case(requested, "md")
+        .or_else(|| strip_extension_ignore_case(requested, "markdown"))
+        .unwrap_or(requested);
+    let file_name = format!("{}.md", sanitize_stem(stem));
+    let target = unique_in_dir(&folder, &file_name);
+    write_atomic(&target, content.as_bytes())?;
+    describe_absolute(&target).ok_or_else(|| "Could not read the new note back".into())
+}
+
+/// Renames a file at an absolute path in place, like `rename_workspace_file` but
+/// without any workspace restriction.
+#[tauri::command(async)]
+pub fn rename_external_file(path: String, new_name: String) -> Result<StudyFile, String> {
+    let from = PathBuf::from(path.trim());
+    if !from.is_absolute() || !from.is_file() {
+        return Err(format!("File not found: {path}"));
+    }
+    let parent = from
+        .parent()
+        .ok_or_else(|| "Invalid file location".to_string())?;
+    let current_name = from
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let requested = new_name.trim();
+    let name = match split_name(&current_name).1 {
+        Some(ext) => {
+            let stem = strip_extension_ignore_case(requested, &ext).unwrap_or(requested);
+            format!("{}.{ext}", sanitize_stem(stem))
+        }
+        None => sanitize_file_name(requested),
+    };
+    if name == current_name {
+        return describe_absolute(&from).ok_or_else(|| "Could not read file information".into());
+    }
+    let direct = parent.join(&name);
+    let target = if !direct.exists() || same_file(&from, &direct) {
+        direct
+    } else {
+        unique_in_dir(parent, &name)
+    };
+    std::fs::rename(&from, &target).map_err(|e| io_error(&path, e))?;
+    describe_absolute(&target).ok_or_else(|| "Could not read file information".into())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WriteTarget {
@@ -233,6 +303,23 @@ pub async fn write_file_bytes(
     };
     write_atomic(&full, data)?;
     describe_or_err(&state, &full)
+}
+
+/// Writes a user-selected external file. This is deliberately separate from
+/// `write_file_bytes`, whose paths are restricted to the app workspace.
+#[tauri::command]
+pub async fn write_external_file_bytes(request: Request<'_>) -> Result<(), String> {
+    let InvokeBody::Raw(body) = request.body() else {
+        return Err("Expected a binary payload".into());
+    };
+    let (target, data) = decode_frame(body)?;
+    let path = target.path.ok_or("The write target is missing")?;
+    let full = PathBuf::from(&path);
+    if !full.is_absolute() || !full.is_file() {
+        return Err("External file not found".into());
+    }
+    write_atomic(&full, data)
+        .map_err(|error| format!("Could not save external file {path}: {error}"))
 }
 
 fn same_content(a: &Path, b: &Path) -> bool {

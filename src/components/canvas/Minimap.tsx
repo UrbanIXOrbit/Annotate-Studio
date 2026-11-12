@@ -1,12 +1,19 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Map as MapIcon, X } from 'lucide-react';
-import { hiddenResourceIds, useActiveWorkspace, useCanvas, visibleWorldRect } from '@/store/canvas';
-import { cn } from '@/lib/utils';
+import { ZOOM_MAX, ZOOM_MIN, activeWorkspace, hiddenResourceIds, useActiveWorkspace, useCanvas, visibleWorldRect, type Resource } from '@/store/canvas';
+import { anchorPoint } from '@/lib/connectors';
+import { collapsedRect, frameRect } from '@/lib/groups';
+import { clamp, cn } from '@/lib/utils';
 
 const WIDTH = 196;
 const HEIGHT = 128;
+/** A window below this projected size is drawn at this size so it stays visible. */
+const MIN_SIZE = 4;
+/** How close to the map edge a held drag starts auto-panning, and how fast. */
+const EDGE_MARGIN = 16;
+const EDGE_SPEED = 520;
 
 interface MinimapLayout {
   bounds: { x: number; y: number; width: number; height: number };
@@ -19,11 +26,11 @@ export default function Minimap() {
   const workspace = useActiveWorkspace();
   const viewport = useCanvas((state) => state.viewport);
   const selectedId = useCanvas((state) => state.selectedId);
+  const selectedConnectorId = useCanvas((state) => state.selectedConnectorId);
   // Collapsed state lives in the canvas store so the M shortcut can toggle it
   const collapsed = useCanvas((state) => state.minimapCollapsed);
-  const [frozen, setFrozen] = useState<MinimapLayout | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const dragLayout = useRef<MinimapLayout | null>(null);
+  const edgeRef = useRef<{ x: number; y: number; dirX: number; dirY: number; last: number; raf: number } | null>(null);
 
   const visible = useMemo(() => {
     const tuckedAway = hiddenResourceIds(workspace);
@@ -32,21 +39,171 @@ export default function Minimap() {
   const view = workspace.view;
   const viewRect = visibleWorldRect(view, viewport);
 
-  const liveLayout = useMemo((): MinimapLayout => {
-    const rects = [...visible, viewRect];
-    const minX = Math.min(...rects.map((r) => r.x));
-    const minY = Math.min(...rects.map((r) => r.y));
-    const maxX = Math.max(...rects.map((r) => r.x + r.width));
-    const maxY = Math.max(...rects.map((r) => r.y + r.height));
+  /** Whether a window currently appears on screen — used to dim the rest on the map. */
+  const overlapsView = (r: { x: number; y: number; width: number; height: number }) =>
+    r.x < viewRect.x + viewRect.width && r.x + r.width > viewRect.x &&
+    r.y < viewRect.y + viewRect.height && r.y + r.height > viewRect.y;
+
+  // Bounds come from the content alone, so panning and zooming never rescale the
+  // map; the viewport rectangle is simply clamped to the surface when the view
+  // reaches past the content.
+  const layout = useMemo((): MinimapLayout => {
+    const minX = Math.min(...visible.map((r) => r.x));
+    const minY = Math.min(...visible.map((r) => r.y));
+    const maxX = Math.max(...visible.map((r) => r.x + r.width));
+    const maxY = Math.max(...visible.map((r) => r.y + r.height));
     const pad = 60;
     const bounds = { x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
     const scale = Math.min(WIDTH / bounds.width, HEIGHT / bounds.height);
     const offsetX = (WIDTH - bounds.width * scale) / 2;
     const offsetY = (HEIGHT - bounds.height * scale) / 2;
     return { bounds, scale, offsetX, offsetY };
-  }, [visible, viewRect.x, viewRect.y, viewRect.width, viewRect.height]);
+  }, [visible]);
 
-  const layout = frozen ?? liveLayout;
+  const byId = useMemo(() => new Map(visible.map((r) => [r.id, r])), [visible]);
+
+  /** Group frames, computed exactly like GroupLayer does (minimized members excluded). */
+  const groupFrames = useMemo(() => {
+    const rects = new Map(workspace.resources.filter((r) => !r.minimized).map((r) => [r.id, r]));
+    return workspace.groups.flatMap((group) => {
+      const boxes = group.members
+        .map((id) => rects.get(id))
+        .filter((r): r is Resource => !!r)
+        .map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
+      const frame = frameRect(boxes);
+      if (!frame) return [];
+      return [{ id: group.id, color: group.color, rect: group.collapsed ? collapsedRect(frame) : frame }];
+    });
+  }, [workspace.resources, workspace.groups]);
+
+  /** Connector lines between windows that are on the map. */
+  const connectorLines = useMemo(
+    () =>
+      workspace.connectors.flatMap((connector) => {
+        const from = byId.get(connector.from);
+        const to = byId.get(connector.to);
+        if (!from || !to) return [];
+        const fromBox = { x: from.x, y: from.y, width: from.width, height: from.height };
+        const toBox = { x: to.x, y: to.y, width: to.width, height: to.height };
+        return [{ id: connector.id, selected: connector.id === selectedConnectorId, from: anchorPoint(fromBox, connector.fromSide), to: anchorPoint(toBox, connector.toSide) }];
+      }),
+    [workspace.connectors, byId, selectedConnectorId],
+  );
+
+  const project = (r: { x: number; y: number; width: number; height: number }) => ({
+    left: layout.offsetX + (r.x - layout.bounds.x) * layout.scale,
+    top: layout.offsetY + (r.y - layout.bounds.y) * layout.scale,
+    width: Math.max(MIN_SIZE, r.width * layout.scale),
+    height: Math.max(MIN_SIZE, r.height * layout.scale),
+  });
+
+  const projectViewport = (r: { x: number; y: number; width: number; height: number }) => {
+    const p = project(r);
+    const width = Math.max(MIN_SIZE, Math.min(p.width, WIDTH));
+    const height = Math.max(MIN_SIZE, Math.min(p.height, HEIGHT));
+    return {
+      left: Math.max(0, Math.min(p.left, WIDTH - width)),
+      top: Math.max(0, Math.min(p.top, HEIGHT - height)),
+      width,
+      height,
+    };
+  };
+
+  const projectPoint = (p: { x: number; y: number }) => ({
+    x: layout.offsetX + (p.x - layout.bounds.x) * layout.scale,
+    y: layout.offsetY + (p.y - layout.bounds.y) * layout.scale,
+  });
+
+  const navigate = (clientX: number, clientY: number) => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const worldX = layout.bounds.x + (clientX - rect.left - layout.offsetX) / layout.scale;
+    const worldY = layout.bounds.y + (clientY - rect.top - layout.offsetY) / layout.scale;
+    const { zoom } = view;
+    useCanvas.getState().setView({ x: viewport.width / 2 - worldX * zoom, y: viewport.height / 2 - worldY * zoom, zoom });
+  };
+
+  // Holding a drag at (or past) the map edge keeps panning in that direction, so
+  // the minimap reaches empty canvas regions far outside the content too.
+  const stopEdgePan = () => {
+    const edge = edgeRef.current;
+    if (edge) cancelAnimationFrame(edge.raf);
+    edgeRef.current = null;
+  };
+
+  useEffect(() => () => stopEdgePan(), []);
+
+  // Wheel over the minimap pans the canvas view like wheeling the canvas itself;
+  // Ctrl/Cmd+wheel zooms, centred on the screen. A native listener so
+  // `preventDefault` works (React's wheel listeners are passive) and so the
+  // canvas handler doesn't also act on the same scroll.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const state = useCanvas.getState();
+      if (state.locked) return;
+      const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 128 : 1;
+      const dx = event.deltaX * factor;
+      const dy = event.deltaY * factor;
+      if (event.ctrlKey || event.metaKey) {
+        state.zoomAt(activeWorkspace(state).view.zoom * Math.min(2, Math.max(0.5, Math.exp(-dy * 0.0018))));
+        return;
+      }
+      const horizontal = event.shiftKey && dx === 0;
+      state.panBy(-(horizontal ? dy : dx), -(horizontal ? 0 : dy));
+    };
+    surface.addEventListener('wheel', onWheel, { passive: false });
+    return () => surface.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const updateEdgePan = (clientX: number, clientY: number, rect: DOMRect) => {
+    const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    const dirX = clientX < rect.left + EDGE_MARGIN ? -1 : clientX > rect.right - EDGE_MARGIN ? 1 : 0;
+    const dirY = clientY < rect.top + EDGE_MARGIN ? -1 : clientY > rect.bottom - EDGE_MARGIN ? 1 : 0;
+    if (!dirX && !dirY && inside) {
+      stopEdgePan();
+      return;
+    }
+    const edge = edgeRef.current;
+    if (edge && edge.dirX === dirX && edge.dirY === dirY) return;
+    stopEdgePan();
+    const virtual = { x: clientX, y: clientY, dirX, dirY, last: performance.now(), raf: 0 };
+    const tick = () => {
+      const current = edgeRef.current;
+      if (!current) return;
+      const now = performance.now();
+      current.x += (current.dirX * EDGE_SPEED * (now - current.last)) / 1000;
+      current.y += (current.dirY * EDGE_SPEED * (now - current.last)) / 1000;
+      current.last = now;
+      navigate(current.x, current.y);
+      current.raf = requestAnimationFrame(tick);
+    };
+    virtual.raf = requestAnimationFrame(tick);
+    edgeRef.current = virtual;
+  };
+
+  /** Zoom so the resource fills the screen, centred like `focusResource` does. */
+  const zoomToResource = (resource: Resource) => {
+    const state = useCanvas.getState();
+    const zoom = clamp(Math.min((viewport.width - 96) / resource.width, (viewport.height - 96) / resource.height), ZOOM_MIN, ZOOM_MAX);
+    state.setView({
+      x: viewport.width / 2 - (resource.x + resource.width / 2) * zoom,
+      y: viewport.height / 2 - (resource.y + resource.height / 2) * zoom,
+      zoom,
+    });
+  };
+
+  /** Keyboard panning for the focused map: arrows move the view, Shift makes bigger steps. */
+  const panByKey = (key: string, fast: boolean) => {
+    const step = (fast ? 320 : 100) / view.zoom; // world units
+    const dx = key === 'arrowright' ? -step : key === 'arrowleft' ? step : 0;
+    const dy = key === 'arrowdown' ? -step : key === 'arrowup' ? step : 0;
+    if (dx || dy) useCanvas.getState().setView({ x: view.x + dx, y: view.y + dy, zoom: view.zoom });
+  };
 
   if (visible.length === 0) return null;
 
@@ -58,56 +215,96 @@ export default function Minimap() {
     );
   }
 
-  const project = (r: { x: number; y: number; width: number; height: number }) => ({
-    left: layout.offsetX + (r.x - layout.bounds.x) * layout.scale,
-    top: layout.offsetY + (r.y - layout.bounds.y) * layout.scale,
-    width: Math.max(2, r.width * layout.scale),
-    height: Math.max(2, r.height * layout.scale),
-  });
-
-  const navigate = (clientX: number, clientY: number, mapping: MinimapLayout) => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    const rect = surface.getBoundingClientRect();
-    const worldX = mapping.bounds.x + (clientX - rect.left - mapping.offsetX) / mapping.scale;
-    const worldY = mapping.bounds.y + (clientY - rect.top - mapping.offsetY) / mapping.scale;
-    const { zoom } = view;
-    useCanvas.getState().setView({ x: viewport.width / 2 - worldX * zoom, y: viewport.height / 2 - worldY * zoom, zoom });
-  };
-
-  const endDrag = () => {
-    dragLayout.current = null;
-    setFrozen(null);
-  };
-
   return (
     <div className="minimap" data-canvas-ui onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
       <div
         ref={surfaceRef}
         className="minimap-surface"
         style={{ width: WIDTH, height: HEIGHT }}
+        tabIndex={0}
+        role="application"
+        aria-label="Minimap. Arrow keys pan the view; hold Shift for bigger steps. Click a window to focus it."
+        onKeyDown={(event) => {
+          const key = event.key.toLowerCase();
+          if (!['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!useCanvas.getState().locked) panByKey(key, event.shiftKey);
+        }}
         onPointerDown={(event) => {
           if (event.button !== 0 || useCanvas.getState().locked) return;
           event.currentTarget.setPointerCapture(event.pointerId);
-          dragLayout.current = liveLayout;
-          setFrozen(liveLayout);
-          navigate(event.clientX, event.clientY, liveLayout);
+          stopEdgePan();
+          navigate(event.clientX, event.clientY);
         }}
         onPointerMove={(event) => {
-          const mapping = dragLayout.current;
-          if (mapping && event.currentTarget.hasPointerCapture(event.pointerId)) navigate(event.clientX, event.clientY, mapping);
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          navigate(event.clientX, event.clientY);
+          updateEdgePan(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
         }}
-        onPointerUp={endDrag}
-        onLostPointerCapture={endDrag}
+        onLostPointerCapture={stopEdgePan}
       >
-        {visible.map((resource) => (
-          <div
-            key={resource.id}
-            className={cn('minimap-window', `minimap-${resource.type}`, resource.id === selectedId && 'minimap-selected')}
-            style={project(resource)}
-          />
-        ))}
-        <div className="minimap-viewport" style={project(viewRect)} />
+        <svg className="minimap-groups" width={WIDTH} height={HEIGHT} aria-hidden="true">
+          {groupFrames.map((frame) => {
+            const box = projectViewport(frame.rect);
+            return (
+              <rect
+                key={frame.id}
+                className="minimap-group"
+                x={box.left}
+                y={box.top}
+                width={Math.max(MIN_SIZE, box.width)}
+                height={Math.max(MIN_SIZE, box.height)}
+                rx={2}
+                stroke={frame.color}
+                fill={frame.color}
+              />
+            );
+          })}
+        </svg>
+        {visible.map((resource) => {
+          const floored = resource.width * layout.scale < MIN_SIZE || resource.height * layout.scale < MIN_SIZE;
+          return (
+            <div
+              key={resource.id}
+              className={cn(
+                'minimap-window',
+                `minimap-${resource.type}`,
+                !overlapsView(resource) && 'minimap-out',
+                floored && 'minimap-tiny',
+                resource.id === selectedId && 'minimap-selected',
+              )}
+              style={project(resource)}
+              title={resource.title}
+              onPointerDown={(event) => {
+                if (event.button !== 0 || useCanvas.getState().locked) return;
+                event.stopPropagation();
+                useCanvas.getState().focusResource(resource.id);
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                zoomToResource(resource);
+              }}
+            />
+          );
+        })}
+        <svg className="minimap-links" width={WIDTH} height={HEIGHT} aria-hidden="true">
+          {connectorLines.map((line) => {
+            const a = projectPoint(line.from);
+            const b = projectPoint(line.to);
+            return (
+              <line
+                key={line.id}
+                className={cn('minimap-link', line.selected && 'minimap-link-selected')}
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+              />
+            );
+          })}
+        </svg>
+        <div className="minimap-viewport" style={projectViewport(viewRect)} />
       </div>
       <button type="button" className="minimap-close" onClick={() => useCanvas.getState().setMinimapCollapsed(true)} title="Hide minimap (M)" aria-label="Hide minimap">
         <X size={11} />

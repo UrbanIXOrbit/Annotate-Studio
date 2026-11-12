@@ -10,6 +10,7 @@ import {
   FileType2,
   Film,
   FolderOpen,
+  Headphones,
   Layers,
   MoreHorizontal,
   NotebookPen,
@@ -38,9 +39,9 @@ import {
   resourceTypeFor,
   revealInExplorer,
 } from '@/lib/workspace-actions';
-import { cn, formatBytes, formatRelativeTime, stripExtension } from '@/lib/utils';
+import { cn, formatBytes, formatRelativeTime, isExternalPath, stripExtension } from '@/lib/utils';
 
-type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'books' | 'videos' | 'documents';
+type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'audio' | 'books' | 'videos' | 'documents';
 type Sort = 'recent' | 'modified' | 'name' | 'size';
 
 const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
@@ -48,6 +49,7 @@ const FILTERS: { id: Filter; label: string; types: FileType[] }[] = [
   { id: 'pdf', label: 'PDFs', types: ['Pdf'] },
   { id: 'notes', label: 'Notes', types: ['Markdown', 'Text'] },
   { id: 'images', label: 'Images', types: ['Image'] },
+  { id: 'audio', label: 'Audio', types: ['Audio'] },
   { id: 'books', label: 'Books', types: ['Book'] },
   { id: 'videos', label: 'Videos', types: ['Video'] },
   { id: 'documents', label: 'Documents', types: ['Document'] },
@@ -60,6 +62,7 @@ const TYPE_META: Record<FileType, { label: string; icon: React.ReactNode; tone: 
   Image: { label: 'Image', icon: <FileImage size={26} />, tone: 'tone-green' },
   Book: { label: 'Book', icon: <BookOpen size={26} />, tone: 'tone-amber' },
   Video: { label: 'Video', icon: <Film size={26} />, tone: 'tone-violet' },
+  Audio: { label: 'Audio', icon: <Headphones size={26} />, tone: 'tone-teal' },
   Document: { label: 'Doc', icon: <FileType2 size={26} />, tone: 'tone-violet' },
   Unknown: { label: 'File', icon: <FileText size={26} />, tone: 'tone-slate' },
 };
@@ -118,10 +121,13 @@ export default function LibraryTab() {
   };
 
   const remove = async (file: StudyFile) => {
+    const external = isExternalPath(file.path);
     const ok = await confirmDialog({
-      title: `Delete “${file.name}”?`,
-      message: 'The file is removed from your workspace and closed on every canvas. This cannot be undone.',
-      confirmLabel: 'Delete file',
+      title: external ? `Remove “${file.name}” from the library?` : `Delete “${file.name}”?`,
+      message: external
+        ? 'The file stays on your device at its own path; only the library reference is removed. This cannot be undone here.'
+        : 'The file is removed from your workspace and closed on every canvas. This cannot be undone.',
+      confirmLabel: external ? 'Remove from library' : 'Delete file',
       danger: true,
     });
     if (ok) await deleteFile(file.path);
@@ -130,7 +136,7 @@ export default function LibraryTab() {
   const menuFor = (file: StudyFile): MenuEntry[] => {
     const items: MenuEntry[] = [];
     if (resourceTypeFor(file)) items.push({ label: 'Open on canvas', icon: <ExternalLink size={13} />, onSelect: () => open(file) });
-    if (file.file_type !== 'Image') {
+    if (file.file_type !== 'Image' && file.file_type !== 'Audio') {
       items.push(
         { label: 'Summarize with AI', icon: <ScrollText size={13} />, onSelect: () => requestChat({ kind: 'summarize', title: file.name, path: file.path }) },
         { label: 'Explain step by step', icon: <BookOpenCheck size={13} />, onSelect: () => requestChat({ kind: 'explain', topic: displayTitle(file), path: file.path }) },
@@ -141,8 +147,12 @@ export default function LibraryTab() {
       items.push('separator', ...noteExportMenu(async () => ({ title: file.name, content: await currentNoteText(file.path) }), 'Export as '));
     }
     items.push('separator', { label: 'View in explorer', icon: <FolderOpen size={13} />, onSelect: () => void revealInExplorer(file.path) });
-    items.push({ label: 'Rename…', icon: <Pencil size={13} />, onSelect: () => void rename(file) });
-    items.push({ label: 'Delete…', icon: <Trash2 size={13} />, danger: true, onSelect: () => void remove(file) });
+    items.push(
+      { label: 'Rename…', icon: <Pencil size={13} />, onSelect: () => void rename(file) },
+      isExternalPath(file.path)
+        ? { label: 'Remove from library', icon: <Trash2 size={13} />, danger: true, onSelect: () => void remove(file) }
+        : { label: 'Delete…', icon: <Trash2 size={13} />, danger: true, onSelect: () => void remove(file) },
+    );
     return items;
   };
 
@@ -199,7 +209,7 @@ export default function LibraryTab() {
         <div className="empty-state">
           <FolderOpen size={40} strokeWidth={1.4} />
           <h2>{query || filter !== 'all' ? 'No matching files' : 'Your library is empty'}</h2>
-          <p>{query || filter !== 'all' ? 'Try another search or filter.' : 'Import PDFs, images or notes, or drop them onto the window.'}</p>
+          <p>{query || filter !== 'all' ? 'Try another search or filter.' : 'Import PDFs, audio, images or notes, or drop them onto the window.'}</p>
         </div>
       ) : (
         <div className="library-grid">

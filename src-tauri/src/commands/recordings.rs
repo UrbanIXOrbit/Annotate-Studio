@@ -107,7 +107,12 @@ fn patch_wav_header(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn writer_task(path: PathBuf, mut out: BufWriter<File>, receiver: mpsc::Receiver<SampleMessage>, finished: mpsc::Sender<Result<(), String>>) {
+fn writer_task(
+    path: PathBuf,
+    mut out: BufWriter<File>,
+    receiver: mpsc::Receiver<SampleMessage>,
+    finished: mpsc::Sender<Result<(), String>>,
+) {
     let mut discard = false;
     let outcome = loop {
         match receiver.recv() {
@@ -214,7 +219,10 @@ fn pick_input_device(host: &Host) -> Result<(Device, String), String> {
     let default = host.default_input_device();
     let default_name = default.as_ref().and_then(|device| device.name().ok());
     let mut best: Option<(i64, Device, String)> = None;
-    for device in host.input_devices().map_err(|error| format!("Could not list microphones: {error}"))? {
+    for device in host
+        .input_devices()
+        .map_err(|error| format!("Could not list microphones: {error}"))?
+    {
         let name = device.name().unwrap_or_default();
         let lower = name.to_lowercase();
         let score: i64 = if appears_virtual(&lower) {
@@ -331,7 +339,13 @@ fn recorder_run(
         return;
     }
 
-    let stream = match open_mic_stream(&device, &config, supported.sample_format(), Arc::clone(&stopped), sample_tx.clone()) {
+    let stream = match open_mic_stream(
+        &device,
+        &config,
+        supported.sample_format(),
+        Arc::clone(&stopped),
+        sample_tx.clone(),
+    ) {
         Ok(stream) => stream,
         Err(message) => {
             stopped.store(true, Ordering::Relaxed);
@@ -344,7 +358,9 @@ fn recorder_run(
         stopped.store(true, Ordering::Relaxed);
         let _ = stream.pause();
         let _ = sample_tx.send(SampleMessage::Abort);
-        let _ = start_tx.send(Err(format!("Could not start microphone recording: {error}")));
+        let _ = start_tx.send(Err(format!(
+            "Could not start microphone recording: {error}"
+        )));
         return;
     }
 
@@ -380,9 +396,9 @@ fn recorder_run(
                 drop(stream);
                 let finish = sample_tx.send(SampleMessage::Finish);
                 let outcome = if finish.is_ok() {
-                    finished_rx
-                        .recv()
-                        .unwrap_or_else(|_| Err("The recording writer stopped unexpectedly.".into()))
+                    finished_rx.recv().unwrap_or_else(|_| {
+                        Err("The recording writer stopped unexpectedly.".into())
+                    })
                 } else {
                     Err("The recording writer stopped unexpectedly.".into())
                 };

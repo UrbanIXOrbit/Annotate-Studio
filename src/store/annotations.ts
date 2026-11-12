@@ -1,7 +1,9 @@
 import { create } from 'zustand';
-import { scanPdfFile } from '@/lib/annotation-scan';
+import { scanBookFile, scanPdfFile } from '@/lib/annotation-scan';
 import { ALL_GROUPS, type BookAnnotations, type KindGroup } from '@/lib/annotations';
 import type { StudyFile } from '@/lib/tauri-commands';
+
+export type AnnotationFile = StudyFile & { isExternal?: boolean };
 
 export interface BookState {
   /** Identity of the file version this result belongs to. A changed key means "scan again". */
@@ -20,23 +22,26 @@ interface AnnotationsStore {
   hideEmpty: boolean;
   scanning: boolean;
   progress: { done: number; total: number };
+  revision: number;
   select: (selected: string) => void;
   setQuery: (query: string) => void;
   toggleGroup: (group: KindGroup) => void;
   setHideEmpty: (hide: boolean) => void;
-  scan: (files: StudyFile[], options?: { force?: boolean }) => Promise<void>;
+  scan: (files: AnnotationFile[], options?: { force?: boolean }) => Promise<void>;
+  /** Mark a saved PDF stale; AnnotationsTab will pick it up on its next render. */
+  invalidate: (path: string) => void;
 }
 
-export function fileKey(file: Pick<StudyFile, 'path' | 'modified_at' | 'size'>): string {
-  return `${file.path}|${file.modified_at}|${file.size}`;
+export function fileKey(file: Pick<AnnotationFile, 'path' | 'modified_at' | 'size' | 'isExternal'>): string {
+  return `${file.path}|${file.modified_at}|${file.size}|${file.isExternal ? 'external' : 'workspace'}`;
 }
 
 let chain: Promise<void> = Promise.resolve();
 
 export const useAnnotations = create<AnnotationsStore>((set, get) => {
-  async function run(files: StudyFile[], force: boolean) {
-    const pdfs = files.filter((file) => file.file_type === 'Pdf');
-    const stale = pdfs.filter((file) => force || get().books[file.path]?.key !== fileKey(file));
+  async function run(files: AnnotationFile[], force: boolean) {
+    const scanned = files.filter((file) => file.file_type === 'Pdf' || file.file_type === 'Book');
+    const stale = scanned.filter((file) => force || get().books[file.path]?.key !== fileKey(file));
     if (stale.length === 0) return;
 
     // The book you are looking at is scanned first so it fills in immediately.
@@ -51,7 +56,7 @@ export const useAnnotations = create<AnnotationsStore>((set, get) => {
         books: { ...state.books, [file.path]: { key, status: 'scanning', data: state.books[file.path]?.data } },
       }));
       try {
-        const data = await scanPdfFile(file);
+        const data = file.file_type === 'Book' ? await scanBookFile(file) : await scanPdfFile(file);
         set((state) => ({ books: { ...state.books, [file.path]: { key, status: 'done', data } } }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -71,6 +76,7 @@ export const useAnnotations = create<AnnotationsStore>((set, get) => {
     hideEmpty: true,
     scanning: false,
     progress: { done: 0, total: 0 },
+    revision: 0,
     select: (selected) => set({ selected }),
     setQuery: (query) => set({ query }),
     toggleGroup: (group) => set((state) => ({ groups: { ...state.groups, [group]: !state.groups[group] } })),
@@ -80,5 +86,12 @@ export const useAnnotations = create<AnnotationsStore>((set, get) => {
       chain = chain.then(() => run(files, options?.force ?? false)).catch(() => set({ scanning: false }));
       return chain;
     },
+    invalidate: (path) => set((state) => {
+      const existing = state.books[path];
+      return {
+        revision: state.revision + 1,
+        ...(existing ? { books: { ...state.books, [path]: { ...existing, key: '' } } } : {}),
+      };
+    }),
   };
 });

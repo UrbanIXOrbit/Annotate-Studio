@@ -1028,6 +1028,11 @@ input[type='checkbox'] {
   background: color-mix(in srgb, #7c3aed 12%, var(--bg-card));
 }
 
+.tone-teal {
+  color: #0d9488;
+  background: color-mix(in srgb, #0d9488 12%, var(--bg-card));
+}
+
 .tone-amber {
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 14%, var(--bg-card));
@@ -1822,6 +1827,12 @@ input[type='checkbox'] {
   border-radius: 6px;
   background: var(--bg-surface);
   cursor: pointer;
+  touch-action: none;
+}
+
+.minimap-surface:focus-visible {
+  outline: 1.5px solid var(--primary);
+  outline-offset: -1.5px;
 }
 
 .minimap-window {
@@ -1842,8 +1853,66 @@ input[type='checkbox'] {
   background: color-mix(in srgb, var(--success) 45%, var(--bg-surface));
 }
 
+.minimap-book {
+  background: color-mix(in srgb, #d97706 45%, var(--bg-surface));
+}
+
+.minimap-audiobook {
+  background: color-mix(in srgb, #7c3aed 45%, var(--bg-surface));
+}
+
+.minimap-video {
+  background: color-mix(in srgb, var(--info) 55%, var(--bg-surface));
+}
+
+.minimap-article {
+  background: color-mix(in srgb, #64748b 50%, var(--bg-surface));
+}
+
+.minimap-recorder {
+  background: color-mix(in srgb, #ec4899 50%, var(--bg-surface));
+}
+
 .minimap-selected {
   outline: 1.5px solid var(--text-primary);
+}
+
+/* Windows currently off-screen fade back; the selected one stays clearer. */
+.minimap-out {
+  opacity: 0.35;
+}
+
+.minimap-out.minimap-selected {
+  opacity: 0.75;
+}
+
+/* Windows drawn below the floor size get a ring so they still read as dots. */
+.minimap-tiny {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 60%, transparent);
+}
+
+/* Group frames sit under the windows; connectors sit above them. */
+.minimap-groups,
+.minimap-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.minimap-group {
+  fill-opacity: 0.12;
+  stroke-opacity: 0.55;
+  stroke-width: 1.5;
+}
+
+.minimap-link {
+  stroke: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  stroke-width: 1;
+}
+
+.minimap-link-selected {
+  stroke: var(--primary);
+  stroke-width: 1.5;
 }
 
 .minimap-viewport {

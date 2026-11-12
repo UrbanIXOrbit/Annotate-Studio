@@ -36,6 +36,12 @@ export function extensionOf(name: string): string {
   return index > 0 ? name.slice(index + 1).toLowerCase() : '';
 }
 
+/** Whether a path is absolute on the user's device (POSIX root, Windows drive or UNC) —
+ * i.e. a file kept outside the app workspace and referenced there. */
+export function isExternalPath(path: string): boolean {
+  return /^([a-zA-Z]:[\\/]|[/\\])/.test(path);
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];

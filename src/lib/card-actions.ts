@@ -18,6 +18,20 @@ export function openPdfAtPage(path: string, page: number, fallbackTitle = 'PDF')
   return true;
 }
 
+/** Focus (or open) an e-book on the canvas at an annotation's CFI location. Returns false if the file is gone. */
+export function openBookAtCfi(path: string, cfi: string, fallbackTitle = 'Book'): boolean {
+  const library = useLibrary.getState();
+  const file = library.files.find((candidate) => candidate.path === path);
+  if (library.loaded && !file) {
+    toast.warning('Source book not found', 'It may have been moved or deleted from your library.');
+    return false;
+  }
+  if (file) openFileOnCanvas(file);
+  else useCanvas.getState().openResource({ type: 'book', title: fallbackTitle, filePath: path });
+  usePdfNav.getState().request(path, 1, cfi);
+  return true;
+}
+
 /** Focus (or open) the source document of a highlight card and scroll it to the quote. */
 export function openCardSource(source: CardSource): void {
   if (!source.cfi) {

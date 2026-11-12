@@ -22,6 +22,8 @@ import {
 import { useLibrary } from '@/store/library';
 import { useApp } from '@/store/app';
 import { useAnnotations } from '@/store/annotations';
+import type { AnnotationFile } from '@/store/annotations';
+import { useCanvas } from '@/store/canvas';
 import { toast } from '@/store/toast';
 import {
   KIND_GROUPS,
@@ -38,8 +40,9 @@ import {
 } from '@/lib/annotations';
 import { FORMAT_META, type ExportFormat } from '@/lib/annotation-export';
 import { exportReport } from '@/lib/export-file';
-import { openPdfAtPage } from '@/lib/card-actions';
-import { cn, copyText, stripExtension } from '@/lib/utils';
+import { openBookAtCfi, openPdfAtPage } from '@/lib/card-actions';
+import { baseName, cn, copyText, stripExtension } from '@/lib/utils';
+import { locationLabel } from '@/lib/annotations';
 
 const KIND_ICON: Record<AnnotationKind, React.ReactNode> = {
   highlight: <Highlighter size={13} />,
@@ -104,22 +107,41 @@ function AnnotationRow({ entry, onOpen }: { entry: AnnotationEntry; onOpen: () =
 export default function AnnotationsTab() {
   const files = useLibrary((state) => state.files);
   const libraryLoaded = useLibrary((state) => state.loaded);
+  const canvasWorkspaces = useCanvas((state) => state.workspaces);
+  const externalDocs = useMemo(() =>
+    canvasWorkspaces.flatMap((workspace) => workspace.resources
+      .filter((resource) => (resource.type === 'pdf' || resource.type === 'book') && resource.isExternal && !!resource.filePath)
+      .map((resource) => ({ path: resource.filePath!, type: resource.type }))),
+  [canvasWorkspaces]);
   const setView = useApp((state) => state.setView);
-  const { books, selected, groups, query, hideEmpty, scanning, progress, select, setQuery, toggleGroup, setHideEmpty, scan } = useAnnotations();
+  const { books, selected, groups, query, hideEmpty, scanning, progress, revision, select, setQuery, toggleGroup, setHideEmpty, scan } = useAnnotations();
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
 
-  const pdfs = useMemo(() => files.filter((file) => file.file_type === 'Pdf'), [files]);
+  const scannable = useMemo<AnnotationFile[]>(() => {
+    const inLibrary: AnnotationFile[] = files.filter((file) => file.file_type === 'Pdf' || file.file_type === 'Book');
+    const outsideWorkspace: AnnotationFile[] = externalDocs.map(({ path, type }) => ({
+      id: `external:${path}`,
+      name: baseName(path),
+      path,
+      file_type: type === 'book' ? 'Book' : 'Pdf',
+      size: 0,
+      created_at: '',
+      modified_at: '',
+      isExternal: true,
+    }));
+    return [...new Map([...inLibrary, ...outsideWorkspace].map((file) => [file.path, file])).values()];
+  }, [externalDocs, files]);
 
   useEffect(() => {
-    void scan(pdfs);
-  }, [pdfs, scan]);
+    void scan(scannable);
+  }, [scannable, revision, scan]);
 
   const rows = useMemo(
     () =>
-      pdfs
+      scannable
         .map((file) => ({ file, title: stripExtension(file.name), state: books[file.path] }))
         .sort(compareBooks),
-    [pdfs, books],
+    [scannable, books],
   );
 
   const active = selected === 'all' || rows.some((row) => row.file.path === selected) ? selected : 'all';
@@ -147,8 +169,21 @@ export default function AnnotationsTab() {
   const waiting = rows.some((row) => row.state?.status === 'scanning' || !row.state);
   const activeTitle = active === 'all' ? 'All books' : (rows.find((row) => row.file.path === active)?.title ?? 'Annotations');
 
-  const openPage = (book: BookAnnotations, page: number) => {
-    if (openPdfAtPage(book.path, page, book.title)) setView('canvas');
+  /** Jump to an annotation: e-books by their saved CFI location, PDFs by page. */
+  const openAnnotation = (book: BookAnnotations, entry: AnnotationEntry) => {
+    const opened = entry.cfi
+      ? openBookAtCfi(book.path, entry.cfi, book.title)
+      : openPdfAtPage(book.path, entry.page, book.title);
+    if (opened) setView('canvas');
+  };
+
+  const openGroup = (book: BookAnnotations, entries: AnnotationEntry[]) => {
+    const withCfi = entries.find((entry) => entry.cfi);
+    if (withCfi?.cfi) {
+      if (openBookAtCfi(book.path, withCfi.cfi, book.title)) setView('canvas');
+      return;
+    }
+    if (openPdfAtPage(book.path, entries[0]?.page ?? 1, book.title)) setView('canvas');
   };
 
   const exportAs = async (format: ExportFormat) => {
@@ -177,11 +212,11 @@ export default function AnnotationsTab() {
 
   const subtitle = !libraryLoaded
     ? 'Loading your library…'
-    : pdfs.length === 0
-      ? 'No PDFs in your library yet'
+    : scannable.length === 0
+      ? 'No PDFs or e-books in your library yet'
       : scanning
         ? `Reading annotations… ${progress.done} of ${progress.total} books`
-        : `${totalAll} annotation${totalAll === 1 ? '' : 's'} across ${rows.filter((row) => (row.state?.data?.entries.length ?? 0) > 0).length} of ${pdfs.length} book${pdfs.length === 1 ? '' : 's'}`;
+        : `${totalAll} annotation${totalAll === 1 ? '' : 's'} across ${rows.filter((row) => (row.state?.data?.entries.length ?? 0) > 0).length} of ${scannable.length} book${scannable.length === 1 ? '' : 's'}`;
 
   return (
     <div className="page">
@@ -191,7 +226,7 @@ export default function AnnotationsTab() {
           <p>{subtitle}</p>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => void scan(pdfs, { force: true })} title="Re-read all PDFs" disabled={scanning}>
+          <button type="button" className="btn btn-ghost" onClick={() => void scan(scannable, { force: true })} title="Re-read all PDFs and e-books" disabled={scanning}>
             <RefreshCw size={15} className={scanning ? 'spin' : undefined} />
           </button>
           {EXPORT_FORMATS.map((format) => (
@@ -209,11 +244,11 @@ export default function AnnotationsTab() {
         </div>
       </header>
 
-      {pdfs.length === 0 ? (
+      {scannable.length === 0 ? (
         <div className="anno-empty-state">
           <Highlighter size={30} />
           <h2>Nothing to show yet</h2>
-          <p>Import a PDF, highlight or annotate it, and every annotation will be collected here, book by book and page by page.</p>
+          <p>Import a PDF or e-book, highlight or annotate it, and every annotation will be collected here, book by book and page by page.</p>
           <button type="button" className="btn btn-primary" onClick={() => setView('library')}>
             Go to Library
           </button>
@@ -235,7 +270,7 @@ export default function AnnotationsTab() {
                   type="button"
                   className={cn('anno-book-row', active === row.file.path && 'active', row.state?.status === 'done' && count === 0 && 'dim')}
                   onClick={() => select(row.file.path)}
-                  title={row.state?.status === 'error' ? `Could not read this PDF: ${row.state.error}` : row.file.name}
+                  title={row.state?.status === 'error' ? `Could not read this file: ${row.state.error}` : row.file.name}
                 >
                   <FileText size={15} />
                   <span className="anno-book-name">{row.title}</span>
@@ -286,7 +321,7 @@ export default function AnnotationsTab() {
                 {waiting && scoped.length === 0 ? (
                   <>
                     <RefreshCw size={26} className="spin" />
-                    <h2>Reading your PDFs…</h2>
+                    <h2>Reading your books…</h2>
                   </>
                 ) : filtering && scopeEntries.length > 0 ? (
                   <>
@@ -298,7 +333,7 @@ export default function AnnotationsTab() {
                   <>
                     <Highlighter size={30} />
                     <h2>{active === 'all' ? 'No annotations yet' : 'No annotations in this book'}</h2>
-                    <p>Open a PDF on the canvas and highlight text or add a note. It will appear here automatically.</p>
+                    <p>Open a PDF or e-book on the canvas and highlight text. It will appear here automatically.</p>
                   </>
                 )}
               </div>
@@ -312,12 +347,12 @@ export default function AnnotationsTab() {
                   </header>
                   {pages.map((group) => (
                     <div key={group.page} className="anno-page">
-                      <button type="button" className="anno-page-title" onClick={() => openPage(book, group.page)} title="Open this page">
-                        Page {group.page} <ExternalLink size={12} />
+                      <button type="button" className="anno-page-title" onClick={() => openGroup(book, group.entries)} title="Open this location">
+                        {locationLabel(book, group.page)} <ExternalLink size={12} />
                       </button>
                       <div className="anno-list">
                         {group.entries.map((entry) => (
-                          <AnnotationRow key={entry.id} entry={entry} onOpen={() => openPage(book, entry.page)} />
+                          <AnnotationRow key={entry.id} entry={entry} onOpen={() => openAnnotation(book, entry)} />
                         ))}
                       </div>
                     </div>

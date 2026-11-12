@@ -7,9 +7,11 @@ import { findFreeSpot, placeBeside, revealRect } from '@/lib/placement';
 import { bookLabel } from '@/lib/note-clip';
 import { isDefaultView, mergePdfView, migratePdfViews, pruneViews, removePdfView, renamePdfView, type PdfViewState } from '@/lib/pdf-view';
 import { mergeBookView, migrateBookViews, pruneBookViews, removeBookView, renameBookView, type BookViewState } from '@/lib/book-view';
-import { clamp, uid } from '@/lib/utils';
-import { LAYOUT } from '@/lib/layout';
+import { clamp, isExternalPath, uid } from '@/lib/utils';
 import { estimateCardSize, planCardPosition } from '@/lib/cards';
+import { canvasPointer, pointerOverCanvas } from '@/lib/canvas-pointer';
+import { useLibrary } from '@/store/library';
+import { useSettings } from '@/store/settings';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
 export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book' | 'audiobook' | 'video' | 'article' | 'recorder';
@@ -96,6 +98,22 @@ export const MIN_WINDOW_HEIGHT = 180;
 const HISTORY_LIMIT = 100;
 const DEFAULT_VIEW: CanvasView = { x: 0, y: 0, zoom: 1 };
 
+/** Bump whenever the persisted shape changes; `migrateCanvasState` reads it off the saved file. */
+export const CANVAS_STATE_VERSION = 2;
+
+type CanvasPayload = Record<string, unknown>;
+type CanvasMigration = (state: CanvasPayload) => CanvasPayload;
+
+/**
+ * Migrations operate on untrusted persisted JSON before the normal validators
+ * below turn it into typed workspace data. Keep each entry small and additive.
+ */
+const canvasMigrations: Record<number, CanvasMigration> = {
+  // Version 1 had no explicit version marker. Its shape is already understood
+  // by the normalizers, so this migration only records the schema boundary.
+  1: (state) => ({ ...state, version: 2 }),
+};
+
 export const DEFAULT_SIZES: Record<ResourceType, { width: number; height: number }> = {
   pdf: { width: 760, height: 880 },
   note: { width: 680, height: 560 },
@@ -156,24 +174,66 @@ export interface ConnectorInput {
   toSide: Side;
 }
 
-export interface CanvasStore {
-  hydrated: boolean;
-  workspaces: Workspace[];
-  activeWorkspaceId: string;
-  /** Where you were in each PDF (page, scroll position, zoom, pen settings), keyed by file path. */
-  pdfViews: Record<string, PdfViewState>;
-  /** Where you were in each e-book (CFI anchor), keyed by file path. */
-  bookViews: Record<string, BookViewState>;
-  selectedId: string | null;
-  /** Every selected window; `selectedId` is the one you touched last. */
-  selectedIds: string[];
-  selectedConnectorId: string | null;
+// ───────── Store slices ─────────
+// The state shape stays flat (so every selector like `s.selectedIds` keeps working),
+// but the store is authored as independent slices: each slice owns its state and its
+// actions, and they are merged into one store below.
+
+/** Transient canvas chrome: lock, minimap and viewport size. */
+export interface UiSlice {
   locked: boolean;
   /** Minimap hidden by the user (toggle button or M). Transient, like `locked`. */
   minimapCollapsed: boolean;
   viewport: { width: number; height: number };
-  past: Resource[][];
-  future: Resource[][];
+  setLocked: (locked: boolean) => void;
+  setMinimapCollapsed: (collapsed: boolean) => void;
+  setViewport: (size: { width: number; height: number }) => void;
+}
+
+/** What the user has chosen: the last-touched window and the whole multi-selection. */
+export interface SelectionSlice {
+  selectedId: string | null;
+  /** Every selected window; `selectedId` is the one you touched last. */
+  selectedIds: string[];
+  selectedConnectorId: string | null;
+  selectConnector: (id: string | null) => void;
+  select: (id: string | null) => void;
+  toggleSelect: (id: string) => void;
+  selectMany: (ids: string[], additive?: boolean) => void;
+  selectAllCards: () => void;
+}
+
+/** One changed resource, rather than a copy of the entire canvas. */
+export interface ResourcePatch {
+  id: string;
+  before: Resource | null;
+  after: Resource | null;
+  beforeIndex: number;
+  afterIndex: number;
+}
+
+/** Undo/redo changes for the active workspace. */
+export interface HistorySlice {
+  past: ResourcePatch[][];
+  future: ResourcePatch[][];
+  undo: () => void;
+  redo: () => void;
+}
+
+/** Where you were in each document, keyed by file path. */
+export interface ViewsSlice {
+  /** Where you were in each PDF (page, scroll position, zoom, pen settings), keyed by file path. */
+  pdfViews: Record<string, PdfViewState>;
+  /** Where you were in each e-book (CFI anchor), keyed by file path. */
+  bookViews: Record<string, BookViewState>;
+  setPdfView: (path: string, patch: Partial<Omit<PdfViewState, 'updatedAt'>>) => void;
+  setBookView: (path: string, patch: Partial<Omit<BookViewState, 'updatedAt'>>) => void;
+}
+
+/** Workspaces and everything inside them: windows, cards, connectors, groups, view. */
+export interface WorkspacesSlice {
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
   hydrate: () => Promise<void>;
   switchWorkspace: (id: string) => void;
   createWorkspace: (name: string) => void;
@@ -185,18 +245,11 @@ export interface CanvasStore {
   resetZoom: () => void;
   fitToContent: (ids?: string[]) => void;
   focusResource: (id: string) => void;
-  setViewport: (size: { width: number; height: number }) => void;
-  setLocked: (locked: boolean) => void;
-  setMinimapCollapsed: (collapsed: boolean) => void;
   openResource: (input: OpenResourceInput, options?: OpenOptions) => string;
   addCard: (input: CardInput) => string;
   addConnector: (input: ConnectorInput) => string | null;
   updateConnector: (id: string, patch: Partial<Omit<Connector, 'id'>>) => void;
   removeConnector: (id: string) => void;
-  selectConnector: (id: string | null) => void;
-  toggleSelect: (id: string) => void;
-  selectMany: (ids: string[], additive?: boolean) => void;
-  selectAllCards: () => void;
   /** Move several windows at once (one undo step). `reconcile` lets dropped cards join or leave groups. */
   placeResources: (positions: Placement, options?: { reconcile?: boolean }) => void;
   closeResources: (ids: string[]) => void;
@@ -217,23 +270,33 @@ export interface CanvasStore {
   patchResourceIn: (workspaceId: string, id: string, patch: Partial<Resource>) => void;
   setResourceRect: (id: string, rect: Partial<Rect>) => void;
   bringToFront: (id: string) => void;
-  select: (id: string | null) => void;
   closeResource: (id: string) => void;
   toggleMinimize: (id: string) => void;
   toggleMaximize: (id: string) => void;
   exitMaximize: () => void;
   minimizeAll: () => void;
   arrange: (layout: ArrangeLayout) => void;
-  setPdfView: (path: string, patch: Partial<Omit<PdfViewState, 'updatedAt'>>) => void;
-  setBookView: (path: string, patch: Partial<Omit<BookViewState, 'updatedAt'>>) => void;
   replaceFilePath: (oldPath: string, newPath: string, title?: string) => void;
   closeByFilePath: (path: string) => void;
-  undo: () => void;
-  redo: () => void;
+}
+
+/** The whole canvas store: slices merged, plus the hydration flag. */
+export interface CanvasStore extends WorkspacesSlice, ViewsSlice, SelectionSlice, UiSlice, HistorySlice {
+  hydrated: boolean;
 }
 
 export function activeWorkspace(state: Pick<CanvasStore, 'workspaces' | 'activeWorkspaceId'>): Workspace {
   return state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? state.workspaces[0];
+}
+
+/** Everything a slice creator needs to read and write the shared store. */
+interface SliceContext {
+  set: (partial: Partial<CanvasStore> | ((state: CanvasStore) => Partial<CanvasStore>)) => void;
+  get: () => CanvasStore;
+  active: () => Workspace;
+  updateActive: (updater: (workspace: Workspace) => Workspace) => void;
+  commitResources: (next: Resource[], record?: boolean) => void;
+  setViewInternal: (view: CanvasView) => void;
 }
 
 function newWorkspace(name: string, id: string = uid()): Workspace {
@@ -382,7 +445,18 @@ export function migrateCanvasState(raw: unknown): {
   pdfViews: Record<string, PdfViewState>;
   bookViews: Record<string, BookViewState>;
 } {
-  const data = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  let data = (raw && typeof raw === 'object' ? raw : {}) as CanvasPayload;
+  let version = typeof data.version === 'number' ? data.version : 1;
+  while (version < CANVAS_STATE_VERSION) {
+    const migrate = canvasMigrations[version];
+    if (!migrate) break;
+    data = migrate(data);
+    version += 1;
+  }
+  if (version > CANVAS_STATE_VERSION) {
+    // Saved by a newer build: still load best-effort so the user's work is never lost.
+    console.warn(`Canvas state is from a newer app version (v${version}); loading best-effort as v${CANVAS_STATE_VERSION}.`);
+  }
   let workspaces: Workspace[] = [];
   if (Array.isArray(data.workspaces)) {
     workspaces = data.workspaces
@@ -428,6 +502,50 @@ function withFrontZ(resources: Resource[], id: string): Resource[] {
   return resources.map((r) => (r.id === id ? { ...r, z: max + 1 } : r));
 }
 
+function sameResource(left: Resource, right: Resource): boolean {
+  // Resources are plain persisted data. This catches nested annotation/source
+  // changes too, without retaining a full canvas snapshot for each action.
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function resourcePatches(before: Resource[], after: Resource[]): ResourcePatch[] {
+  const beforeById = new Map(before.map((resource, index) => [resource.id, { resource, index }]));
+  const afterById = new Map(after.map((resource, index) => [resource.id, { resource, index }]));
+  const ids = new Set([...beforeById.keys(), ...afterById.keys()]);
+  const patches: ResourcePatch[] = [];
+  for (const id of ids) {
+    const previous = beforeById.get(id);
+    const next = afterById.get(id);
+    if (previous?.resource && next?.resource && sameResource(previous.resource, next.resource)) continue;
+    patches.push({
+      id,
+      before: previous?.resource ?? null,
+      after: next?.resource ?? null,
+      beforeIndex: previous?.index ?? -1,
+      afterIndex: next?.index ?? -1,
+    });
+  }
+  return patches;
+}
+
+function applyResourcePatches(resources: Resource[], patches: ResourcePatch[], direction: 'undo' | 'redo'): Resource[] {
+  const next = resources.filter((resource) => !patches.some((patch) => patch.id === resource.id));
+  const additions = patches
+    .map((patch) => ({ resource: direction === 'undo' ? patch.before : patch.after, index: direction === 'undo' ? patch.beforeIndex : patch.afterIndex }))
+    .filter((entry): entry is { resource: Resource; index: number } => entry.resource !== null)
+    .sort((left, right) => left.index - right.index);
+  for (const { resource, index } of additions) next.splice(Math.max(0, Math.min(index, next.length)), 0, resource);
+  return next;
+}
+
+function mapHistoryPatches(patches: ResourcePatch[][], map: (resource: Resource) => Resource): ResourcePatch[][] {
+  return patches.map((change) => change.map((patch) => ({
+    ...patch,
+    before: patch.before ? map(patch.before) : null,
+    after: patch.after ? map(patch.after) : null,
+  })));
+}
+
 export function screenToWorld(view: CanvasView, point: { x: number; y: number }) {
   return { x: (point.x - view.x) / view.zoom, y: (point.y - view.y) / view.zoom };
 }
@@ -447,49 +565,125 @@ const saver = createSaver<{
   pdfViews: Record<string, PdfViewState>;
   bookViews: Record<string, BookViewState>;
 }>(
-  (value) => saveCanvasState({ version: 2, ...value }),
+  (value) => saveCanvasState({ version: CANVAS_STATE_VERSION, ...value }),
   500,
 );
 
-export const useCanvas = create<CanvasStore>((set, get) => {
-  const active = () => activeWorkspace(get());
+// ───────── Slice creators ─────────
 
-  const updateActive = (updater: (workspace: Workspace) => Workspace) =>
-    set((state) => ({
-      workspaces: state.workspaces.map((w) => (w.id === state.activeWorkspaceId ? updater(w) : w)),
-    }));
-
-  const commitResources = (next: Resource[], record = true) => {
-    const current = active().resources;
-    if (next === current) return;
-    set((state) => ({
-      workspaces: state.workspaces.map((w) => (w.id === state.activeWorkspaceId ? { ...w, resources: next } : w)),
-      past: record ? [...state.past.slice(-(HISTORY_LIMIT - 1)), current] : state.past,
-      future: record ? [] : state.future,
-    }));
-  };
-
-  const setViewInternal = (view: CanvasView) => {
-    const next = { x: view.x, y: view.y, zoom: clamp(view.zoom, ZOOM_MIN, ZOOM_MAX) };
-    const current = active().view;
-    if (current.x === next.x && current.y === next.y && current.zoom === next.zoom) return;
-    updateActive((w) => ({ ...w, view: next }));
-  };
-
+function createUiSlice({ set }: SliceContext): UiSlice {
   return {
-    hydrated: false,
-    workspaces: [newWorkspace('Default Workspace', 'default')],
-    activeWorkspaceId: 'default',
-    pdfViews: {},
-    bookViews: {},
-    selectedId: null,
-    selectedIds: [],
-    selectedConnectorId: null,
     locked: false,
     minimapCollapsed: false,
     viewport: { width: 1200, height: 800 },
+    setLocked: (locked) => set({ locked }),
+    setMinimapCollapsed: (minimapCollapsed) => set({ minimapCollapsed }),
+    setViewport: (size) =>
+      set((state) => {
+        const current = state.viewport;
+        if (current.width === size.width && current.height === size.height) return {};
+        return { viewport: size };
+      }),
+  };
+}
+
+function createSelectionSlice({ set, get, active }: SliceContext): SelectionSlice {
+  return {
+    selectedId: null,
+    selectedIds: [],
+    selectedConnectorId: null,
+    selectConnector: (id) => {
+      if (get().selectedConnectorId !== id || (id !== null && get().selectedId !== null)) {
+        set({ selectedConnectorId: id, selectedId: id === null ? get().selectedId : null });
+      }
+    },
+    select: (id) => {
+      if (get().selectedId !== id || get().selectedConnectorId !== null) set({ selectedId: id, selectedConnectorId: null });
+    },
+    toggleSelect: (id) => {
+      const existing = new Set(active().resources.map((r) => r.id));
+      if (!existing.has(id)) return;
+      const current = get().selectedIds.filter((other) => existing.has(other));
+      const next = current.includes(id) ? current.filter((other) => other !== id) : [...current, id];
+      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
+    },
+    selectMany: (ids, additive = false) => {
+      const existing = new Set(active().resources.map((r) => r.id));
+      const base = additive ? get().selectedIds.filter((other) => existing.has(other)) : [];
+      const next = [...new Set([...base, ...ids.filter((id) => existing.has(id))])];
+      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
+    },
+    selectAllCards: () => {
+      const workspace = active();
+      const hidden = hiddenIds(workspace.groups, new Set(workspace.resources.map((r) => r.id)));
+      const ids = workspace.resources.filter((r) => r.type === 'card' && !r.minimized && !hidden.has(r.id)).map((r) => r.id);
+      const existing = new Set(workspace.resources.map((r) => r.id));
+      const next = [...new Set(ids.filter((id) => existing.has(id)))];
+      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
+    },
+  };
+}
+
+function createHistorySlice({ set, get, updateActive, active }: SliceContext): HistorySlice {
+  return {
     past: [],
     future: [],
+    undo: () => {
+      const { past, future, selectedId } = get();
+      if (past.length === 0) return;
+      const change = past[past.length - 1];
+      const current = active().resources;
+      const previous = applyResourcePatches(current, change, 'undo');
+      updateActive((w) => ({ ...w, resources: previous }));
+      set({
+        past: past.slice(0, -1),
+        future: [...future, change],
+        selectedId: previous.some((r) => r.id === selectedId && !r.minimized) ? selectedId : null,
+      });
+    },
+    redo: () => {
+      const { past, future, selectedId } = get();
+      if (future.length === 0) return;
+      const change = future[future.length - 1];
+      const current = active().resources;
+      const next = applyResourcePatches(current, change, 'redo');
+      updateActive((w) => ({ ...w, resources: next }));
+      set({
+        future: future.slice(0, -1),
+        past: [...past, change],
+        selectedId: next.some((r) => r.id === selectedId && !r.minimized) ? selectedId : null,
+      });
+    },
+  };
+}
+
+function createViewsSlice({ set, get }: SliceContext): ViewsSlice {
+  return {
+    pdfViews: {},
+    bookViews: {},
+    setPdfView: (path, patch) => {
+      if (!path) return;
+      const current = get().pdfViews;
+      const next = mergePdfView(current[path], patch, Date.now());
+      if (next === current[path]) return;
+      // A view that says nothing beyond the defaults is not worth keeping on disk.
+      const views = isDefaultView(next) ? removePdfView(current, path) : pruneViews({ ...current, [path]: next });
+      set({ pdfViews: views });
+    },
+    setBookView: (path, patch) => {
+      if (!path) return;
+      const current = get().bookViews;
+      const next = mergeBookView(current[path], patch, Date.now());
+      if (next === current[path]) return;
+      set({ bookViews: pruneBookViews({ ...current, [path]: next }) });
+    },
+  };
+}
+
+function createWorkspacesSlice({ set, get, active, updateActive, commitResources, setViewInternal }: SliceContext): WorkspacesSlice {
+  return {
+    workspaces: [newWorkspace('Default Workspace', 'default')],
+    activeWorkspaceId: 'default',
 
     hydrate: async () => {
       if (get().hydrated) return;
@@ -607,13 +801,6 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       get().bringToFront(id);
       set({ selectedId: id });
     },
-    setViewport: (size) => {
-      const current = get().viewport;
-      if (current.width === size.width && current.height === size.height) return;
-      set({ viewport: size });
-    },
-    setLocked: (locked) => set({ locked }),
-    setMinimapCollapsed: (minimapCollapsed) => set({ minimapCollapsed }),
 
     openResource: (input, options = {}) => {
       const resources = active().resources;
@@ -637,6 +824,19 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         height: Math.max(MIN_WINDOW_HEIGHT, Math.round(input.height ?? Math.min(defaults.height, visible.height - margin * 2))),
       };
       let center = options.center ?? screenToWorld(view, { x: viewport.width / 2, y: viewport.height / 2 });
+      // "Insert at pointer": when the setting is on, a new item lands where the pointer
+      // last sat on the canvas instead of where the planner would put it. Spots the caller
+      // asked for explicitly (`at` from a drop point or context menu, `center`) always win,
+      // and a pointer outside the canvas falls back to the usual placement.
+      if (!options.at && !options.center && useSettings.getState().newItemAtPointer) {
+        const pointer = canvasPointer();
+        if (pointer && pointerOverCanvas(pointer)) {
+          options = {
+            ...options,
+            at: screenToWorld(view, { x: pointer.x - pointer.rect.left, y: pointer.y - pointer.rect.top }),
+          };
+        }
+      }
       // Cascade from what the user is working with: an explicitly requested
       // anchor, else the last-touched selection, so new windows open beside the
       // context instead of dropping into the middle of the view.
@@ -649,7 +849,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       // view. A spot the planner chose is never moved afterwards — clamping it used to drag a
       // cascade window back over its anchor — so the view pans to it instead.
       const explicit = !!(options.at || options.center);
-      const placed = options.at
+      const desired = options.at
         ? { x: Math.round(options.at.x), y: Math.round(options.at.y) }
         : options.center
           ? { x: Math.round(center.x - size.width / 2), y: Math.round(center.y - size.height / 2) }
@@ -657,12 +857,19 @@ export const useCanvas = create<CanvasStore>((set, get) => {
             ? placeBeside(resources, anchor, size)
             : findFreeSpot(resources.filter((r) => !r.minimized), size, { center, view: visible });
       const keep = 140 / view.zoom;
-      const position = explicit
+      const reachable = explicit
         ? {
-            x: Math.round(clamp(placed.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
-            y: Math.round(clamp(placed.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
+            x: Math.round(clamp(desired.x, visible.x - size.width + keep, visible.x + visible.width - keep)),
+            y: Math.round(clamp(desired.y, visible.y + 12 / view.zoom, Math.max(visible.y + 12 / view.zoom, visible.y + visible.height - 90 / view.zoom))),
           }
-        : placed;
+        : desired;
+      // All creation paths—including file drops at an exact point—go through
+      // the same collision planner. It keeps a requested location when it is
+      // clear and otherwise expands outward around the existing canvas.
+      const position = findFreeSpot(resources.filter((r) => !r.minimized), size, {
+        center: { x: reachable.x + size.width / 2, y: reachable.y + size.height / 2 },
+        view: visible,
+      });
       const id = uid();
       const resource: Resource = {
         id,
@@ -678,10 +885,21 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         z: topZ(resources) + 1,
         minimized: false,
         maximized: false,
-        isExternal: options.isExternal ?? false,
+        isExternal: options.isExternal ?? isExternalPath(input.filePath ?? ''),
       };
       commitResources([...resources.map((r) => (r.maximized ? { ...r, maximized: false } : r)), resource]);
       set({ selectedId: id });
+      // Everything opened on the canvas from outside the workspace shows in the
+      // library, referenced at its own path — nothing is copied into app storage.
+      if (resource.isExternal) {
+        const paths = new Set(
+          [resource.filePath, ...(resource.tracks ?? []).map((track) => track.path)]
+            .filter((path): path is string => !!path && isExternalPath(path)),
+        );
+        for (const path of paths) {
+          void useLibrary.getState().registerExternal(path).catch(() => undefined);
+        }
+      }
       if (!explicit) setViewInternal(revealRect(view, viewport, { ...position, ...size }));
       return id;
     },
@@ -692,9 +910,13 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       const { viewport } = get();
       const viewCenter = screenToWorld(view, { x: viewport.width / 2, y: viewport.height / 2 });
       const anchor = input.near ? resources.find((r) => r.id === input.near) : undefined;
-      const position = input.center
+      const desired = input.center
         ? { x: Math.round(input.center.x - size.width / 2), y: Math.round(input.center.y - size.height / 2) }
         : planCardPosition(resources, { anchor, filePath: input.source?.filePath, size, fallbackCenter: viewCenter });
+      const position = findFreeSpot(resources.filter((r) => !r.minimized), size, {
+        center: { x: desired.x + size.width / 2, y: desired.y + size.height / 2 },
+        view: visibleWorldRect(view, viewport),
+      });
       const id = uid();
       const card: Resource = {
         id,
@@ -733,62 +955,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       updateActive((w) => ({ ...w, connectors: w.connectors.filter((c) => c.id !== id) }));
       if (get().selectedConnectorId === id) set({ selectedConnectorId: null });
     },
-    selectConnector: (id) => {
-      if (get().selectedConnectorId !== id || (id !== null && get().selectedId !== null)) {
-        set({ selectedConnectorId: id, selectedId: id === null ? get().selectedId : null });
-      }
-    },
-    updateResource: (id, patch, record = false) => {
-      const resources = active().resources;
-      if (!resources.some((r) => r.id === id)) return;
-      commitResources(resources.map((r) => (r.id === id ? { ...r, ...patch } : r)), record);
-    },
-    patchResourceIn: (workspaceId, id, patch) => {
-      set((state) => ({
-        workspaces: state.workspaces.map((w) =>
-          w.id === workspaceId ? { ...w, resources: w.resources.map((r) => (r.id === id ? { ...r, ...patch } : r)) } : w,
-        ),
-      }));
-    },
-    setResourceRect: (id, rect) => {
-      const resources = active().resources;
-      const target = resources.find((r) => r.id === id);
-      if (!target) return;
-      const next = {
-        x: Math.round(rect.x ?? target.x),
-        y: Math.round(rect.y ?? target.y),
-        width: Math.max(minSizeFor(target.type).width, Math.round(rect.width ?? target.width)),
-        height: Math.max(minSizeFor(target.type).height, Math.round(rect.height ?? target.height)),
-      };
-      if (next.x === target.x && next.y === target.y && next.width === target.width && next.height === target.height) return;
-      commitResources(resources.map((r) => (r.id === id ? { ...r, ...next } : r)));
-    },
-    bringToFront: (id) => {
-      const resources = active().resources;
-      const next = withFrontZ(resources, id);
-      if (next !== resources) commitResources(next, false);
-    },
-    select: (id) => {
-      if (get().selectedId !== id || get().selectedConnectorId !== null) set({ selectedId: id, selectedConnectorId: null });
-    },
-    toggleSelect: (id) => {
-      const existing = new Set(active().resources.map((r) => r.id));
-      if (!existing.has(id)) return;
-      const current = get().selectedIds.filter((other) => existing.has(other));
-      const next = current.includes(id) ? current.filter((other) => other !== id) : [...current, id];
-      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
-    },
-    selectMany: (ids, additive = false) => {
-      const existing = new Set(active().resources.map((r) => r.id));
-      const base = additive ? get().selectedIds.filter((other) => existing.has(other)) : [];
-      const next = [...new Set([...base, ...ids.filter((id) => existing.has(id))])];
-      set({ selectedIds: next, selectedId: next.length > 0 ? next[next.length - 1] : null, selectedConnectorId: null });
-    },
-    selectAllCards: () => {
-      const workspace = active();
-      const hidden = hiddenIds(workspace.groups, new Set(workspace.resources.map((r) => r.id)));
-      get().selectMany(workspace.resources.filter((r) => r.type === 'card' && !r.minimized && !hidden.has(r.id)).map((r) => r.id));
-    },
+
     placeResources: (positions, options) => {
       const resources = active().resources;
       let changed = false;
@@ -820,6 +987,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       if (!resources.some((r) => chosen.has(r.id) && r.type === 'card' && r.color !== color)) return;
       commitResources(resources.map((r) => (chosen.has(r.id) && r.type === 'card' ? { ...r, color } : r)));
     },
+
     createGroup: (ids, title) => {
       const workspace = active();
       const byId = new Map(workspace.resources.map((r) => [r.id, r]));
@@ -909,6 +1077,38 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       updateActive((w) => ({ ...w, connectors: after }));
       return before.length - after.length;
     },
+
+    updateResource: (id, patch, record = false) => {
+      const resources = active().resources;
+      if (!resources.some((r) => r.id === id)) return;
+      commitResources(resources.map((r) => (r.id === id ? { ...r, ...patch } : r)), record);
+    },
+    patchResourceIn: (workspaceId, id, patch) => {
+      set((state) => ({
+        workspaces: state.workspaces.map((w) =>
+          w.id === workspaceId ? { ...w, resources: w.resources.map((r) => (r.id === id ? { ...r, ...patch } : r)) } : w,
+        ),
+      }));
+    },
+    setResourceRect: (id, rect) => {
+      const resources = active().resources;
+      const target = resources.find((r) => r.id === id);
+      if (!target) return;
+      const next = {
+        x: Math.round(rect.x ?? target.x),
+        y: Math.round(rect.y ?? target.y),
+        width: Math.max(minSizeFor(target.type).width, Math.round(rect.width ?? target.width)),
+        height: Math.max(minSizeFor(target.type).height, Math.round(rect.height ?? target.height)),
+      };
+      if (next.x === target.x && next.y === target.y && next.width === target.width && next.height === target.height) return;
+      commitResources(resources.map((r) => (r.id === id ? { ...r, ...next } : r)));
+    },
+    bringToFront: (id) => {
+      const resources = active().resources;
+      const next = withFrontZ(resources, id);
+      if (next !== resources) commitResources(next, false);
+    },
+
     closeResource: (id) => {
       const resources = active().resources;
       if (!resources.some((r) => r.id === id)) return;
@@ -981,22 +1181,7 @@ export const useCanvas = create<CanvasStore>((set, get) => {
       }));
       setViewInternal({ x: -origin.x, y: -origin.y, zoom: 1 });
     },
-    setPdfView: (path, patch) => {
-      if (!path) return;
-      const current = get().pdfViews;
-      const next = mergePdfView(current[path], patch, Date.now());
-      if (next === current[path]) return;
-      // A view that says nothing beyond the defaults is not worth keeping on disk.
-      const views = isDefaultView(next) ? removePdfView(current, path) : pruneViews({ ...current, [path]: next });
-      set({ pdfViews: views });
-    },
-    setBookView: (path, patch) => {
-      if (!path) return;
-      const current = get().bookViews;
-      const next = mergeBookView(current[path], patch, Date.now());
-      if (next === current[path]) return;
-      set({ bookViews: pruneBookViews({ ...current, [path]: next }) });
-    },
+
     replaceFilePath: (oldPath, newPath, title) => {
       const rename = (resources: Resource[]) =>
         resources.some((r) => r.filePath === oldPath || r.source?.filePath === oldPath)
@@ -1011,8 +1196,8 @@ export const useCanvas = create<CanvasStore>((set, get) => {
           const resources = rename(w.resources);
           return resources === w.resources ? w : { ...w, resources };
         }),
-        past: state.past.map(rename),
-        future: state.future.map(rename),
+        past: mapHistoryPatches(state.past, (resource) => rename([resource])[0]),
+        future: mapHistoryPatches(state.future, (resource) => rename([resource])[0]),
         pdfViews: renamePdfView(state.pdfViews, oldPath, newPath),
         bookViews: renameBookView(state.bookViews, oldPath, newPath),
       }));
@@ -1031,31 +1216,45 @@ export const useCanvas = create<CanvasStore>((set, get) => {
         return { workspaces, pdfViews: removePdfView(state.pdfViews, path), bookViews: removeBookView(state.bookViews, path), past: [], future: [], selectedId: selectedExists ? state.selectedId : null };
       });
     },
+  };
+}
 
-    undo: () => {
-      const { past, future, selectedId } = get();
-      if (past.length === 0) return;
-      const previous = past[past.length - 1];
-      const current = active().resources;
-      updateActive((w) => ({ ...w, resources: previous }));
-      set({
-        past: past.slice(0, -1),
-        future: [...future, current],
-        selectedId: previous.some((r) => r.id === selectedId && !r.minimized) ? selectedId : null,
-      });
-    },
-    redo: () => {
-      const { past, future, selectedId } = get();
-      if (future.length === 0) return;
-      const next = future[future.length - 1];
-      const current = active().resources;
-      updateActive((w) => ({ ...w, resources: next }));
-      set({
-        future: future.slice(0, -1),
-        past: [...past, current],
-        selectedId: next.some((r) => r.id === selectedId && !r.minimized) ? selectedId : null,
-      });
-    },
+export const useCanvas = create<CanvasStore>((set, get) => {
+  const active = () => activeWorkspace(get());
+
+  const updateActive = (updater: (workspace: Workspace) => Workspace) =>
+    set((state) => ({
+      workspaces: state.workspaces.map((w) => (w.id === state.activeWorkspaceId ? updater(w) : w)),
+    }));
+
+  const commitResources = (next: Resource[], record = true) => {
+    const current = active().resources;
+    if (next === current) return;
+    const change = record ? resourcePatches(current, next) : null;
+    if (record && (change?.length ?? 0) === 0) return;
+    set((state) => ({
+      workspaces: state.workspaces.map((w) => (w.id === state.activeWorkspaceId ? { ...w, resources: next } : w)),
+      past: record ? [...state.past.slice(-(HISTORY_LIMIT - 1)), change!] : state.past,
+      future: record ? [] : state.future,
+    }));
+  };
+
+  const setViewInternal = (view: CanvasView) => {
+    const next = { x: view.x, y: view.y, zoom: clamp(view.zoom, ZOOM_MIN, ZOOM_MAX) };
+    const current = active().view;
+    if (current.x === next.x && current.y === next.y && current.zoom === next.zoom) return;
+    updateActive((w) => ({ ...w, view: next }));
+  };
+
+  const ctx: SliceContext = { set, get, active, updateActive, commitResources, setViewInternal };
+
+  return {
+    hydrated: false,
+    ...createUiSlice(ctx),
+    ...createSelectionSlice(ctx),
+    ...createHistorySlice(ctx),
+    ...createViewsSlice(ctx),
+    ...createWorkspacesSlice(ctx),
   };
 });
 

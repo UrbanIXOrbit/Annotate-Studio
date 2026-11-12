@@ -46,8 +46,14 @@ export interface PersistedSettings {
   chatLayout: ChatLayout;
   recentFiles: Record<string, number>;
   noteClip: NoteClipSettings;
-  /** User-selected folder where microphone recordings are stored outside the app workspace. */
+  /** User-selected folder where microphone recordings are stored (defaults to the workspace documents folder when empty). */
   recordingFolder: string;
+  /** Folder new notes are created in, picked by the user at creation time like recordings. */
+  noteFolder: string;
+  /** Absolute paths of files kept outside the workspace that the library references in place. */
+  externalFiles: string[];
+  /** Place new canvas items at the pointer's last canvas position instead of auto-placing them. */
+  newItemAtPointer: boolean;
 }
 
 export const DEFAULT_SETTINGS: PersistedSettings = {
@@ -70,6 +76,9 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   recentFiles: {},
   noteClip: { lastNote: '', highlight: true },
   recordingFolder: '',
+  noteFolder: '',
+  externalFiles: [],
+  newItemAtPointer: false,
 };
 
 interface SettingsStore extends PersistedSettings {
@@ -178,6 +187,11 @@ function sanitize(raw: unknown): PersistedSettings {
       highlight: bool(clipRaw.highlight, defaults.noteClip.highlight),
     },
     recordingFolder: typeof data.recordingFolder === 'string' ? data.recordingFolder.slice(0, 4000) : defaults.recordingFolder,
+    noteFolder: typeof data.noteFolder === 'string' ? data.noteFolder.slice(0, 4000) : defaults.noteFolder,
+    externalFiles: Array.isArray(data.externalFiles)
+      ? [...new Set(data.externalFiles.filter((entry): entry is string => typeof entry === 'string' && /^([a-zA-Z]:[\\/]|[/\\])/.test(entry)))].slice(0, 400)
+      : defaults.externalFiles,
+    newItemAtPointer: bool(data.newItemAtPointer, defaults.newItemAtPointer),
   };
 }
 
@@ -194,6 +208,9 @@ function snapshot(state: SettingsStore): PersistedSettings {
     recentFiles: state.recentFiles,
     noteClip: state.noteClip,
     recordingFolder: state.recordingFolder,
+    noteFolder: state.noteFolder,
+    externalFiles: state.externalFiles,
+    newItemAtPointer: state.newItemAtPointer,
   };
 }
 

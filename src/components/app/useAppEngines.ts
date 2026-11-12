@@ -6,7 +6,7 @@ import { flushAll } from '@/lib/persist';
 import { notify } from '@/lib/notify';
 import { playChime } from '@/lib/sound';
 import { isEditableTarget, isModalOpen } from '@/lib/utils';
-import { migrateInlineNotes } from '@/lib/workspace-actions';
+import { migrateInlineNotes, registerExternalResources } from '@/lib/workspace-actions';
 import { useApp, type ViewMode } from '@/store/app';
 import { useCanvas } from '@/store/canvas';
 import { isDue, isNewCard, useFlashcards } from '@/store/flashcards';
@@ -40,6 +40,7 @@ function startApp(): Promise<void> {
     await useSettings.getState().hydrate();
     await Promise.all([useCanvas.getState().hydrate(), useLibrary.getState().refresh()]);
     await migrateInlineNotes();
+    await registerExternalResources();
     void useFlashcards.getState().hydrate();
     void useProviders.getState().refresh();
     usePomodoro.getState().syncDuration();

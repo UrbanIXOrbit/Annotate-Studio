@@ -97,12 +97,12 @@ export async function buildDocx(report: Report): Promise<Uint8Array> {
     children.push(
       new Paragraph({
         spacing: { after: 120 },
-        children: [new TextRun({ text: `${book.count} annotation${book.count === 1 ? '' : 's'} · ${book.pageCount} pages`, color: grey, size: 20 })],
+        children: [new TextRun({ text: `${book.count} annotation${book.count === 1 ? '' : 's'} · ${book.pageCount} ${book.locationUnit === 'chapter' ? 'chapters' : 'pages'}`, color: grey, size: 20 })],
       }),
     );
 
     for (const page of book.pages) {
-      children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, keepNext: true, children: [new TextRun(`Page ${page.page}`)] }));
+      children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, keepNext: true, children: [new TextRun(`${book.locationUnit === 'chapter' ? 'Chapter' : 'Page'} ${page.page}`)] }));
       for (const item of page.items) {
         const { quote, comment } = itemBody(item);
         const accent = hexDigits(item.color);
@@ -257,14 +257,14 @@ export async function buildPdf(report: Report, loadFont: FontLoader): Promise<{ 
     if (bookIndex > 0) y -= 22;
     ensure(120);
     paragraph(book.title, { size: 15, bold: true, fill: INK, gapAfter: 1 });
-    paragraph(`${book.count} annotation${book.count === 1 ? '' : 's'} · ${book.pageCount} pages`, { size: 9, fill: GREY, gapAfter: 4 });
+    paragraph(`${book.count} annotation${book.count === 1 ? '' : 's'} · ${book.pageCount} ${book.locationUnit === 'chapter' ? 'chapters' : 'pages'}`, { size: 9, fill: GREY, gapAfter: 4 });
     page.drawLine({ start: { x: M, y: y + 2 }, end: { x: PAGE_W - M, y: y + 2 }, thickness: 0.6, color: color('d1d5db') });
     y -= 8;
 
     for (const bookPage of book.pages) {
       ensure(70);
       y -= 6;
-      paragraph(`Page ${bookPage.page}`, { size: 11.5, bold: true, fill: SOFT, gapAfter: 2 });
+      paragraph(`${book.locationUnit === 'chapter' ? 'Chapter' : 'Page'} ${bookPage.page}`, { size: 11.5, bold: true, fill: SOFT, gapAfter: 2 });
 
       for (const item of bookPage.items) {
         const { quote, comment } = itemBody(item);

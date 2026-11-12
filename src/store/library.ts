@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import { listWorkspaceFiles, type StudyFile } from '@/lib/tauri-commands';
+import {
+  getDataDir,
+  listWorkspaceFiles,
+  statExternalFile,
+  type StudyFile,
+} from '@/lib/tauri-commands';
+import { useSettings } from './settings';
 
 interface LibraryStore {
   files: StudyFile[];
@@ -10,6 +16,12 @@ interface LibraryStore {
   upsert: (file: StudyFile) => void;
   remove: (path: string) => void;
   replace: (oldPath: string, file: StudyFile) => void;
+  /** Reference a file at an absolute path outside the workspace in the library, in place. */
+  registerExternal: (path: string) => Promise<StudyFile | null>;
+  /** Drop an external reference; the file itself stays on the user's device. */
+  removeExternal: (path: string) => void;
+  /** Re-point an external reference at a new absolute path (after an in-place rename). */
+  replaceExternal: (oldPath: string, file: StudyFile) => void;
 }
 
 let inflight: Promise<StudyFile[]> | null = null;
@@ -26,18 +38,43 @@ export const useLibrary = create<LibraryStore>((set) => ({
   refresh: () => {
     if (inflight) return inflight;
     set({ loading: true });
-    inflight = listWorkspaceFiles()
-      .then((files) => {
-        set({ files: sortFiles(files), loading: false, loaded: true, error: null });
-        return files;
-      })
-      .catch((error: unknown) => {
+    inflight = (async () => {
+      try {
+        const files = await listWorkspaceFiles();
+        // Files kept outside the workspace are referenced in place: stat each
+        // registered path, list the ones still on disk, and prune the rest.
+        const externals = useSettings.getState().externalFiles;
+        const stats = await Promise.all(externals.map((path) => statExternalFile(path).catch(() => null)));
+        const root = await getDataDir().catch(() => '');
+        const listed = new Set(files.map((file) => file.path));
+        const kept: string[] = [];
+        const externalFiles: StudyFile[] = [];
+        stats.forEach((file, index) => {
+          const requested = externals[index];
+          if (!file) return;
+          kept.push(requested);
+          // Files inside the workspace's top-level documents/notes folders are
+          // already listed by the scan; only keep the workspace-relative entry.
+          const relative = root && (file.path.startsWith(`${root}/`) || file.path.startsWith(`${root}\\`))
+            ? file.path.slice(root.length).replace(/^[\\/]+/, '')
+            : null;
+          if (relative && listed.has(relative)) return;
+          if (/^(documents|notes)[\\/][^\\/]+$/.test(relative ?? '')) return;
+          externalFiles.push(file);
+        });
+        if (kept.length !== externals.length) {
+          useSettings.getState().update({ externalFiles: kept });
+        }
+        const merged = sortFiles([...files, ...externalFiles]);
+        set({ files: merged, loading: false, loaded: true, error: null });
+        return merged;
+      } catch (error: unknown) {
         set({ loading: false, loaded: true, error: error instanceof Error ? error.message : String(error) });
         return [] as StudyFile[];
-      })
-      .finally(() => {
+      } finally {
         inflight = null;
-      });
+      }
+    })();
     return inflight;
   },
   upsert: (file) =>
@@ -47,6 +84,42 @@ export const useLibrary = create<LibraryStore>((set) => ({
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
     })),
+  registerExternal: async (path) => {
+    const file = await statExternalFile(path);
+    if (!file) return null;
+    const settings = useSettings.getState();
+    const root = await getDataDir().catch(() => '');
+    const relative = root && (path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
+      ? path.slice(root.length).replace(/^[\\/]+/, '')
+      : null;
+    // Files in the workspace's top-level documents/notes folders are listed by
+    // the scan already; deeper workspace folders and truly external paths are
+    // referenced through the registry so they survive a refresh.
+    const scanListed = relative !== null && /^(documents|notes)[\\/][^\\/]+$/.test(relative);
+    if (!scanListed && !settings.externalFiles.includes(path)) {
+      settings.update({ externalFiles: [...settings.externalFiles, path] });
+    }
+    set((state) => ({
+      files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path && existing.path !== relative)]),
+    }));
+    return file;
+  },
+  removeExternal: (path) => {
+    const settings = useSettings.getState();
+    if (settings.externalFiles.includes(path)) {
+      settings.update({ externalFiles: settings.externalFiles.filter((entry) => entry !== path) });
+    }
+    set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
+  },
+  replaceExternal: (oldPath, file) => {
+    const settings = useSettings.getState();
+    if (settings.externalFiles.includes(oldPath)) {
+      settings.update({ externalFiles: settings.externalFiles.map((entry) => (entry === oldPath ? file.path : entry)) });
+    }
+    set((state) => ({
+      files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
+    }));
+  },
 }));
 
 const LINK_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'docx', 'odt']);

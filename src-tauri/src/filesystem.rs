@@ -11,6 +11,7 @@ pub enum FileType {
     Image,
     Book,
     Video,
+    Audio,
     Document,
     Unknown,
 }
@@ -23,7 +24,10 @@ impl FileType {
             "txt" | "text" => FileType::Text,
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" => FileType::Image,
             "epub" | "mobi" | "azw3" | "azw" | "fb2" | "cbz" => FileType::Book,
-            "mp4" | "m4v" | "mov" | "webm" | "ogv" | "ogg" | "avi" | "mkv" | "3gp" | "wmv" | "flv" | "mpeg" | "mpg" => FileType::Video,
+            "mp4" | "m4v" | "mov" | "webm" | "ogv" | "avi" | "mkv" | "3gp" | "wmv" | "flv"
+            | "mpeg" | "mpg" => FileType::Video,
+            "wav" | "mp3" | "m4a" | "m4b" | "aac" | "ogg" | "oga" | "opus" | "flac"
+            | "aiff" | "aif" | "wma" => FileType::Audio,
             "docx" | "odt" => FileType::Document,
             _ => FileType::Unknown,
         }
@@ -80,6 +84,31 @@ pub fn describe(workspace: &Workspace, path: &Path) -> Option<StudyFile> {
     })
 }
 
+/// Describe a file at any absolute path on disk, for files the user keeps outside the
+/// workspace (recordings, notes in their own folders). The absolute path is the identity.
+pub fn describe_absolute(path: &Path) -> Option<StudyFile> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let absolute = path.to_string_lossy().into_owned();
+    let modified_at = to_rfc3339(metadata.modified());
+    let created = to_rfc3339(metadata.created());
+    Some(StudyFile {
+        id: absolute.clone(),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        path: absolute,
+        file_type: FileType::from_path(path),
+        size: metadata.len(),
+        created_at: if created.is_empty() {
+            modified_at.clone()
+        } else {
+            created
+        },
+        modified_at,
+    })
+}
+
 pub fn list_dir(workspace: &Workspace, subdirectory: &str) -> Result<Vec<StudyFile>, String> {
     let dir = workspace.resolve(subdirectory)?;
     if !dir.exists() {
@@ -116,6 +145,9 @@ mod tests {
         assert_eq!(FileType::from_extension("docx"), FileType::Document);
         assert_eq!(FileType::from_extension("epub"), FileType::Book);
         assert_eq!(FileType::from_extension("mkv"), FileType::Video);
+        assert_eq!(FileType::from_extension("wav"), FileType::Audio);
+        assert_eq!(FileType::from_extension("mp3"), FileType::Audio);
+        assert_eq!(FileType::from_extension("ogg"), FileType::Audio);
         assert_eq!(FileType::from_extension("exe"), FileType::Unknown);
         assert_eq!(FileType::Markdown.default_dir(), NOTES_DIR);
         assert_eq!(FileType::Pdf.default_dir(), DOCUMENTS_DIR);
@@ -131,12 +163,17 @@ mod tests {
         std::fs::write(root.join("notes").join("b.md"), b"# b").unwrap();
         std::fs::write(root.join("notes").join(".b.md.tmp"), b"x").unwrap();
         std::fs::write(root.join("documents").join("c.exe"), b"x").unwrap();
+        std::fs::write(root.join("documents").join("d.wav"), b"RIFF").unwrap();
         let files = list_study_files(&workspace).unwrap();
         let mut paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
         paths.sort();
         assert_eq!(
             paths,
-            vec!["documents/a.pdf".to_string(), "notes/b.md".to_string()]
+            vec![
+                "documents/a.pdf".to_string(),
+                "documents/d.wav".to_string(),
+                "notes/b.md".to_string()
+            ]
         );
         assert!(files.iter().all(|f| f.id == f.path));
         std::fs::remove_dir_all(root).unwrap();

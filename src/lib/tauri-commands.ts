@@ -1,7 +1,7 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Book' | 'Video' | 'Document' | 'Unknown';
+export type FileType = 'Pdf' | 'Markdown' | 'Text' | 'Image' | 'Book' | 'Video' | 'Audio' | 'Document' | 'Unknown';
 
 export interface StudyFile {
   id: string;
@@ -132,6 +132,14 @@ function toBytes(value: unknown): Uint8Array {
 
 export const listWorkspaceFiles = () => call<StudyFile[]>('list_workspace_files');
 export const statWorkspaceFile = (path: string) => call<StudyFile | null>('stat_workspace_file', { path });
+/** Metadata for a file at an absolute path outside the workspace, referenced in place. */
+export const statExternalFile = (path: string) => call<StudyFile | null>('stat_external_file', { path });
+/** Creates a note in an absolute folder on the user's device, without copying it into the workspace. */
+export const createExternalNote = (directory: string, name: string, content: string) =>
+  call<StudyFile>('create_external_note', { directory, name, content });
+/** Renames a file at an absolute path in place. */
+export const renameExternalFile = (path: string, newName: string) =>
+  call<StudyFile>('rename_external_file', { path, newName });
 export const readTextFile = (path: string) => call<string>('read_text_file', { path });
 
 export interface NoteText {
@@ -159,6 +167,17 @@ export async function writeFileBytes(target: WriteTarget, data: Uint8Array | Arr
   frame.set(header, 4);
   frame.set(bytes, 4 + header.length);
   return call<StudyFile>('write_file_bytes', frame);
+}
+
+/** Save bytes back to a file the user selected outside the workspace. */
+export async function writeExternalFileBytes(path: string, data: Uint8Array | ArrayBuffer): Promise<void> {
+  const header = new TextEncoder().encode(JSON.stringify({ path }));
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const frame = new Uint8Array(4 + header.length + bytes.length);
+  new DataView(frame.buffer).setUint32(0, header.length, true);
+  frame.set(header, 4);
+  frame.set(bytes, 4 + header.length);
+  return call<void>('write_external_file_bytes', frame);
 }
 
 export const getDataDir = () => call<string>('get_data_dir');

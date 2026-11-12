@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { readNote, writeTextFile } from '@/lib/tauri-commands';
+import { readExternalFileBytes, readNote, writeExternalFileBytes, writeTextFile } from '@/lib/tauri-commands';
 import { registerFlusher } from '@/lib/persist';
+import { isExternalPath } from '@/lib/utils';
 import { useLibrary } from './library';
 
 export interface NoteBuffer {
@@ -16,6 +17,16 @@ export interface NoteBuffer {
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n?/g, '\n');
+}
+
+/** Read a note kept outside the workspace through the external file commands,
+ * mirroring what `read_note` does for workspace files (BOM strip, binary check). */
+async function readExternalNote(path: string): Promise<{ content: string; editable: boolean }> {
+  const bytes = await readExternalFileBytes(path);
+  let body = bytes;
+  if (body.length >= 3 && body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf) body = body.subarray(3);
+  const text = new TextDecoder().decode(body);
+  return { content: text, editable: !body.slice(0, 8000).includes(0) };
 }
 
 interface NotesStore {
@@ -61,7 +72,7 @@ export const useNotes = create<NotesStore>((set, get) => {
         },
       }));
       try {
-        const note = await readNote(path);
+        const note = isExternalPath(path) ? await readExternalNote(path) : await readNote(path);
         const current = get().buffers[path];
         if (!current || current.dirty || current.status !== 'loading') return;
         patch(path, {
@@ -98,11 +109,16 @@ export const useNotes = create<NotesStore>((set, get) => {
       if (!buffer || !buffer.dirty || !buffer.editable) return;
       const content = buffer.content;
       patch(path, { saving: true });
-      const job = writeTextFile(path, buffer.lineEnding === '\r\n' ? content.replace(/\n/g, '\r\n') : content)
+      const payload = buffer.lineEnding === '\r\n' ? content.replace(/\n/g, '\r\n') : content;
+      const job = (isExternalPath(path)
+        // External notes are written back in place, byte for byte, at their own path.
+        ? writeExternalFileBytes(path, new TextEncoder().encode(payload)).then(() => undefined)
+        : writeTextFile(path, payload)
+      )
         .then((file) => {
           const latest = get().buffers[path];
           patch(path, { saving: false, dirty: latest ? latest.content !== content : false, savedAt: Date.now(), error: null });
-          useLibrary.getState().upsert(file);
+          if (file) useLibrary.getState().upsert(file);
         })
         .catch((error: unknown) => {
           patch(path, { saving: false, error: error instanceof Error ? error.message : String(error) });

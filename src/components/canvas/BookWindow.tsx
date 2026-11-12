@@ -12,6 +12,7 @@ import { registerWindowKeyHandler } from '@/lib/window-keys';
 import { copyText, stripExtension } from '@/lib/utils';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
+import { useAnnotations } from '@/store/annotations';
 import { usePdfNav } from '@/lib/pdf-nav';
 import { cardTitle, normalizeQuote } from '@/lib/cards';
 import { toast, useToasts } from '@/store/toast';
@@ -60,6 +61,8 @@ interface Selection {
 type AnnotationStyle = 'highlight' | 'underline';
 
 function notifyAnnotationSaved(path: string) {
+  // Annotations are re-read from the file, so the Annotations section must re-scan.
+  useAnnotations.getState().invalidate(path);
   if (/\.epub$/i.test(path)) {
     toast.success('Saved in EPUB', 'This annotation stays with the book file when it is shared.');
   } else {

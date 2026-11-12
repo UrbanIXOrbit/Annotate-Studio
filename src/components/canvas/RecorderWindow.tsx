@@ -2,12 +2,17 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Check, FolderOpen, Loader2, Mic, Pause, Play, Save, Square } from 'lucide-react';
+import { Check, FolderOpen, Loader2, Mic, Pause, Play, Square } from 'lucide-react';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
-import { setAudioRecordingPaused, startAudioRecording, stopAudioRecording } from '@/lib/tauri-commands';
+import {
+  setAudioRecordingPaused,
+  startAudioRecording,
+  stopAudioRecording,
+} from '@/lib/tauri-commands';
+import { useLibrary } from '@/store/library';
 import { useSettings } from '@/store/settings';
 import { toast } from '@/store/toast';
-import { baseName } from '@/lib/utils';
+import { baseName, stripExtension } from '@/lib/utils';
 
 type RecorderStatus = 'ready' | 'recording' | 'paused' | 'saving';
 
@@ -44,15 +49,17 @@ export default function RecorderWindow({ resourceId }: { resourceId: string }) {
     setStatus('saving');
     try {
       const saved = await stopAudioRecording(name.trim());
-      const title = saved.name.replace(/\.wav$/i, '');
+      // The recording stays at its own path on the user's device — it is never
+      // copied — and the library references it there.
+      const registered = await useLibrary.getState().registerExternal(saved.path);
       useCanvas.getState().updateResource(resourceId, {
         type: 'audiobook',
-        title,
+        title: stripExtension(saved.name),
         filePath: saved.path,
         tracks: [{ path: saved.path, title: saved.name, mediaType: 'audio/wav' }],
         isExternal: true,
       });
-      toast.success('Recording saved', saved.path);
+      toast.success('Recording saved', registered ? 'Listed in your library.' : saved.path);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setStatus('ready');
@@ -114,7 +121,7 @@ export default function RecorderWindow({ resourceId }: { resourceId: string }) {
         {status === 'saving' && <Loader2 size={16} className="spin" />}
       </div>
       <div className="recorder-folder"><FolderOpen size={14} /><span title={recordingFolder}>{recordingFolder ? baseName(recordingFolder) : 'No folder chosen'}</span><button type="button" onClick={() => void chooseFolder()} disabled={active || status === 'saving'}>{recordingFolder ? 'Change folder' : 'Choose folder'}</button></div>
-      {recordingFolder && <p className="recorder-folder-note"><Check size={13} /> Future recordings save to this folder.</p>}
+      {recordingFolder && <p className="recorder-folder-note"><Check size={13} /> Future recordings save to this folder and are listed in your library.</p>}
     </div>
   );
 }
