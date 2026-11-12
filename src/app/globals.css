@@ -1835,6 +1835,13 @@ input[type='checkbox'] {
   outline-offset: -1.5px;
 }
 
+/* The magnified map lives in one transformed wrapper, clipped by the surface. */
+.minimap-content {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 .minimap-window {
   position: absolute;
   border-radius: 2px;
