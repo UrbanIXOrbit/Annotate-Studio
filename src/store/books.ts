@@ -9,7 +9,11 @@ import {
 import { createSaver } from '@/lib/persist';
 import { searchLibrary } from '@/lib/books-search';
 import { uid } from '@/lib/utils';
+import type { Bibliography, BibliographyEntry } from '@/lib/bibliography';
+import type { CitationStyle } from '@/lib/citation-formats';
 import { CITATION_FIELDS, CITATION_SOURCE_NAMES, type CitationField, type CitationSourceName } from '@/lib/citation-schema';
+
+export type { Bibliography, BibliographyEntry };
 
 /**
  * Virtual File System for Books Manager
@@ -190,6 +194,8 @@ interface BooksState {
   selectedFolderId: string | null;
   selectedFileIds: string[];
   clipboard: BooksClipboard | null;
+  /** Saved bibliographies: named lists of citation entries, rendered on demand */
+  bibliographies: Record<string, Bibliography>;
   /** File ids whose referenced path failed the last disk verification (ephemeral, not saved) */
   missingFileIds: string[];
   /** In-memory undo history for destructive operations (ephemeral, not saved) */
@@ -234,6 +240,15 @@ interface BooksActions {
   cutToClipboard: (fileIds: string[]) => void;
   pasteFromClipboard: (targetProjectId: string, targetFolderId: string | null) => number;
   clearClipboard: () => void;
+  
+  // Bibliography actions
+  createBibliography: (name: string, style?: CitationStyle, entryFileIds?: string[]) => string;
+  updateBibliography: (id: string, patch: Partial<Pick<Bibliography, 'title' | 'style'>>) => void;
+  deleteBibliography: (id: string) => void;
+  addBibliographyEntries: (id: string, entries: Array<Pick<BibliographyEntry, 'fileId' | 'manual' | 'section'>>) => void;
+  removeBibliographyEntry: (id: string, entryId: string) => void;
+  updateBibliographyEntry: (id: string, entryId: string, patch: Partial<Pick<BibliographyEntry, 'included' | 'section'>>) => void;
+  moveBibliographyEntry: (id: string, entryId: string, direction: -1 | 1) => void;
   
   // Queries
   getProjectFiles: (projectId: string, folderId?: string | null) => BookFile[];
@@ -421,12 +436,48 @@ function migrateBooksState(raw: unknown): BooksState {
     ? data.activeProjectId
     : projects[0]?.id ?? null;
   
+  // Bibliographies are additive: state saved before they existed just starts empty.
+  const bibliographies: Record<string, Bibliography> = {};
+  if (data.bibliographies && typeof data.bibliographies === 'object') {
+    Object.entries(data.bibliographies as Record<string, unknown>).forEach(([id, raw]) => {
+      if (!raw || typeof raw !== 'object') return;
+      const bib = raw as Record<string, unknown>;
+      const entries: BibliographyEntry[] = Array.isArray(bib.entries)
+        ? (bib.entries as unknown[])
+            .map((row) => {
+              if (!row || typeof row !== 'object') return null;
+              const rec = row as Record<string, unknown>;
+              if (typeof rec.fileId !== 'string' && (!rec.manual || typeof rec.manual !== 'object')) return null;
+              return {
+                id: typeof rec.id === 'string' && rec.id ? rec.id : uid(),
+                ...(typeof rec.fileId === 'string' && validFileIds.has(rec.fileId) ? { fileId: rec.fileId } : {}),
+                ...(rec.manual && typeof rec.manual === 'object' ? { manual: migrateBookCitation(rec.manual) ?? undefined } : {}),
+                included: rec.included !== false,
+                ...(typeof rec.section === 'string' && rec.section.trim() ? { section: rec.section.trim() } : {}),
+              };
+            })
+            .filter((row): row is BibliographyEntry => !!row && (!!row.fileId || !!row.manual))
+        : [];
+      bibliographies[id] = {
+        id: typeof bib.id === 'string' && bib.id ? bib.id : id,
+        title: typeof bib.title === 'string' && bib.title.trim() ? bib.title.trim() : 'Untitled bibliography',
+        style: typeof bib.style === 'string' && ['apa', 'harvard', 'mla', 'chicago', 'vancouver'].includes(bib.style)
+          ? (bib.style as CitationStyle)
+          : 'apa',
+        entries,
+        createdAt: typeof bib.createdAt === 'string' ? bib.createdAt : new Date().toISOString(),
+        updatedAt: typeof bib.updatedAt === 'string' ? bib.updatedAt : new Date().toISOString(),
+      };
+    });
+  }
+  
   return {
     hydrated: false,
     projects,
     folders,
     files,
     activeProjectId,
+    bibliographies,
     selectedFolderId: null,
     selectedFileIds: [],
     clipboard: null,
@@ -441,6 +492,7 @@ function snapshotBooksState(state: BooksStore) {
     folders: state.folders,
     files: state.files,
     activeProjectId: state.activeProjectId,
+    bibliographies: state.bibliographies,
   };
 }
 
@@ -457,6 +509,7 @@ export const useBooks = create<BooksStore>((set, get) => ({
   folders: {},
   files: {},
   activeProjectId: null,
+  bibliographies: {},
   selectedFolderId: null,
   selectedFileIds: [],
   clipboard: null,
@@ -1101,6 +1154,130 @@ export const useBooks = create<BooksStore>((set, get) => ({
   },
   
   clearClipboard: () => set({ clipboard: null }),
+  
+  // Bibliography actions
+  createBibliography: (name, style = 'apa', entryFileIds = []) => {
+    const bibliography: Bibliography = {
+      id: uid(),
+      title: name.trim() || 'Untitled bibliography',
+      style,
+      // Every seeded file becomes one entry; files without a saved citation
+      // still make the list so the dialog can flag and fill them.
+      entries: entryFileIds.map((fileId) => ({ id: uid(), fileId, included: true })),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    set((state) => ({ bibliographies: { ...state.bibliographies, [bibliography.id]: bibliography } }));
+    return bibliography.id;
+  },
+  
+  updateBibliography: (id, patch) => {
+    set((state) => {
+      const bibliography = state.bibliographies[id];
+      if (!bibliography) return {};
+      return {
+        bibliographies: {
+          ...state.bibliographies,
+          [id]: { ...bibliography, ...patch, updatedAt: new Date().toISOString() },
+        },
+      };
+    });
+  },
+  
+  deleteBibliography: (id) => {
+    set((state) => {
+      if (!state.bibliographies[id]) return {};
+      const bibliographies = { ...state.bibliographies };
+      delete bibliographies[id];
+      return { bibliographies };
+    });
+  },
+  
+  addBibliographyEntries: (id, entries) => {
+    set((state) => {
+      const bibliography = state.bibliographies[id];
+      if (!bibliography) return {};
+      // Skip rows already present: the same file or the same manual record.
+      const existingFiles = new Set(bibliography.entries.map((entry) => entry.fileId).filter(Boolean));
+      const existingManual = new Set(bibliography.entries.map((entry) => entry.manual?.title.toLowerCase()));
+      const fresh: BibliographyEntry[] = [];
+      for (const row of entries) {
+        if (row.fileId) {
+          if (existingFiles.has(row.fileId)) continue;
+          existingFiles.add(row.fileId);
+          fresh.push({ id: uid(), fileId: row.fileId, included: true, ...(row.section ? { section: row.section } : {}) });
+        } else if (row.manual) {
+          const key = row.manual.title.toLowerCase();
+          if (existingManual.has(key)) continue;
+          existingManual.add(key);
+          fresh.push({ id: uid(), manual: row.manual, included: true, ...(row.section ? { section: row.section } : {}) });
+        }
+      }
+      if (fresh.length === 0) return {};
+      return {
+        bibliographies: {
+          ...state.bibliographies,
+          [id]: {
+            ...bibliography,
+            entries: [...bibliography.entries, ...fresh],
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
+  },
+  
+  removeBibliographyEntry: (id, entryId) => {
+    set((state) => {
+      const bibliography = state.bibliographies[id];
+      if (!bibliography) return {};
+      return {
+        bibliographies: {
+          ...state.bibliographies,
+          [id]: {
+            ...bibliography,
+            entries: bibliography.entries.filter((entry) => entry.id !== entryId),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
+  },
+  
+  updateBibliographyEntry: (id, entryId, patch) => {
+    set((state) => {
+      const bibliography = state.bibliographies[id];
+      if (!bibliography) return {};
+      return {
+        bibliographies: {
+          ...state.bibliographies,
+          [id]: {
+            ...bibliography,
+            entries: bibliography.entries.map((entry) => (entry.id === entryId ? { ...entry, ...patch } : entry)),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
+  },
+  
+  moveBibliographyEntry: (id, entryId, direction) => {
+    set((state) => {
+      const bibliography = state.bibliographies[id];
+      if (!bibliography) return {};
+      const index = bibliography.entries.findIndex((entry) => entry.id === entryId);
+      const target = index + direction;
+      if (index === -1 || target < 0 || target >= bibliography.entries.length) return {};
+      const entries = [...bibliography.entries];
+      [entries[index], entries[target]] = [entries[target], entries[index]];
+      return {
+        bibliographies: {
+          ...state.bibliographies,
+          [id]: { ...bibliography, entries, updatedAt: new Date().toISOString() },
+        },
+      };
+    });
+  },
   
   // Queries
   getProjectFiles: (projectId, folderId = null) => {

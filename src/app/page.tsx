@@ -7,6 +7,8 @@ import Sidebar from '@/components/layout/Sidebar';
 import Toaster from '@/components/ui/Toaster';
 import DialogHost from '@/components/ui/DialogHost';
 import ContextMenuHost from '@/components/ui/ContextMenu';
+import GlobalSearchDialog from '@/components/search/GlobalSearchDialog';
+import GraphView from '@/components/graph/GraphView';
 import { useAppEngines } from '@/components/app/useAppEngines';
 import { useApp } from '@/store/app';
 import { cn } from '@/lib/utils';
@@ -55,6 +57,8 @@ export default function Home() {
       </div>
       <Toaster />
       <DialogHost />
+      <GlobalSearchDialog />
+      <GraphView />
       <ContextMenuHost />
     </div>
   );

@@ -447,14 +447,22 @@ export async function readDocumentText(path: string, maxChars = 40_000): Promise
   const name = baseName(path);
   const ext = extensionOf(name);
   if (isExternalPath(path)) {
-    // Files referenced in place are read through the external file commands;
-    // only plain-text notes have text worth sending to the AI.
-    if (NOTE_EXTENSIONS.includes(ext)) {
-      const bytes = await readExternalFileBytes(path);
-      const text = new TextDecoder().decode(bytes).replace(/\r\n?/g, '\n');
-      return { name, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+    // Files referenced in place are read through the external file commands,
+    // extracted exactly like their workspace counterparts.
+    const bytes = await readExternalFileBytes(path);
+    if (ext === 'pdf') {
+      const extracted: ExtractedPdfText = await extractPdfText(bytes, maxChars);
+      return { name, text: extracted.text, pageCount: extracted.pageCount, truncated: extracted.truncated };
     }
-    return { name, text: '', truncated: false };
+    if (BOOK_EXTENSIONS.includes(ext)) {
+      const extracted = await extractBookText(bytes, name, maxChars);
+      return { name, text: extracted.text, truncated: extracted.truncated };
+    }
+    if (IMAGE_EXTENSIONS.includes(ext)) {
+      return { name, text: '', truncated: false };
+    }
+    const text = new TextDecoder().decode(bytes).replace(/\r\n?/g, '\n');
+    return { name, text: text.slice(0, maxChars), truncated: text.length > maxChars };
   }
   if (ext === 'pdf') {
     const bytes = await readFileBytes(path);

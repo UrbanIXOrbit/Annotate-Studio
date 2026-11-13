@@ -27,6 +27,7 @@ import {
   Scissors,
   ClipboardPaste,
   BookMarked,
+  LibraryBig,
   AlertTriangle,
   CheckCircle2,
   X,
@@ -36,6 +37,7 @@ import { openExternalFile, revealExternalFile, errorMessage } from '@/lib/tauri-
 import { appConfirm } from '@/lib/ui-dialogs';
 import { isCitationCapable } from '@/lib/book-citations';
 import { CitationsDialog } from './CitationsDialog';
+import { BibliographyDialog } from './BibliographyDialog';
 import { AddCitationDialog } from './AddCitationDialog';
 import { openBookFileOnCanvas } from './canvas-open';
 import { useBooksVirtualRows } from './useVirtualRows';
@@ -418,11 +420,18 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   /** Batch citations dialog, with the file scope frozen at open time */
   const [citationsOpen, setCitationsOpen] = useState(false);
   const [citationScope, setCitationScope] = useState<string[]>([]);
+  /** Saved bibliographies dialog, seeded with the same view selection */
+  const [bibliographiesOpen, setBibliographiesOpen] = useState(false);
+  const [bibliographySeed, setBibliographySeed] = useState<string[] | undefined>(undefined);
   /** Per-book Add citation dialog, opened from a row's "…" menu */
   const [addCitationFileId, setAddCitationFileId] = useState<string | null>(null);
   const openCitations = (ids: string[]) => {
     setCitationScope(ids);
     setCitationsOpen(true);
+  };
+  const openBibliographies = (ids: string[]) => {
+    setBibliographySeed(ids);
+    setBibliographiesOpen(true);
   };
 
   const files = searchQuery
@@ -751,6 +760,25 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           <button
             type="button"
             className="btn btn-sm btn-ghost"
+            onClick={() => openBibliographies(
+              (selectedFileIds.length > 0 ? selectedFileIds : files.map((f) => f.id)).filter((id) => {
+                const target = libraryFiles[id];
+                return !!target && isCitationCapable(target.extension);
+              }),
+            )}
+            disabled={files.length === 0}
+            title={
+              selectedFileIds.length > 0
+                ? 'Start or open a saved bibliography with the selected books'
+                : 'Start or open a saved bibliography for every book in this view'
+            }
+          >
+            <LibraryBig size={14} />
+            Bibliography
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
             onClick={handleVerify}
             disabled={verifying || Object.keys(libraryFiles).length === 0}
             title="Check every referenced file against the disk and flag the missing ones"
@@ -982,6 +1010,7 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
       </div>
 
       <CitationsDialog open={citationsOpen} onClose={() => setCitationsOpen(false)} fileIds={citationScope} />
+      <BibliographyDialog open={bibliographiesOpen} onClose={() => setBibliographiesOpen(false)} seedFileIds={bibliographySeed} />
 
       <AddCitationDialog
         key={addCitationFileId ?? 'none'}

@@ -5,19 +5,13 @@ import { AlertTriangle, BookMarked, Check, Copy, Download, Eye, Loader2, RotateC
 import { toast } from '@/store/toast';
 import { useBooks, type BookCitation, type BookFile } from '@/store/books';
 import { citationReview, extractCitationFromFile, findDuplicates, isCitationCapable, lookupByIsbn } from '@/lib/book-citations';
-import {
-  CITATION_STYLES,
-  EXPORT_FORMATS,
-  renderBibliographyRich,
-  renderExport,
-  type CitationStyle,
-  type ExportFormat,
-} from '@/lib/citation-formats';
+import { EXPORT_FORMATS, renderBibliographyRich, renderExport, type CitationStyle, type ExportFormat } from '@/lib/citation-formats';
 import { saveExportedFile } from '@/lib/export-file';
 import { errorMessage } from '@/lib/tauri-commands';
 import { copyRichText, copyText } from '@/lib/utils';
 import Dialog from '@/components/ui/Dialog';
 import { AddCitationDialog } from './AddCitationDialog';
+import { CitationStylePicker, ExportFormatPicker } from './CitationPickers';
 
 interface CitationsDialogProps {
   open: boolean;
@@ -395,31 +389,13 @@ export function CitationsDialog({ open, onClose, fileIds }: CitationsDialogProps
 
         <div className="citations-output">
           <div className="citations-output-toolbar">
-            <select
-              className="input input-sm"
+            <CitationStylePicker
               value={style}
-              onChange={(e) => setStyle(e.target.value as CitationStyle)}
+              onChange={setStyle}
               disabled={exportFormat !== 'txt'}
-              title={exportFormat === 'txt' ? 'Citation style' : 'Styles apply to formatted text output only'}
-            >
-              {CITATION_STYLES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input input-sm"
-              value={exportFormat}
-              onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
-              aria-label="Export format"
-            >
-              {EXPORT_FORMATS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+              disabledTitle="Styles apply to formatted text output only"
+            />
+            <ExportFormatPicker value={exportFormat} onChange={setExportFormat} />
             <span className="citations-output-spacer" />
             <button type="button" className="btn btn-sm btn-secondary" onClick={handleCopy} disabled={!withCitations.length}>
               <Copy size={14} />

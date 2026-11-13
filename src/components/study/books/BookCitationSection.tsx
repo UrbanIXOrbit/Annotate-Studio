@@ -20,6 +20,7 @@ import { errorMessage } from '@/lib/tauri-commands';
 import { cn, copyRichText } from '@/lib/utils';
 import { AuthorsEditor } from './AuthorsEditor';
 import { CitationCandidateList } from './CitationCandidateList';
+import { CitationStylePicker } from './CitationPickers';
 
 const SOURCE_LABEL_SHORT: Record<string, string> = {
   file: 'file',
@@ -533,18 +534,7 @@ export function BookCitationSection({ fileId }: { fileId: string }) {
           )}
           {provenance && <p className="citation-provenance">{provenance}</p>}
           <div className="citation-toolbar">
-            <select
-              className="input input-sm citation-style-select"
-              value={style}
-              onChange={(e) => setStyle(e.target.value as CitationStyle)}
-              aria-label="Citation style"
-            >
-              {CITATION_STYLES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
+            <CitationStylePicker value={style} onChange={setStyle} />
             <span className={`citation-badge citation-badge-${citation.source}`}>
               {citation.source === 'enriched' ? <Check size={11} /> : null}
               {citation.source === 'embedded' ? 'From file' : citation.source === 'enriched' ? 'Verified online' : 'Manual'}

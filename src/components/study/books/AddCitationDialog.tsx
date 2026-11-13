@@ -19,6 +19,7 @@ import Dialog from '@/components/ui/Dialog';
 import { CITATION_STYLES, type CitationStyle } from '@/lib/citation-formats';
 import { CitationCandidateList } from './CitationCandidateList';
 import { SourceStatusChips, SourceSummary } from './SourceStatusChips';
+import { CitationStylePicker } from './CitationPickers';
 
 const SOURCE_KEYS = Object.keys(SOURCE_LABELS);
 const SOURCES_STORE_KEY = 'citation-sources-disabled';
@@ -380,17 +381,7 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
             </label>
             <label className="citation-field citation-style-row">
               <span>Preview style</span>
-              <select
-                className="input input-sm citation-style-select"
-                value={style}
-                onChange={(e) => changeStyle(e.target.value as CitationStyle)}
-              >
-                {CITATION_STYLES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
+              <CitationStylePicker value={style} onChange={changeStyle} />
             </label>
             <CitationCandidateList
               candidates={candidates}

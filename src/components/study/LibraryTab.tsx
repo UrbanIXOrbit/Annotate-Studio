@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   BookOpen,
   BookOpenCheck,
+  BookText,
   ExternalLink,
   FileImage,
   FileText,
@@ -14,19 +15,28 @@ import {
   Layers,
   MoreHorizontal,
   NotebookPen,
+  Network,
   Pencil,
   RefreshCw,
   ScrollText,
   Search,
+  Star,
+  Tag,
+  TextSearch,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import { openContextMenu, type MenuEntry } from '@/components/ui/ContextMenu';
 import { currentNoteText, noteExportMenu } from '@/lib/note-export-actions';
+import { allTags, matchFile, parseTagInput, tagUsageCount, type CollectionCriteria, type FileMeta, type SavedCollection } from '@/lib/library-metadata';
 import { useLibrary } from '@/store/library';
 import { useSettings } from '@/store/settings';
 import { useApp } from '@/store/app';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
+import { useSearch } from '@/store/search';
+import { useGraph } from '@/store/graph';
+import ReportCompilerDialog from '@/components/study/ReportCompilerDialog';
 import { confirmDialog, promptDialog } from '@/store/dialogs';
 import type { FileType, StudyFile } from '@/lib/tauri-commands';
 import {
@@ -67,11 +77,65 @@ const TYPE_META: Record<FileType, { label: string; icon: React.ReactNode; tone: 
   Unknown: { label: 'File', icon: <FileText size={26} />, tone: 'tone-slate' },
 };
 
+/** Map a criteria's fileTypes back onto the filter chips; unknown sets stay on All. */
+function filterForTypes(fileTypes: string[] | undefined): Filter {
+  if (!fileTypes || fileTypes.length === 0) return 'all';
+  return FILTERS.find((entry) => entry.types.length === fileTypes.length && entry.types.every((type) => fileTypes.includes(type)))?.id ?? 'all';
+}
+
+/** Inline tags + note editor on a file card. */
+function FileMetaEditor({
+  meta,
+  onSave,
+  onClose,
+}: {
+  meta: FileMeta;
+  onSave: (tags: string[], note: string) => void;
+  onClose: () => void;
+}) {
+  const [tagsText, setTagsText] = useState(meta.tags.join(', '));
+  const [noteText, setNoteText] = useState(meta.note ?? '');
+  return (
+    <div className="file-card-editor" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+      <div className="file-card-editor-row">
+        <Tag size={13} />
+        <input
+          className="input input-sm"
+          value={tagsText}
+          placeholder="Tags, comma separated"
+          onChange={(event) => setTagsText(event.target.value)}
+          onKeyDown={(event) => event.key === 'Enter' && onSave(parseTagInput(tagsText), noteText)}
+          dir="auto"
+        />
+      </div>
+      <textarea
+        className="textarea input-sm file-card-editor-note"
+        value={noteText}
+        placeholder="Private note about this file…"
+        onChange={(event) => setNoteText(event.target.value)}
+        rows={2}
+        dir="auto"
+      />
+      <div className="file-card-editor-actions">
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => onSave(parseTagInput(tagsText), noteText.trim())}>
+          Save
+        </button>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function LibraryTab() {
   const files = useLibrary((state) => state.files);
   const loading = useLibrary((state) => state.loading);
   const refresh = useLibrary((state) => state.refresh);
   const recent = useSettings((state) => state.recentFiles);
+  const fileMeta = useSettings((state) => state.fileMeta);
+  const collections = useSettings((state) => state.collections);
+  const { toggleFileStar, setFileMeta, createCollection, updateCollection, deleteCollection, renameTagEverywhere, removeTagEverywhere } = useSettings.getState();
   const resources = useCanvas((state) => activeWorkspace(state).resources);
   const openSet = useMemo(() => new Set(resources.map((r) => r.filePath).filter((p): p is string => Boolean(p))), [resources]);
   const setView = useApp((state) => state.setView);
@@ -79,15 +143,33 @@ export default function LibraryTab() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('recent');
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [compileOpen, setCompileOpen] = useState(false);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const visible = useMemo(() => {
+  // The criteria of the current manual controls; a collection is the same
+  // shape saved under a name, so both paths share the matcher.
+  const currentCriteria = useMemo<CollectionCriteria>(() => {
     const types = FILTERS.find((f) => f.id === filter)?.types ?? [];
-    const needle = query.trim().toLowerCase();
-    const list = files.filter((file) => (types.length === 0 || types.includes(file.file_type)) && (!needle || file.name.toLowerCase().includes(needle)));
+    return {
+      ...(types.length > 0 ? { fileTypes: types } : {}),
+      ...(query.trim() ? { query: query.trim() } : {}),
+      ...(tagFilter.length > 0 ? { tags: tagFilter } : {}),
+      ...(starredOnly ? { starred: true } : {}),
+    };
+  }, [filter, query, tagFilter, starredOnly]);
+
+  const activeCollection = activeCollectionId ? collections.find((collection) => collection.id === activeCollectionId) ?? null : null;
+
+  const visible = useMemo(() => {
+    const criteria = activeCollection ? activeCollection.criteria : currentCriteria;
+    const list = files.filter((file) => matchFile(file, fileMeta[file.path], criteria));
     return [...list].sort((a, b) => {
       switch (sort) {
         case 'name':
@@ -100,7 +182,37 @@ export default function LibraryTab() {
           return (recent[b.path] ?? Date.parse(b.modified_at)) - (recent[a.path] ?? Date.parse(a.modified_at));
       }
     });
-  }, [files, filter, query, sort, recent]);
+  }, [files, fileMeta, currentCriteria, activeCollection, sort, recent]);
+
+  const tags = useMemo(() => allTags(fileMeta), [fileMeta]);
+  const starredCount = useMemo(() => Object.values(fileMeta).filter((meta) => meta.starred).length, [fileMeta]);
+  const filtersActive = Boolean(query.trim()) || filter !== 'all' || tagFilter.length > 0 || starredOnly;
+
+  const applyCollection = (collection: SavedCollection) => {
+    setActiveCollectionId(collection.id);
+    setQuery(collection.criteria.query ?? '');
+    setFilter(filterForTypes(collection.criteria.fileTypes));
+    setTagFilter(collection.criteria.tags ?? []);
+    setStarredOnly(collection.criteria.starred === true);
+  };
+  const clearCollection = () => {
+    setActiveCollectionId(null);
+    setQuery('');
+    setFilter('all');
+    setTagFilter([]);
+    setStarredOnly(false);
+  };
+
+  const saveCurrentSearch = async () => {
+    const name = await promptDialog({
+      title: 'Save collection',
+      label: 'Name',
+      placeholder: 'e.g. Exam prep papers',
+      confirmLabel: 'Save',
+    });
+    if (!name) return;
+    createCollection(name, currentCriteria);
+  };
 
   const open = (file: StudyFile) => {
     if (!resourceTypeFor(file)) {
@@ -134,10 +246,18 @@ export default function LibraryTab() {
   };
 
   const menuFor = (file: StudyFile): MenuEntry[] => {
+    const meta = fileMeta[file.path];
     const items: MenuEntry[] = [];
     if (resourceTypeFor(file)) items.push({ label: 'Open on canvas', icon: <ExternalLink size={13} />, onSelect: () => open(file) });
+    items.push({
+      label: meta?.starred ? 'Unstar' : 'Star',
+      icon: <Star size={13} className={meta?.starred ? 'starred-icon' : undefined} />,
+      onSelect: () => toggleFileStar(file.path),
+    });
+    items.push({ label: 'Tags & note…', icon: <Tag size={13} />, onSelect: () => setEditingPath(file.path) });
     if (file.file_type !== 'Image' && file.file_type !== 'Audio') {
       items.push(
+        'separator',
         { label: 'Summarize with AI', icon: <ScrollText size={13} />, onSelect: () => requestChat({ kind: 'summarize', title: file.name, path: file.path }) },
         { label: 'Explain step by step', icon: <BookOpenCheck size={13} />, onSelect: () => requestChat({ kind: 'explain', topic: displayTitle(file), path: file.path }) },
         { label: 'Make flashcards', icon: <Layers size={13} />, onSelect: () => requestChat({ kind: 'flashcards', title: file.name, text: '', path: file.path }) },
@@ -156,6 +276,66 @@ export default function LibraryTab() {
     return items;
   };
 
+  const tagMenu = (tag: string): MenuEntry[] => {
+    const count = tagUsageCount(fileMeta, tag);
+    return [
+      {
+        label: `Rename everywhere (${count} file${count === 1 ? '' : 's'})…`,
+        icon: <Pencil size={13} />,
+        onSelect: async () => {
+          const name = await promptDialog({
+            title: `Rename “${tag}” on all files`,
+            initialValue: tag,
+            confirmLabel: 'Rename',
+            validate: (value) => (value.trim() ? null : 'Please enter a tag name'),
+          });
+          if (name) renameTagEverywhere(tag, name);
+        },
+      },
+      {
+        label: `Remove from all files (${count})`,
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onSelect: async () => {
+          const ok = await confirmDialog({
+            title: `Remove “${tag}” everywhere?`,
+            message: `The tag is taken off ${count} file${count === 1 ? '' : 's'}. Files and their other tags are not touched.`,
+            confirmLabel: 'Remove tag',
+            danger: true,
+          });
+          if (ok) {
+            removeTagEverywhere(tag);
+            setTagFilter((current) => current.filter((entry) => entry.toLowerCase() !== tag.toLowerCase()));
+          }
+        },
+      },
+    ];
+  };
+
+  const collectionMenu = (collection: SavedCollection): MenuEntry[] => [
+    { label: 'Show results', icon: <Search size={13} />, onSelect: () => applyCollection(collection) },
+    {
+      label: 'Rename…',
+      icon: <Pencil size={13} />,
+      onSelect: async () => {
+        const name = await promptDialog({ title: 'Rename collection', initialValue: collection.name, confirmLabel: 'Rename' });
+        if (name) updateCollection(collection.id, { name });
+      },
+    },
+    {
+      label: 'Delete collection',
+      icon: <Trash2 size={13} />,
+      danger: true,
+      onSelect: async () => {
+        const ok = await confirmDialog({ title: `Delete “${collection.name}”?`, message: 'The collection is only a saved filter — files are not touched.', confirmLabel: 'Delete', danger: true });
+        if (ok) {
+          deleteCollection(collection.id);
+          if (activeCollectionId === collection.id) clearCollection();
+        }
+      },
+    },
+  ];
+
   return (
     <div className="page">
       <header className="page-header">
@@ -168,6 +348,22 @@ export default function LibraryTab() {
         <div className="page-actions">
           <button type="button" className="btn btn-ghost" onClick={() => void refresh()} title="Refresh">
             <RefreshCw size={15} className={loading ? 'spin' : undefined} />
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Compile notes, highlights and bibliography into one report"
+            onClick={() => setCompileOpen(true)}
+          >
+            <BookText size={15} /> Compile
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Knowledge graph — see what links to what"
+            onClick={() => useGraph.getState().show()}
+          >
+            <Network size={15} /> Graph
           </button>
           <button
             type="button"
@@ -188,11 +384,27 @@ export default function LibraryTab() {
       <div className="library-controls">
         <div className="search-field">
           <Search size={15} />
-          <input className="input" value={query} placeholder="Search files…" onChange={(event) => setQuery(event.target.value)} dir="auto" />
+          <input className="input" value={query} placeholder="Search names, tags, notes…" onChange={(event) => setQuery(event.target.value)} dir="auto" />
         </div>
+        <button
+          type="button"
+          className="btn btn-ghost library-search-contents"
+          title="Search inside notes, PDFs and books (⌘K / Ctrl+K)"
+          onClick={() => useSearch.getState().show()}
+        >
+          <TextSearch size={15} /> Search contents <kbd>⌘K</kbd>
+        </button>
         <div className="segmented">
           {FILTERS.map((entry) => (
-            <button key={entry.id} type="button" className={cn(filter === entry.id && 'active')} onClick={() => setFilter(entry.id)}>
+            <button
+              key={entry.id}
+              type="button"
+              className={cn(filter === entry.id && 'active')}
+              onClick={() => {
+                setFilter(entry.id);
+                setActiveCollectionId(null);
+              }}
+            >
               {entry.label}
             </button>
           ))}
@@ -205,16 +417,91 @@ export default function LibraryTab() {
         </select>
       </div>
 
+      {(collections.length > 0 || filtersActive || tags.length > 0 || starredCount > 0) && (
+        <div className="library-facets" role="toolbar" aria-label="Collections and tags">
+          <span className="library-facets-label">Collections</span>
+          {collections.map((collection) => (
+            <button
+              key={collection.id}
+              type="button"
+              className={cn('facet-chip', activeCollectionId === collection.id && 'facet-chip-active')}
+              onClick={() => applyCollection(collection)}
+              onContextMenu={(event) => openContextMenu(event, collectionMenu(collection))}
+              title={`${collection.name} — right-click to rename or delete`}
+            >
+              <Search size={11} />
+              {collection.name}
+            </button>
+          ))}
+          {filtersActive && (
+            <button type="button" className="facet-chip facet-chip-action" onClick={() => void saveCurrentSearch()} title="Save the current filters as a collection">
+              Save this search
+            </button>
+          )}
+          {activeCollection && (
+            <button type="button" className="facet-chip facet-chip-clear" onClick={clearCollection} title="Stop using this collection">
+              <X size={11} /> Clear
+            </button>
+          )}
+          {tags.length > 0 && <span className="library-facets-label">Tags</span>}
+          {starredCount > 0 && (
+            <button
+              type="button"
+              className={cn('facet-chip', starredOnly && 'facet-chip-active')}
+              onClick={() => {
+                setStarredOnly((current) => !current);
+                setActiveCollectionId(null);
+              }}
+            >
+              <Star size={11} className={starredOnly ? 'starred-icon' : undefined} />
+              Starred
+            </button>
+          )}
+          {tags.map((tag) => {
+            const active = tagFilter.some((entry) => entry.toLowerCase() === tag.toLowerCase());
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={cn('facet-chip facet-chip-tag', active && 'facet-chip-active')}
+                onClick={() => {
+                  setTagFilter((current) => (active ? current.filter((entry) => entry.toLowerCase() !== tag.toLowerCase()) : [...current, tag]));
+                  setActiveCollectionId(null);
+                }}
+                onContextMenu={(event) => openContextMenu(event, tagMenu(tag))}
+                title={`${tag} — click to filter, right-click to rename or remove everywhere`}
+              >
+                <Tag size={11} />
+                {tag}
+              </button>
+            );
+          })}
+          {(tagFilter.length > 0 || starredOnly) && activeCollection === null && (
+            <button
+              type="button"
+              className="facet-chip facet-chip-clear"
+              onClick={() => {
+                setTagFilter([]);
+                setStarredOnly(false);
+              }}
+            >
+              <X size={11} /> Clear
+            </button>
+          )}
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div className="empty-state">
           <FolderOpen size={40} strokeWidth={1.4} />
-          <h2>{query || filter !== 'all' ? 'No matching files' : 'Your library is empty'}</h2>
-          <p>{query || filter !== 'all' ? 'Try another search or filter.' : 'Import PDFs, audio, images or notes, or drop them onto the window.'}</p>
+          <h2>{filtersActive || activeCollection ? 'No matching files' : 'Your library is empty'}</h2>
+          <p>{filtersActive || activeCollection ? 'Try another search or filter.' : 'Import PDFs, audio, images or notes, or drop them onto the window.'}</p>
         </div>
       ) : (
         <div className="library-grid">
           {visible.map((file) => {
             const meta = TYPE_META[file.file_type] ?? TYPE_META.Unknown;
+            const fileMetaEntry = fileMeta[file.path];
             return (
               <div
                 key={file.path}
@@ -240,20 +527,57 @@ export default function LibraryTab() {
                     <span>{formatRelativeTime(recent[file.path] ?? file.modified_at)}</span>
                     {openSet.has(file.path) && <span className="badge tone-primary">On canvas</span>}
                   </div>
+                  {(fileMetaEntry?.tags.length ?? 0) > 0 && (
+                    <div className="file-card-tags">
+                      {fileMetaEntry!.tags.slice(0, 3).map((tag) => (
+                        <span key={tag} className="file-card-tag">
+                          #{tag}
+                        </span>
+                      ))}
+                      {fileMetaEntry!.tags.length > 3 && <span className="file-card-tag file-card-tag-more">+{fileMetaEntry!.tags.length - 3}</span>}
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  className="icon-btn file-card-menu"
-                  onClick={(event) => openContextMenu(event, menuFor(file))}
-                  title="More actions"
-                >
-                  <MoreHorizontal size={16} />
-                </button>
+                <div className="file-card-actions">
+                  <button
+                    type="button"
+                    className={cn('icon-btn file-card-star', fileMetaEntry?.starred && 'starred')}
+                    title={fileMetaEntry?.starred ? 'Unstar' : 'Star'}
+                    aria-label={fileMetaEntry?.starred ? 'Unstar file' : 'Star file'}
+                    aria-pressed={!!fileMetaEntry?.starred}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleFileStar(file.path);
+                    }}
+                  >
+                    <Star size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn file-card-menu"
+                    onClick={(event) => openContextMenu(event, menuFor(file))}
+                    title="More actions"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                </div>
+                {editingPath === file.path && (
+                  <FileMetaEditor
+                    meta={fileMetaEntry ?? { tags: [] }}
+                    onSave={(tagsForFile, note) => {
+                      setFileMeta(file.path, { tags: tagsForFile, note });
+                      setEditingPath(null);
+                    }}
+                    onClose={() => setEditingPath(null)}
+                  />
+                )}
               </div>
             );
           })}
         </div>
       )}
+
+      {compileOpen && <ReportCompilerDialog onClose={() => setCompileOpen(false)} />}
     </div>
   );
 }

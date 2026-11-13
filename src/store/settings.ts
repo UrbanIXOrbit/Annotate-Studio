@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { isTauri, loadSettings, saveSettings } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
-import { clamp } from '@/lib/utils';
+import { clamp, uid } from '@/lib/utils';
+import { normalizeTags, removeTagFromMetas, renameTagInMetas, type FileMeta, type SavedCollection } from '@/lib/library-metadata';
 
 export const THEME_IDS = ['white', 'black', 'sepia', 'gray', 'forest', 'ocean', 'lavender', 'rose'] as const;
 export type ThemeMode = (typeof THEME_IDS)[number];
@@ -54,6 +55,10 @@ export interface PersistedSettings {
   externalFiles: string[];
   /** Place new canvas items at the pointer's last canvas position instead of auto-placing them. */
   newItemAtPointer: boolean;
+  /** Per-file app metadata (tags, star, private note) keyed by file path — never copied files. */
+  fileMeta: Record<string, FileMeta>;
+  /** Saved live filters (collections) evaluated against the current library. */
+  collections: SavedCollection[];
 }
 
 export const DEFAULT_SETTINGS: PersistedSettings = {
@@ -79,6 +84,8 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   noteFolder: '',
   externalFiles: [],
   newItemAtPointer: false,
+  fileMeta: {},
+  collections: [],
 };
 
 interface SettingsStore extends PersistedSettings {
@@ -90,6 +97,18 @@ interface SettingsStore extends PersistedSettings {
   updateNoteClip: (patch: Partial<NoteClipSettings>) => void;
   touchRecent: (path: string) => void;
   forgetRecent: (path: string) => void;
+  setFileMeta: (path: string, patch: Partial<Omit<FileMeta, 'tags'>> & { tags?: string[] }) => void;
+  toggleFileStar: (path: string) => void;
+  setFileTags: (path: string, tags: string[]) => void;
+  /** Rename a tag on every file that carries it. */
+  renameTagEverywhere: (from: string, to: string) => void;
+  /** Remove a tag from every file that carries it. */
+  removeTagEverywhere: (tag: string) => void;
+  /** Drop metadata for paths that no longer exist in the library. */
+  pruneFileMeta: (existingPaths: string[]) => void;
+  createCollection: (name: string, criteria: SavedCollection['criteria']) => string;
+  updateCollection: (id: string, patch: Partial<Pick<SavedCollection, 'name' | 'criteria'>>) => void;
+  deleteCollection: (id: string) => void;
 }
 
 function isHexColor(value: unknown): value is string {
@@ -192,7 +211,52 @@ function sanitize(raw: unknown): PersistedSettings {
       ? [...new Set(data.externalFiles.filter((entry): entry is string => typeof entry === 'string' && /^([a-zA-Z]:[\\/]|[/\\])/.test(entry)))].slice(0, 400)
       : defaults.externalFiles,
     newItemAtPointer: bool(data.newItemAtPointer, defaults.newItemAtPointer),
+    fileMeta: sanitizeFileMeta(data.fileMeta),
+    collections: sanitizeCollections(data.collections),
   };
+}
+
+const MAX_FILE_META = 500;
+
+function sanitizeFileMeta(raw: unknown): Record<string, FileMeta> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, FileMeta> = {};
+  for (const [path, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!path || !value || typeof value !== 'object') continue;
+    const entry = value as Record<string, unknown>;
+    const tags = normalizeTags(Array.isArray(entry.tags) ? entry.tags.filter((t): t is string => typeof t === 'string') : []);
+    const note = typeof entry.note === 'string' ? entry.note.slice(0, 2000) : undefined;
+    const starred = entry.starred === true ? true : undefined;
+    if (tags.length === 0 && !note && !starred) continue;
+    out[path] = { tags, ...(note ? { note } : {}), ...(starred ? { starred } : {}) };
+  }
+  // Cap the registry so a very old, very large library cannot grow it forever.
+  const entries = Object.entries(out);
+  if (entries.length <= MAX_FILE_META) return out;
+  return Object.fromEntries(entries.slice(0, MAX_FILE_META));
+}
+
+function sanitizeCollections(raw: unknown): SavedCollection[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 50)
+    .map((item, index): SavedCollection | null => {
+      if (!item || typeof item !== 'object') return null;
+      const data = item as Record<string, unknown>;
+      const criteriaRaw = (data.criteria && typeof data.criteria === 'object' ? data.criteria : {}) as Record<string, unknown>;
+      return {
+        id: typeof data.id === 'string' && data.id ? data.id : `collection-${index}`,
+        name: typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, 60) : `Collection ${index + 1}`,
+        criteria: {
+          ...(typeof criteriaRaw.query === 'string' && criteriaRaw.query.trim() ? { query: criteriaRaw.query.slice(0, 200) } : {}),
+          ...(Array.isArray(criteriaRaw.fileTypes) ? { fileTypes: criteriaRaw.fileTypes.filter((t): t is string => typeof t === 'string').slice(0, 12) } : {}),
+          ...(Array.isArray(criteriaRaw.tags) ? { tags: normalizeTags(criteriaRaw.tags.filter((t): t is string => typeof t === 'string')) } : {}),
+          ...(criteriaRaw.starred === true ? { starred: true } : {}),
+        },
+        createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString(),
+      };
+    })
+    .filter((item): item is SavedCollection => !!item);
 }
 
 function snapshot(state: SettingsStore): PersistedSettings {
@@ -211,6 +275,8 @@ function snapshot(state: SettingsStore): PersistedSettings {
     noteFolder: state.noteFolder,
     externalFiles: state.externalFiles,
     newItemAtPointer: state.newItemAtPointer,
+    fileMeta: state.fileMeta,
+    collections: state.collections,
   };
 }
 
@@ -250,6 +316,75 @@ export const useSettings = create<SettingsStore>((set, get) => ({
       delete next[path];
       return { recentFiles: next };
     }),
+  setFileMeta: (path, patch) =>
+    set((state) => {
+      const current = state.fileMeta[path] ?? { tags: [] };
+      const next: FileMeta = {
+        tags: patch.tags ? normalizeTags(patch.tags) : current.tags,
+        ...(patch.starred !== undefined ? { starred: patch.starred || undefined } : { starred: current.starred }),
+        ...(patch.note !== undefined ? { note: patch.note || undefined } : { note: current.note }),
+      };
+      const fileMeta = { ...state.fileMeta };
+      // An empty record is not worth keeping.
+      if (next.tags.length === 0 && !next.starred && !next.note) delete fileMeta[path];
+      else fileMeta[path] = next;
+      return { fileMeta };
+    }),
+  toggleFileStar: (path) =>
+    set((state) => {
+      const current = state.fileMeta[path] ?? { tags: [] };
+      const starred = !current.starred;
+      const next: FileMeta = { tags: current.tags, ...(starred ? { starred: true } : {}), ...(current.note ? { note: current.note } : {}) };
+      const fileMeta = { ...state.fileMeta };
+      if (next.tags.length === 0 && !starred && !next.note) delete fileMeta[path];
+      else fileMeta[path] = next;
+      return { fileMeta };
+    }),
+  setFileTags: (path, tags) => {
+    get().setFileMeta(path, { tags });
+  },
+  renameTagEverywhere: (from, to) =>
+    set((state) => {
+      const next = renameTagInMetas(state.fileMeta, from, to);
+      if (next === state.fileMeta) return state;
+      return { fileMeta: next };
+    }),
+  removeTagEverywhere: (tag) =>
+    set((state) => {
+      const next = removeTagFromMetas(state.fileMeta, tag);
+      if (next === state.fileMeta) return state;
+      return { fileMeta: next };
+    }),
+  pruneFileMeta: (existingPaths) =>
+    set((state) => {
+      const alive = new Set(existingPaths);
+      const fileMeta = Object.fromEntries(Object.entries(state.fileMeta).filter(([path]) => alive.has(path)));
+      if (Object.keys(fileMeta).length === Object.keys(state.fileMeta).length) return state;
+      return { fileMeta };
+    }),
+  createCollection: (name, criteria) => {
+    const collection: SavedCollection = {
+      id: uid(),
+      name: name.trim().slice(0, 60) || 'Untitled collection',
+      criteria,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({ collections: [...state.collections, collection].slice(-50) }));
+    return collection.id;
+  },
+  updateCollection: (id, patch) =>
+    set((state) => ({
+      collections: state.collections.map((collection) =>
+        collection.id === id
+          ? {
+              ...collection,
+              ...(patch.name !== undefined ? { name: patch.name.trim().slice(0, 60) || collection.name } : {}),
+              ...(patch.criteria !== undefined ? { criteria: patch.criteria } : {}),
+            }
+          : collection,
+      ),
+    })),
+  deleteCollection: (id) => set((state) => ({ collections: state.collections.filter((collection) => collection.id !== id) })),
 }));
 
 useSettings.subscribe((state, previous) => {

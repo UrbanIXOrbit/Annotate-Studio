@@ -119,6 +119,11 @@ export const useNotes = create<NotesStore>((set, get) => {
           const latest = get().buffers[path];
           patch(path, { saving: false, dirty: latest ? latest.content !== content : false, savedAt: Date.now(), error: null });
           if (file) useLibrary.getState().upsert(file);
+          // The link index (backlinks/graph) re-reads just this file. Dynamic
+          // import keeps the notes → graph edge cycle-safe.
+          void import('./graph')
+            .then((graph) => graph.refreshPath(path))
+            .catch(() => undefined);
         })
         .catch((error: unknown) => {
           patch(path, { saving: false, error: error instanceof Error ? error.message : String(error) });
@@ -146,6 +151,13 @@ export const useNotes = create<NotesStore>((set, get) => {
       if (get().buffers[newPath]?.dirty) {
         timers.set(newPath, setTimeout(() => void get().save(newPath), SAVE_DELAY));
       }
+      // The link index is path-keyed: forget the old path, index the new one.
+      void import('./graph')
+        .then((graph) => {
+          graph.forgetPath(oldPath);
+          graph.refreshPath(newPath);
+        })
+        .catch(() => undefined);
     },
     reset: (path, content) => {
       const current = get().buffers[path];

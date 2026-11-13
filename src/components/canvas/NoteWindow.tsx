@@ -1,13 +1,16 @@
 'use client';
 
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bold,
+  ChevronDown,
+  ChevronRight,
   Code,
   Columns2,
   Eye,
   FileDown,
+  Ghost,
   Heading2,
   Italic,
   Link2,
@@ -23,18 +26,98 @@ import MarkdownEditor, { type MarkdownEditorHandle } from '@/components/markdown
 import MarkdownRenderer from '@/components/markdown/MarkdownRenderer';
 import { openContextMenu } from '@/components/ui/ContextMenu';
 import { noteExportMenu } from '@/lib/note-export-actions';
+import { lineForLink } from '@/lib/link-graph';
 import { useNotes } from '@/store/notes';
 import { useLibrary } from '@/store/library';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
+import { computeGraph, useGraph } from '@/store/graph';
+import { openFileOnCanvas, openWikiLink } from '@/lib/workspace-actions';
 import { cn } from '@/lib/utils';
 
 type Mode = 'edit' | 'split' | 'preview';
 
 const modeMemory = new Map<string, Mode>();
+/** Whether the backlinks strip is open, remembered per window. */
+const linksMemory = new Map<string, boolean>();
 
 function wordCount(text: string): number {
   const words = text.trim().match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu);
   return words ? words.length : 0;
+}
+
+/** Collapsible strip under the note body: what links here, and the note's
+ * dangling links. Rows open the target next to this window. */
+function BacklinksPanel({
+  resourceId,
+  backlinks,
+  unresolved,
+  docs,
+}: {
+  resourceId: string;
+  path: string;
+  backlinks: { from: string; target: string }[];
+  unresolved: string[];
+  docs: Map<string, { path: string; title: string; markdown: string }>;
+}) {
+  // null = follow automatically (open once the note has backlinks).
+  const [choice, setChoice] = useState<boolean | null>(() => {
+    const remembered = linksMemory.get(resourceId);
+    return remembered === undefined ? null : remembered;
+  });
+  const open = choice ?? backlinks.length > 0;
+  const toggle = () => {
+    const next = !open;
+    linksMemory.set(resourceId, next);
+    setChoice(next);
+  };
+
+  return (
+    <div className="note-links" data-no-drag>
+      <button type="button" className="note-links-toggle" onClick={toggle} aria-expanded={open}>
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <Link2 size={12} />
+        Links here ({backlinks.length})
+        {unresolved.length > 0 && <span className="note-links-phantom-count">{unresolved.length} unresolved</span>}
+      </button>
+      {open && (
+        <div className="note-links-body">
+          {backlinks.length === 0 && <div className="note-links-empty">No notes link here yet — write [[This note's name]] elsewhere.</div>}
+          {backlinks.map((link, index) => {
+            const doc = docs.get(link.from);
+            const snippet = doc ? lineForLink(doc.markdown, link.target) : '';
+            return (
+              <button
+                key={`${link.from}:${link.target}:${index}`}
+                type="button"
+                className="note-links-row"
+                title={`Open “${doc?.title ?? link.from}”`}
+                onClick={() => {
+                  const file = useLibrary.getState().files.find((candidate) => candidate.path === link.from);
+                  if (file) openFileOnCanvas(file, { near: resourceId });
+                }}
+              >
+                <span className="note-links-row-title">{doc?.title ?? link.from}</span>
+                {snippet && <span className="note-links-row-snippet">{snippet}</span>}
+              </button>
+            );
+          })}
+          {unresolved.length > 0 && (
+            <>
+              <div className="note-links-section">
+                <Ghost size={12} /> Unresolved links — notes that don't exist yet
+              </div>
+              {unresolved.map((target) => (
+                <button key={target} type="button" className="note-links-row note-links-row-phantom" onClick={() => void openWikiLink(target, resourceId)}>
+                  <span className="note-links-row-title">{target}</span>
+                  <span className="note-links-row-hint">Create or open…</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function NoteWindow({ resourceId, path, title }: { resourceId: string; path: string; title: string }) {
@@ -46,6 +129,20 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
   const maximized = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.maximized ?? false);
   const [mode, setModeState] = useState<Mode>(() => modeMemory.get(resourceId) ?? (width >= 760 ? 'split' : 'edit'));
   const editorRef = useRef<MarkdownEditorHandle>(null);
+  // Backlinks/graph index: recomputed when the index revision changes or the
+  // window moves to another file (typing updates it on the next debounced save).
+  const revision = useGraph((state) => state.revision);
+  const links = useMemo(() => {
+    const model = computeGraph();
+    const outgoing = model.outgoing.get(path) ?? [];
+    const unresolved = [...new Set(outgoing.filter((link) => !link.resolved).map((link) => link.target))];
+    return {
+      backlinks: (model.backlinks.get(path) ?? []).filter((link) => link.resolved),
+      unresolved,
+      docs: model.docs,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision, path]);
 
   const setMode = (next: Mode) => {
     modeMemory.set(resourceId, next);
@@ -187,6 +284,9 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
           </div>
         )}
       </div>
+      {links && (links.backlinks.length > 0 || links.unresolved.length > 0) && (
+        <BacklinksPanel resourceId={resourceId} path={path} backlinks={links.backlinks} unresolved={links.unresolved} docs={links.docs} />
+      )}
     </div>
   );
 }

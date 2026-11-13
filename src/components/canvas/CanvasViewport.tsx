@@ -14,6 +14,7 @@ import MinimizedDock from './MinimizedDock';
 import { openContextMenu } from '@/components/ui/ContextMenu';
 import { activeWorkspace, hiddenResourceIds, screenToWorld, useActiveWorkspace, useCanvas, visibleWorldRect, type CanvasStore } from '@/store/canvas';
 import { useApp } from '@/store/app';
+import { useSearch } from '@/store/search';
 import { toast } from '@/store/toast';
 import { useConnectUi } from '@/store/connect';
 import { webviewZoomFactor } from '@/store/settings';
@@ -217,6 +218,10 @@ export default function CanvasViewport() {
         }
       } else if (mod && key === 'z' && !event.shiftKey) state.undo();
       else if (mod && (key === 'y' || (key === 'z' && event.shiftKey))) state.redo();
+      else if (mod && key === 'k') {
+        event.preventDefault();
+        useSearch.getState().show();
+      }
       else if (mod && (key === '=' || key === '+')) {
         if (!frozen) state.zoomAt(current.view.zoom * 1.2);
       } else if (mod && key === '-') {

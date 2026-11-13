@@ -66,6 +66,8 @@ export const useLibrary = create<LibraryStore>((set) => ({
           useSettings.getState().update({ externalFiles: kept });
         }
         const merged = sortFiles([...files, ...externalFiles]);
+        // Metadata is keyed by path; drop entries whose file left the library.
+        useSettings.getState().pruneFileMeta(merged.map((file) => file.path));
         set({ files: merged, loading: false, loaded: true, error: null });
         return merged;
       } catch (error: unknown) {
