@@ -9,6 +9,7 @@ import DialogHost from '@/components/ui/DialogHost';
 import ContextMenuHost from '@/components/ui/ContextMenu';
 import GlobalSearchDialog from '@/components/search/GlobalSearchDialog';
 import GraphView from '@/components/graph/GraphView';
+import ScratchCaptureDialog from '@/components/canvas/ScratchCaptureDialog';
 import { useAppEngines } from '@/components/app/useAppEngines';
 import { useApp } from '@/store/app';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,7 @@ import { cn } from '@/lib/utils';
 const CanvasZone = dynamic(() => import('@/components/canvas/CanvasZone'), { ssr: false });
 const ChatPanel = dynamic(() => import('@/components/chatbot/ChatPanel'), { ssr: false });
 const LibraryTab = dynamic(() => import('@/components/study/LibraryTab'), { ssr: false });
+const InboxTab = dynamic(() => import('@/components/study/InboxTab'), { ssr: false });
 const AnnotationsTab = dynamic(() => import('@/components/study/AnnotationsTab'), { ssr: false });
 const FlashcardsTab = dynamic(() => import('@/components/study/flashcards/FlashcardsTab'), { ssr: false });
 const ExamsTab = dynamic(() => import('@/components/study/exams/ExamsTab'), { ssr: false });
@@ -42,6 +44,7 @@ export default function Home() {
             {!onCanvas && (
               <div className="view view-visible view-scroll">
                 {view === 'library' && <LibraryTab />}
+                {view === 'inbox' && <InboxTab />}
                 {view === 'annotations' && <AnnotationsTab />}
                 {view === 'flashcards' && <FlashcardsTab />}
                 {view === 'exams' && <ExamsTab />}
@@ -59,6 +62,7 @@ export default function Home() {
       <DialogHost />
       <GlobalSearchDialog />
       <GraphView />
+      <ScratchCaptureDialog />
       <ContextMenuHost />
     </div>
   );

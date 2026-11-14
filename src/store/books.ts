@@ -245,9 +245,9 @@ interface BooksActions {
   createBibliography: (name: string, style?: CitationStyle, entryFileIds?: string[]) => string;
   updateBibliography: (id: string, patch: Partial<Pick<Bibliography, 'title' | 'style'>>) => void;
   deleteBibliography: (id: string) => void;
-  addBibliographyEntries: (id: string, entries: Array<Pick<BibliographyEntry, 'fileId' | 'manual' | 'section'>>) => void;
+  addBibliographyEntries: (id: string, entries: Array<Pick<BibliographyEntry, 'fileId' | 'manual'>>) => void;
   removeBibliographyEntry: (id: string, entryId: string) => void;
-  updateBibliographyEntry: (id: string, entryId: string, patch: Partial<Pick<BibliographyEntry, 'included' | 'section'>>) => void;
+  updateBibliographyEntry: (id: string, entryId: string, patch: Partial<Pick<BibliographyEntry, 'included'>>) => void;
   moveBibliographyEntry: (id: string, entryId: string, direction: -1 | 1) => void;
   
   // Queries
@@ -453,7 +453,6 @@ function migrateBooksState(raw: unknown): BooksState {
                 ...(typeof rec.fileId === 'string' && validFileIds.has(rec.fileId) ? { fileId: rec.fileId } : {}),
                 ...(rec.manual && typeof rec.manual === 'object' ? { manual: migrateBookCitation(rec.manual) ?? undefined } : {}),
                 included: rec.included !== false,
-                ...(typeof rec.section === 'string' && rec.section.trim() ? { section: rec.section.trim() } : {}),
               };
             })
             .filter((row): row is BibliographyEntry => !!row && (!!row.fileId || !!row.manual))
@@ -1205,12 +1204,12 @@ export const useBooks = create<BooksStore>((set, get) => ({
         if (row.fileId) {
           if (existingFiles.has(row.fileId)) continue;
           existingFiles.add(row.fileId);
-          fresh.push({ id: uid(), fileId: row.fileId, included: true, ...(row.section ? { section: row.section } : {}) });
+          fresh.push({ id: uid(), fileId: row.fileId, included: true });
         } else if (row.manual) {
           const key = row.manual.title.toLowerCase();
           if (existingManual.has(key)) continue;
           existingManual.add(key);
-          fresh.push({ id: uid(), manual: row.manual, included: true, ...(row.section ? { section: row.section } : {}) });
+          fresh.push({ id: uid(), manual: row.manual, included: true });
         }
       }
       if (fresh.length === 0) return {};

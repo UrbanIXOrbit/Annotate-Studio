@@ -15,8 +15,6 @@ export interface BibliographyEntry {
   manual?: BookCitation;
   /** Omitted rows stay in the list but are excluded from the output. */
   included: boolean;
-  /** Optional grouping label ("Primary sources", "Background reading", …). */
-  section?: string;
 }
 
 /** A named, persisted bibliography. */
@@ -46,7 +44,6 @@ export interface ResolvedEntry {
   missing: boolean;
   /** Another included entry earlier in the list describes the same work. */
   duplicateOfId?: string;
-  section?: string;
 }
 
 /** Sort key for author–date styles: first author's family name, then year, then title. */
@@ -77,7 +74,6 @@ export function resolveBibliographyEntries(files: Record<string, BibliographyFil
         citation: file?.citation ?? null,
         label: file ? file.displayName || file.name : entry.manual?.title ?? 'Missing source',
         missing: !file,
-        section: entry.section,
       };
     }
     return {
@@ -85,7 +81,6 @@ export function resolveBibliographyEntries(files: Record<string, BibliographyFil
       citation: entry.manual ?? null,
       label: entry.manual?.title ?? 'Manual entry',
       missing: false,
-      section: entry.section,
     };
   });
 
@@ -109,7 +104,6 @@ export function resolveBibliographyEntries(files: Record<string, BibliographyFil
 export function orderBibliography(resolved: ResolvedEntry[], style: CitationStyle): ResolvedEntry[] {
   if (style === 'vancouver') return [...resolved];
   return [...resolved].sort((a, b) => {
-    if (a.section !== b.section) return (a.section ?? '').localeCompare(b.section ?? '');
     const keyA = a.citation ? citationSortKey(a.citation) : `~${a.label.toLowerCase()}`;
     const keyB = b.citation ? citationSortKey(b.citation) : `~${b.label.toLowerCase()}`;
     return keyA.localeCompare(keyB);

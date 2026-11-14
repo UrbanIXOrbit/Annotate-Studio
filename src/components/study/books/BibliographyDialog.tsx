@@ -485,7 +485,6 @@ export function BibliographyDialog({ open, onClose, seedFileIds }: BibliographyD
                   item={item}
                   style={selected.style}
                   onInclude={(included) => updateBibliographyEntry(selected.id, item.entry.id, { included })}
-                  onSection={(section) => updateBibliographyEntry(selected.id, item.entry.id, { section })}
                   onMove={(direction) => moveBibliographyEntry(selected.id, item.entry.id, direction)}
                   onRemove={() => removeBibliographyEntry(selected.id, item.entry.id)}
                   onFix={item.entry.fileId && !item.missing && !item.citation ? () => setFixFileId(item.entry.fileId!) : undefined}
@@ -557,12 +556,11 @@ export function BibliographyDialog({ open, onClose, seedFileIds }: BibliographyD
   );
 }
 
-/** One bibliography entry: include checkbox, formatted citation, section, controls. */
+/** One bibliography entry: include checkbox, formatted citation, controls. */
 function BibliographyRow({
   item,
   style,
   onInclude,
-  onSection,
   onMove,
   onRemove,
   onFix,
@@ -570,7 +568,6 @@ function BibliographyRow({
   item: ResolvedEntry;
   style: CitationStyle;
   onInclude: (included: boolean) => void;
-  onSection: (section: string) => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
   onFix?: () => void;
@@ -605,14 +602,6 @@ function BibliographyRow({
           </span>
         )}
       </div>
-      <input
-        className="input input-sm bib-section"
-        placeholder="Section"
-        value={entry.section ?? ''}
-        onChange={(event) => onSection(event.target.value)}
-        aria-label="Section label"
-        dir="auto"
-      />
       <div className="bib-row-actions">
         <button type="button" className="icon-btn" title="Move up" onClick={() => onMove(-1)}>
           <ChevronUp size={13} />

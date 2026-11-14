@@ -12,6 +12,7 @@ import {
   Film,
   FolderOpen,
   Headphones,
+  Inbox,
   Layers,
   MoreHorizontal,
   NotebookPen,
@@ -36,6 +37,7 @@ import { useApp } from '@/store/app';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { useSearch } from '@/store/search';
 import { useGraph } from '@/store/graph';
+import { openInboxSection } from '@/lib/scratch-actions';
 import ReportCompilerDialog from '@/components/study/ReportCompilerDialog';
 import { confirmDialog, promptDialog } from '@/store/dialogs';
 import type { FileType, StudyFile } from '@/lib/tauri-commands';
@@ -364,6 +366,14 @@ export default function LibraryTab() {
             onClick={() => useGraph.getState().show()}
           >
             <Network size={15} /> Graph
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Open the Inbox board where quick captures land"
+            onClick={() => openInboxSection()}
+          >
+            <Inbox size={15} /> Inbox
           </button>
           <button
             type="button"

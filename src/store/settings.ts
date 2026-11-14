@@ -29,6 +29,12 @@ export interface ChatLayout {
   height: number;
 }
 
+/** A named capture note created from the composer ("Reading log", "Ideas", …). */
+export interface CaptureNoteRef {
+  name: string;
+  path: string;
+}
+
 export interface NoteClipSettings {
   /** Path of the note text was last copied to from a PDF (shown first in the picker). */
   lastNote: string;
@@ -51,6 +57,10 @@ export interface PersistedSettings {
   recordingFolder: string;
   /** Folder new notes are created in, picked by the user at creation time like recordings. */
   noteFolder: string;
+  /** Inbox note captures go to; blank = Inbox.md in the notes folder. */
+  inboxNotePath: string;
+  /** Extra named capture notes offered next to the default Inbox. */
+  captureNotes: CaptureNoteRef[];
   /** Absolute paths of files kept outside the workspace that the library references in place. */
   externalFiles: string[];
   /** Place new canvas items at the pointer's last canvas position instead of auto-placing them. */
@@ -82,6 +92,8 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   noteClip: { lastNote: '', highlight: true },
   recordingFolder: '',
   noteFolder: '',
+  inboxNotePath: '',
+  captureNotes: [],
   externalFiles: [],
   newItemAtPointer: false,
   fileMeta: {},
@@ -207,6 +219,8 @@ function sanitize(raw: unknown): PersistedSettings {
     },
     recordingFolder: typeof data.recordingFolder === 'string' ? data.recordingFolder.slice(0, 4000) : defaults.recordingFolder,
     noteFolder: typeof data.noteFolder === 'string' ? data.noteFolder.slice(0, 4000) : defaults.noteFolder,
+    inboxNotePath: typeof data.inboxNotePath === 'string' ? data.inboxNotePath.slice(0, 4000) : defaults.inboxNotePath,
+    captureNotes: sanitizeCaptureNotes(data.captureNotes),
     externalFiles: Array.isArray(data.externalFiles)
       ? [...new Set(data.externalFiles.filter((entry): entry is string => typeof entry === 'string' && /^([a-zA-Z]:[\\/]|[/\\])/.test(entry)))].slice(0, 400)
       : defaults.externalFiles,
@@ -234,6 +248,22 @@ function sanitizeFileMeta(raw: unknown): Record<string, FileMeta> {
   const entries = Object.entries(out);
   if (entries.length <= MAX_FILE_META) return out;
   return Object.fromEntries(entries.slice(0, MAX_FILE_META));
+}
+
+function sanitizeCaptureNotes(raw: unknown): CaptureNoteRef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CaptureNoteRef[] = [];
+  const seen = new Set<string>();
+  for (const item of raw.slice(0, 40)) {
+    if (!item || typeof item !== 'object') continue;
+    const entry = item as Record<string, unknown>;
+    const path = typeof entry.path === 'string' ? entry.path.trim() : '';
+    if (!path || !/^([a-zA-Z]:[\\/]|[/\\])/.test(path) || seen.has(path)) continue;
+    seen.add(path);
+    const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim().slice(0, 60) : 'Capture';
+    out.push({ name, path });
+  }
+  return out;
 }
 
 function sanitizeCollections(raw: unknown): SavedCollection[] {
@@ -273,6 +303,8 @@ function snapshot(state: SettingsStore): PersistedSettings {
     noteClip: state.noteClip,
     recordingFolder: state.recordingFolder,
     noteFolder: state.noteFolder,
+    inboxNotePath: state.inboxNotePath,
+    captureNotes: state.captureNotes,
     externalFiles: state.externalFiles,
     newItemAtPointer: state.newItemAtPointer,
     fileMeta: state.fileMeta,

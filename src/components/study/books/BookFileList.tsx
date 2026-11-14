@@ -39,6 +39,7 @@ import { isCitationCapable } from '@/lib/book-citations';
 import { CitationsDialog } from './CitationsDialog';
 import { BibliographyDialog } from './BibliographyDialog';
 import { AddCitationDialog } from './AddCitationDialog';
+import ImportBibtexDialog from './ImportBibtexDialog';
 import { openBookFileOnCanvas } from './canvas-open';
 import { useBooksVirtualRows } from './useVirtualRows';
 import { IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
@@ -405,6 +406,8 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   } = useBooks();
 
   const [importing, setImporting] = useState(false);
+  /** Path of a Zotero .bib file awaiting review in the import dialog */
+  const [bibtexPath, setBibtexPath] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   /** Outcome of the last import/verify — a dismissible banner, cleared when the view changes */
   const [notice, setNotice] = useState<ActionNotice | null>(null);
@@ -495,6 +498,23 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   const handlePaste = () => {
     const count = pasteFromClipboard(projectId, selectedFolderId);
     if (count === 0) alert('Those files are already in this location.');
+  };
+
+  const handleImportBibtex = async () => {
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: 'BibTeX', extensions: ['bib', 'txt'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      if (!picked) return;
+      setBibtexPath(Array.isArray(picked) ? picked[0] : picked);
+    } catch (error) {
+      alert(errorMessage(error));
+    }
   };
 
   const handleImport = async () => {
@@ -788,6 +808,15 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
           </button>
           <button
             type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => void handleImportBibtex()}
+            title="Import a Zotero-exported .bib file and match its entries to files in this project"
+          >
+            <BookMarked size={14} />
+            Import .bib
+          </button>
+          <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={handleImport}
             disabled={importing}
@@ -1018,6 +1047,8 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
         onClose={() => setAddCitationFileId(null)}
         fileId={addCitationFileId}
       />
+
+      {bibtexPath && <ImportBibtexDialog path={bibtexPath} onClose={() => setBibtexPath(null)} />}
     </div>
   );
 }

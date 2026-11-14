@@ -8,6 +8,7 @@ import {
   FolderOpen,
   HeartHandshake,
   Highlighter,
+  Inbox,
   Layers,
   LayoutGrid,
   Settings,
@@ -29,6 +30,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { view: 'canvas', label: 'Canvas', icon: <LayoutGrid size={19} />, shortcut: 'Ctrl+1' },
   { view: 'library', label: 'Library', icon: <FolderOpen size={19} />, shortcut: 'Ctrl+2' },
+  { view: 'inbox', label: 'Inbox', icon: <Inbox size={19} />, shortcut: 'Ctrl+9' },
   { view: 'books', label: 'Books', icon: <FileStack size={19} />, shortcut: 'Ctrl+3' },
   { view: 'annotations', label: 'Annotations', icon: <Highlighter size={19} />, shortcut: 'Ctrl+4' },
   { view: 'flashcards', label: 'Flashcards', icon: <Layers size={19} />, shortcut: 'Ctrl+5' },

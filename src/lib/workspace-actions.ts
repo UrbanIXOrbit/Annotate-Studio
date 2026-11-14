@@ -248,7 +248,7 @@ export async function pickAndImport(kind: 'pdf' | 'image' | 'note' | 'audiobook'
  * folder picker (persisted afterwards) exactly like the recording flow. The
  * picker defaults to the workspace notes folder but may be anywhere on disk.
  */
-async function resolveNoteFolder(): Promise<string | null> {
+export async function resolveNoteFolder(): Promise<string | null> {
   const settings = useSettings.getState();
   if (settings.noteFolder) return settings.noteFolder;
   if (!isTauri()) {

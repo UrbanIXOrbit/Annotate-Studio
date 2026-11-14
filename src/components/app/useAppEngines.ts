@@ -30,6 +30,7 @@ const VIEW_KEYS: Record<string, ViewMode> = {
   '5': 'exams',
   '6': 'pomodoro',
   '7': 'motivation',
+  '9': 'inbox',
   ',': 'settings',
 };
 

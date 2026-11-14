@@ -9606,11 +9606,6 @@ input[type='checkbox'] {
   color: var(--text-primary);
 }
 
-.bib-section {
-  width: 110px;
-  flex-shrink: 0;
-}
-
 .bib-row-actions {
   display: flex;
   align-items: center;
@@ -10383,4 +10378,288 @@ input[type='checkbox'] {
   content: '';
   display: block;
   height: 16px;
+}
+
+/* ---------- BibTeX import (Zotero interop) ---------- */
+
+.bibtex {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bibtex-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 4px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.bibtex-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.bibtex-summary-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.bibtex-summary-warn {
+  color: var(--warning, #b45309);
+  border-color: color-mix(in srgb, var(--warning, #b45309) 35%, transparent);
+}
+
+.bibtex-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  background: var(--bg-elevated);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.bibtex-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 9px;
+  border-radius: var(--radius-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.bibtex-row:last-child {
+  border-bottom: none;
+}
+
+.bibtex-row:hover {
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.bibtex-row-citation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bibtex-row-citation .badge {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.bibtex-row-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.bibtex-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-left: 2px;
+}
+
+.bibtex-row-controls .select {
+  flex: 1;
+  min-width: 220px;
+  max-width: 380px;
+}
+
+.bibtex-replace {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bibtex-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px;
+  margin: 0;
+}
+
+.bibtex-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bibtex-target-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.bibtex-target .select {
+  min-width: 180px;
+}
+
+.bibtex-keywords {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.bibtex-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.bibtex-footer-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* Breathing room after the footer, so the last row scrolls clear of the dialog edge. */
+.bibtex::after {
+  content: '';
+  display: block;
+  height: 16px;
+}
+
+.bibtex-footer-warn {
+  font-size: 11.5px;
+  color: var(--warning);
+  max-width: 210px;
+  line-height: 1.35;
+}
+
+.bibtex-error {
+  display: flex;
+  gap: 10px;
+  padding: 14px 12px;
+  margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--warning);
+}
+
+.bibtex-error-title {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bibtex-error-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+/* ---------- Capture composer (scratch/inbox notes) ---------- */
+
+.capture {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capture-input {
+  min-height: 120px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.capture-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.capture-target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.capture-target .select {
+  min-width: 150px;
+}
+
+.capture-name {
+  width: 170px;
+}
+
+.capture-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.capture-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.capture-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.capture-footer-spacer {
+  flex: 1;
+}
+
+/* Capture button + its inbox caret read as one control. */
+.toolbar-split {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.toolbar-btn-caret {
+  padding: 0 3px;
+  min-width: 18px;
+  color: var(--text-muted);
 }
