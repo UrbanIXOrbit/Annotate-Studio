@@ -9,7 +9,7 @@ import {
   readExternalFileBytes,
   writeExternalFileBytes,
 } from './tauri-commands';
-import { appendCapture, captureNoteName } from './scratch-note';
+import { appendCapture, captureNoteName, withLineEndings } from './scratch-note';
 import { baseName, stripExtension } from './utils';
 import { useApp } from '@/store/app';
 import { useCanvas } from '@/store/canvas';
@@ -158,6 +158,11 @@ export async function readCaptureNote(path: string): Promise<string | null> {
   return readNoteIfPresent(path);
 }
 
+/** Disk-only read, used to roll back a failed board write. */
+export async function readCaptureFile(path: string): Promise<string | null> {
+  return readNoteIfPresent(path);
+}
+
 /**
  * Write board edits back to the note. When the note is open, its buffer is
  * updated and saved through the notes store (preserving its line endings);
@@ -168,11 +173,14 @@ export async function writeCaptureNote(path: string, content: string, lineEnding
     const notes = useNotes.getState();
     const buffer = notes.buffers[path];
     if (buffer && buffer.status === 'ready' && buffer.editable) {
-      notes.edit(path, content);
+      // Editor buffers are LF-normalized by design; notes.save() puts the
+      // file's own endings back using buffer.lineEnding. Converting before
+      // edit() here would double the CR characters on save.
+      notes.edit(path, withLineEndings(content, '\n'));
       await notes.save(path);
       return true;
     }
-    const payload = lineEnding === '\r\n' ? content.replace(/\r?\n/g, '\r\n') : content;
+    const payload = withLineEndings(content, lineEnding);
     await writeExternalFileBytes(path, new TextEncoder().encode(payload));
     // The link index re-reads just this note, so [[links]] stay accurate.
     void import('@/store/graph').then((graph) => graph.refreshPath(path)).catch(() => undefined);

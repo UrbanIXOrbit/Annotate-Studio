@@ -4,16 +4,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
+  Copy,
   ExternalLink,
   Inbox as InboxIcon,
-  Loader2,
   Pencil,
   RefreshCw,
   RotateCcw,
   Trash2,
 } from 'lucide-react';
 import {
+  cardKey,
   endOfDayGroup,
+  findCard,
   laneCounts,
   laneSections,
   moveCard,
@@ -27,6 +29,7 @@ import {
 import {
   inboxPathFor,
   openCaptureNote,
+  readCaptureFile,
   readCaptureNote,
   resolveInboxPath,
   writeCaptureNote,
@@ -36,7 +39,9 @@ import { useInbox } from '@/store/inbox';
 import { useNotes } from '@/store/notes';
 import { useScratch } from '@/store/scratch';
 import { useSettings } from '@/store/settings';
-import { cn } from '@/lib/utils';
+import { useToasts } from '@/store/toast';
+import { baseName, cn, stripExtension } from '@/lib/utils';
+import { beginInboxDrag, cancelInboxDrag, type InboxDragSnapshot, type InboxDropTarget } from './inbox-dnd';
 
 const LANES: Array<{ id: InboxLane; label: string; hint: string }> = [
   { id: 'inbox', label: 'Inbox', hint: 'Fresh captures' },
@@ -59,10 +64,8 @@ interface BoardCardProps {
   onCancel: () => void;
   onDelete: () => void;
   onLane: (lane: InboxLane) => void;
-  onDragStart: (event: React.DragEvent) => void;
-  onDragEnd: () => void;
-  onDragOver: (event: React.DragEvent) => void;
-  onDrop: (event: React.DragEvent) => void;
+  onCopy: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 }
 
 /** One capture. Double-click (or the pencil) edits the markdown line in place. */
@@ -77,10 +80,8 @@ function BoardCard({
   onCancel,
   onDelete,
   onLane,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
+  onCopy,
+  onPointerDown,
 }: BoardCardProps) {
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -100,16 +101,14 @@ function BoardCard({
         hint === 'after' && 'inbox-card-after',
         editing && 'inbox-card-editing',
       )}
-      draggable={!editing}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onDoubleClick={onEdit}
+      data-inbox-card={card.start}
+      data-inbox-key={cardKey(card)}
+      data-inbox-lane={card.lane}
+      onPointerDown={editing ? undefined : onPointerDown}
     >
       <div className="inbox-card-head">
         <span className="inbox-card-time">{card.time ?? '—'}</span>
-        <div className="inbox-card-actions">
+        <div className="inbox-card-actions" onDoubleClick={(event) => event.stopPropagation()}>
           {card.lane !== 'todo' && (
             <button type="button" className="icon-btn icon-btn-sm" title="Move to To do" onClick={() => onLane('todo')}>
               <ArrowRight size={12} />
@@ -127,6 +126,9 @@ function BoardCard({
           )}
           <button type="button" className="icon-btn icon-btn-sm" title="Edit capture" onClick={onEdit}>
             <Pencil size={12} />
+          </button>
+          <button type="button" className="icon-btn icon-btn-sm" title="Copy capture text" onClick={onCopy}>
+            <Copy size={12} />
           </button>
           <button
             type="button"
@@ -189,12 +191,17 @@ export default function InboxTab() {
   const path = selectedPath ?? defaultPath;
 
   const [content, setContent] = useState<string | null>(null);
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const [lineEnding, setLineEnding] = useState<'\n' | '\r\n'>('\n');
   const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<number | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [hint, setHint] = useState<{ start: number; where: 'before' | 'after' } | null>(null);
+  const [drag, setDrag] = useState<InboxDragSnapshot>({ dragging: null, target: null });
+
+  // Board edits are queued and re-read at execution time, so two quick actions
+  // (or a background refresh) can never overwrite each other with stale text.
+  const pendingRef = useRef<Promise<void>>(Promise.resolve());
+  const busyRef = useRef(0);
 
   // While the note is open in a window its buffer is the source of truth, so
   // the board never shows an older copy than the editor.
@@ -204,7 +211,9 @@ export default function InboxTab() {
     return buffer && buffer.status === 'ready' && buffer.editable ? buffer.content : undefined;
   });
 
-  const text = live ?? content ?? '';
+  const loaded = loadedPath === path ? content : null;
+  const hasContent = live !== undefined || loaded !== null;
+  const text = live ?? loaded ?? '';
   const cards = useMemo(() => parseInbox(text), [text]);
   const counts = useMemo(() => laneCounts(cards), [cards]);
   const total = counts.inbox + counts.todo + counts.done;
@@ -212,12 +221,14 @@ export default function InboxTab() {
   const load = useCallback(async () => {
     if (!path) {
       setContent(null);
+      setLoadedPath(null);
       return;
     }
     setLoading(true);
     try {
       const read = await readCaptureNote(path);
       setContent(read);
+      setLoadedPath(path);
       if (read !== null) setLineEnding(read.includes('\r\n') ? '\r\n' : '\n');
     } finally {
       setLoading(false);
@@ -228,38 +239,75 @@ export default function InboxTab() {
     void load();
   }, [load]);
 
+  const reload = useCallback(() => {
+    if (busyRef.current === 0) void load();
+  }, [load]);
+
   // Captures are written while the composer is open; refresh as it closes.
   const wasComposing = useRef(false);
   useEffect(() => {
-    if (wasComposing.current && !composing) void load();
+    if (wasComposing.current && !composing) reload();
     wasComposing.current = composing;
-  }, [composing, load]);
+  }, [composing, reload]);
 
   // External edits (or a sync client) land while the window is elsewhere.
   useEffect(() => {
-    const onFocus = () => void load();
+    const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [load]);
+  }, [reload]);
 
   // Switching notes should not carry an open editor or drag state across.
   useEffect(() => {
-    setEditing(null);
+    cancelInboxDrag();
+    setEditingKey(null);
     setDraft('');
-    setDragging(null);
-    setHint(null);
+    setDrag({ dragging: null, target: null });
   }, [path]);
 
-  const apply = useCallback(
-    async (next: string) => {
-      if (!path) return;
-      setContent(next);
-      await writeCaptureNote(path, next, lineEnding);
+  // A pointer drag lives on window listeners; drop them if the board unmounts.
+  useEffect(() => cancelInboxDrag, []);
+
+  /**
+   * Queue a board edit. The change runs against the note as it exists when its
+   * turn comes — not the text captured by an older render — and a failed write
+   * rolls back to the file on disk rather than the optimistic editor buffer.
+   */
+  const applyChange = useCallback(
+    (change: (current: string) => string | null) => {
+      busyRef.current += 1;
+      const task = pendingRef.current.then(async () => {
+        if (!path) return;
+        const current = await readCaptureNote(path);
+        if (current === null) return;
+        const next = change(current);
+        if (!next || next === current) return;
+        setContent(next);
+        setLoadedPath(path);
+        const written = await writeCaptureNote(path, next, lineEnding);
+        if (!written) {
+          const disk = await readCaptureFile(path);
+          // An open note's buffer still holds the optimistic edit; put the
+          // disk copy back there too, or the live buffer would show it again.
+          const notes = useNotes.getState();
+          const buffer = notes.buffers[path];
+          if (disk !== null && buffer && buffer.status === 'ready' && buffer.editable) {
+            notes.edit(path, disk.replace(/\r\n?/g, '\n'));
+          }
+          setContent(disk);
+          setLoadedPath(path);
+        }
+      });
+      const settled = task
+        .catch(() => undefined)
+        .finally(() => {
+          busyRef.current -= 1;
+        });
+      pendingRef.current = settled;
+      return settled;
     },
     [path, lineEnding],
   );
-
-  const cardAt = (start: number | null) => (start === null ? undefined : cards.find((card) => card.start === start));
 
   const capture = () => {
     const target = selectedPath && selectedPath !== defaultPath ? selectedPath : undefined;
@@ -267,29 +315,42 @@ export default function InboxTab() {
   };
 
   const beginEdit = (card: InboxCard) => {
-    setEditing(card.start);
+    setEditingKey(cardKey(card));
     setDraft(card.text);
   };
 
   const cancelEdit = () => {
-    setEditing(null);
+    setEditingKey(null);
     setDraft('');
   };
 
-  const saveEdit = async (card: InboxCard) => {
-    if (!draft.trim()) return;
-    const next = setCardText(text, card, draft);
-    setEditing(null);
-    setDraft('');
-    if (next !== text) await apply(next);
+  const saveEdit = (key: string, value: string) => {
+    if (!value.trim()) return;
+    void applyChange((current) => {
+      const card = findCard(parseInbox(current), key);
+      return card ? setCardText(current, card, value) : null;
+    });
+    cancelEdit();
   };
 
-  const moveLane = async (card: InboxCard, lane: InboxLane) => {
-    if (card.lane === lane) return;
-    await apply(setCardLane(text, card, lane));
+  const copyCard = async (card: InboxCard) => {
+    try {
+      await navigator.clipboard.writeText(card.text);
+      useToasts.getState().push({ kind: 'success', title: 'Capture copied' });
+    } catch {
+      useToasts.getState().push({ kind: 'error', title: 'Could not copy capture' });
+    }
+  };
+
+  const moveLane = (key: string, lane: InboxLane) => {
+    void applyChange((current) => {
+      const card = findCard(parseInbox(current), key);
+      return card && card.lane !== lane ? setCardLane(current, card, lane) : null;
+    });
   };
 
   const deleteCard = async (card: InboxCard) => {
+    const key = cardKey(card);
     const preview = card.text.split('\n')[0];
     const confirmed = await confirmDialog({
       title: 'Delete this capture?',
@@ -297,58 +358,50 @@ export default function InboxTab() {
       confirmLabel: 'Delete',
       danger: true,
     });
-    if (confirmed) await apply(removeCard(text, card));
+    if (!confirmed) return;
+    await applyChange((current) => {
+      const found = findCard(parseInbox(current), key);
+      return found ? removeCard(current, found) : null;
+    });
   };
 
-  const dropOnCard = async (target: InboxCard, where: 'before' | 'after') => {
-    const card = cardAt(dragging);
-    setDragging(null);
-    setHint(null);
-    if (!card || card.start === target.start) return;
-    // Visual order is newest-first inside a day, so "above the card" is the
-    // line after its block. Dropping onto another day keeps the capture under
-    // its own date heading and only changes the lane.
-    const insertAt =
-      target.heading === card.heading
-        ? where === 'before'
-          ? target.end + 1
-          : target.start
-        : endOfDayGroup(text, cards, card);
-    const next = moveCard(text, card, target.lane, insertAt);
-    if (next !== text) await apply(next);
+  const handleDrop = (sourceKey: string, target: InboxDropTarget) => {
+    void applyChange((current) => {
+      const cardsNow = parseInbox(current);
+      const card = findCard(cardsNow, sourceKey);
+      if (!card) return null;
+      if (target.key === null) {
+        if (card.lane === target.lane) return null;
+        return moveCard(current, card, target.lane, endOfDayGroup(current, cardsNow, card));
+      }
+      const targetCard = findCard(cardsNow, target.key);
+      if (!targetCard || targetCard.start === card.start) return null;
+      // Visual order is newest-first inside a day, so "above the card" is the
+      // line after its block. Dropping onto another day keeps the capture under
+      // its own date heading and only changes the lane.
+      const insertAt =
+        targetCard.heading === card.heading
+          ? target.where === 'before'
+            ? targetCard.end + 1
+            : targetCard.start
+          : endOfDayGroup(current, cardsNow, card);
+      return moveCard(current, card, target.lane, insertAt);
+    });
   };
 
-  const dropOnLane = async (lane: InboxLane) => {
-    const card = cardAt(dragging);
-    setDragging(null);
-    setHint(null);
-    if (!card || card.lane === lane) return;
-    const next = moveCard(text, card, lane, endOfDayGroup(text, cards, card));
-    if (next !== text) await apply(next);
-  };
-
-  const dragOverCard = (event: React.DragEvent, card: InboxCard) => {
-    const dragged = cardAt(dragging);
-    if (!dragged) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-    if (dragged.start === card.start || dragged.heading !== card.heading) {
-      setHint(null);
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const where = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-    setHint((current) =>
-      current && current.start === card.start && current.where === where ? current : { start: card.start, where },
-    );
-  };
-
-  const dragOverLane = (event: React.DragEvent) => {
-    if (dragging === null) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setHint(null);
+  const startCardDrag = (event: React.PointerEvent<HTMLElement>, card: InboxCard) => {
+    const key = cardKey(card);
+    if (editingKey === key) return;
+    beginInboxDrag(event, {
+      key,
+      label: card.text.split('\n')[0],
+      onDrop: handleDrop,
+      onDoubleClick: (sourceKey) => {
+        const tapped = findCard(cards, sourceKey);
+        if (tapped) beginEdit(tapped);
+      },
+      onState: setDrag,
+    });
   };
 
   if (!path) {
@@ -384,11 +437,13 @@ export default function InboxTab() {
     );
   }
 
+  const noteTitle = stripExtension(baseName(path));
+
   return (
     <div className="page inbox-page">
       <header className="page-header">
         <div>
-          <h1>Inbox</h1>
+          <h1>{noteTitle}</h1>
           <p>
             {total === 0
               ? 'Captures land here, then move across the board.'
@@ -403,12 +458,14 @@ export default function InboxTab() {
             aria-label="Capture note"
             title="Choose the note the board reads"
           >
-            <option value={defaultPath ?? ''}>Inbox</option>
-            {captureNotes.map((note) => (
-              <option key={note.path} value={note.path}>
-                {note.name}
-              </option>
-            ))}
+            <option value={defaultPath ?? ''}>{defaultPath ? stripExtension(baseName(defaultPath)) : 'Inbox'}</option>
+            {captureNotes
+              .filter((note) => note.path !== defaultPath)
+              .map((note) => (
+                <option key={note.path} value={note.path}>
+                  {stripExtension(baseName(note.path)) || note.name}
+                </option>
+              ))}
           </select>
           <button type="button" className="btn btn-ghost" onClick={() => void load()} title="Reload the note">
             <RefreshCw size={15} className={loading ? 'spin' : undefined} />
@@ -416,7 +473,7 @@ export default function InboxTab() {
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={content === null}
+            disabled={!hasContent}
             onClick={() => openCaptureNote(path)}
             title="Edit the raw markdown on the canvas"
           >
@@ -428,7 +485,7 @@ export default function InboxTab() {
         </div>
       </header>
 
-      {content === null && !loading ? (
+      {!hasContent && !loading ? (
         <div className="empty-state inbox-empty">
           <InboxIcon size={28} />
           <h2>No captures yet</h2>
@@ -442,18 +499,15 @@ export default function InboxTab() {
           </div>
         </div>
       ) : (
-        <div className={cn('inbox-board', dragging !== null && 'is-dragging')}>
+        <div className={cn('inbox-board', drag.dragging !== null && 'is-dragging')}>
           {LANES.map((lane) => {
             const sections = laneSections(cards, lane.id);
+            const laneTarget = drag.target?.lane === lane.id;
             return (
               <section
                 key={lane.id}
-                className="inbox-lane"
-                onDragOver={dragOverLane}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  void dropOnLane(lane.id);
-                }}
+                className={cn('inbox-lane', laneTarget && 'inbox-lane-drop')}
+                data-inbox-lane={lane.id}
               >
                 <header className="inbox-lane-head">
                   <h2>{lane.label}</h2>
@@ -473,33 +527,17 @@ export default function InboxTab() {
                           <BoardCard
                             key={card.start}
                             card={card}
-                            editing={editing === card.start}
+                            editing={editingKey === cardKey(card)}
                             draft={draft}
-                            hint={hint && hint.start === card.start ? hint.where : null}
+                            hint={drag.target && drag.target.key === cardKey(card) ? drag.target.where : null}
                             onDraft={setDraft}
                             onEdit={() => beginEdit(card)}
-                            onSave={() => void saveEdit(card)}
+                            onSave={() => saveEdit(cardKey(card), draft)}
                             onCancel={cancelEdit}
                             onDelete={() => void deleteCard(card)}
-                            onLane={(next) => void moveLane(card, next)}
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = 'move';
-                              event.dataTransfer.setData('text/plain', String(card.start));
-                              setDragging(card.start);
-                              setHint(null);
-                            }}
-                            onDragEnd={() => {
-                              setDragging(null);
-                              setHint(null);
-                            }}
-                            onDragOver={(event) => dragOverCard(event, card)}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              const rect = event.currentTarget.getBoundingClientRect();
-                              const where = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-                              void dropOnCard(card, where);
-                            }}
+                            onLane={(next) => moveLane(cardKey(card), next)}
+                            onCopy={() => void copyCard(card)}
+                            onPointerDown={(event) => startCardDrag(event, card)}
                           />
                         ))}
                       </div>

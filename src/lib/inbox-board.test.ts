@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  cardKey,
   endOfDayGroup,
+  findCard,
   laneCounts,
   laneSections,
   moveCard,
@@ -130,4 +132,48 @@ test('endOfDayGroup points before the next heading', () => {
   const lines = NOTE.split('\n');
   const index = endOfDayGroup(NOTE, cards, cards[0]);
   assert.equal(lines[index], '## Sat 15 Nov 2026');
+});
+
+test('endOfDayGroup keeps the trailing newline of the last day group', () => {
+  const text = '## Day\n- a\n';
+  const cards = parseInbox(text);
+  const at = endOfDayGroup(text, cards, cards[0]);
+  assert.equal(at, 2);
+  assert.equal(moveCard(text, cards[0], 'done', at), '## Day\n- [x] a\n');
+
+  const padded = '## Day\n- a\n\n\n';
+  const paddedCards = parseInbox(padded);
+  assert.equal(
+    moveCard(padded, paddedCards[0], 'done', endOfDayGroup(padded, paddedCards, paddedCards[0])),
+    '## Day\n- [x] a\n\n\n',
+  );
+});
+
+test('cardKey finds the same card after unrelated lines are inserted', () => {
+  const text = '# Inbox\n\n## Day\n- 09:05 — idea\n  more\n';
+  const card = parseInbox(text)[0];
+  const key = cardKey(card);
+  const shifted = text.replace('## Day', 'an intro line\n\n## Day');
+  const found = findCard(parseInbox(shifted), key);
+  assert.ok(found);
+  assert.equal(found.text, 'idea\nmore');
+  assert.equal(found.start, card.start + 2);
+  assert.equal(findCard(parseInbox('## Day\n- 09:05 — other\n'), key), undefined);
+});
+
+test('parseInbox ignores unrelated lists once the note has day groups', () => {
+  const text = `# Inbox
+
+## Projects
+- [ ] unrelated task
+
+## Sat 14 Nov 2026
+- 09:05 — real card
+`;
+  const cards = parseInbox(text);
+  assert.deepEqual(
+    cards.map((card) => [card.text, card.heading]),
+    [['real card', '## Sat 14 Nov 2026']],
+  );
+  assert.deepEqual(laneCounts(cards), { inbox: 1, todo: 0, done: 0 });
 });

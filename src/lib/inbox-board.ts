@@ -50,19 +50,30 @@ function isContinuation(line: string): boolean {
   return line.startsWith('  ') || line.startsWith('\t');
 }
 
+/** A capture-day heading such as `## Sat 14 Nov 2026` or `## 2026-11-18`. */
+function isDayHeading(line: string): boolean {
+  return line.startsWith('## ') && /\b(?:19|20)\d{2}\b/.test(line);
+}
+
 /** Every card in the note, in document order. Non-card lines are left untouched. */
 export function parseInbox(markdown: string): InboxCard[] {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  // Once a note has day groups, only bullets inside them are captures; an
+  // unrelated list under `## Projects` must not become a deletable card.
+  // Hand-written notes with no day headings keep the old, permissive behavior.
+  const hasDayHeadings = lines.some(isDayHeading);
+  let inDay = false;
   const cards: InboxCard[] = [];
   let heading = '';
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (line.startsWith('## ')) {
-      heading = line.trim();
+    if (/^#{1,6}\s/.test(line)) {
+      if (line.startsWith('## ')) heading = line.trim();
+      inDay = isDayHeading(line);
       continue;
     }
     const bullet = readBullet(line);
-    if (!bullet) continue;
+    if (!bullet || (hasDayHeadings && !inDay)) continue;
     let end = index;
     const continuation: string[] = [];
     let cursor = index + 1;
@@ -106,6 +117,20 @@ export function laneSections(cards: InboxCard[], lane: InboxLane): Array<{ headi
     else sections.set(card.heading, [card]);
   }
   return [...sections.entries()].map(([heading, grouped]) => ({ heading, cards: grouped })).reverse();
+}
+
+/**
+ * Stable identity of a card. Line numbers shift whenever another line changes,
+ * so edits and drops refer to a card by its day, time and first line instead.
+ */
+export function cardKey(card: InboxCard): string {
+  // JSON avoids control characters, so the key is safe as a DOM attribute.
+  return JSON.stringify([card.heading, card.time ?? '', card.text.split('\n')[0]]);
+}
+
+/** Find a card by its stable key in a freshly parsed note. */
+export function findCard(cards: InboxCard[], key: string): InboxCard | undefined {
+  return cards.find((card) => cardKey(card) === key);
 }
 
 /** Counts for the lane headers. */
@@ -181,7 +206,11 @@ export function endOfDayGroup(markdown: string, cards: InboxCard[], card: InboxC
   const sameDay = cards.filter((entry) => entry.heading === card.heading).map((entry) => entry.end);
   const last = Math.max(card.end, ...sameDay);
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
-  let index = last + 1;
-  while (index < lines.length && !lines[index].startsWith('## ') && lines[index].trim() === '') index += 1;
-  return lines[index]?.startsWith('## ') ? index : Math.min(index, lines.length);
+  const index = last + 1;
+  let afterBlanks = index;
+  while (afterBlanks < lines.length && lines[afterBlanks].trim() === '') afterBlanks += 1;
+  // Insert before the next heading, but leave any trailing blank lines — and
+  // the file's final newline — where they are.
+  if (afterBlanks < lines.length && lines[afterBlanks].startsWith('## ')) return afterBlanks;
+  return Math.min(index, lines.length);
 }

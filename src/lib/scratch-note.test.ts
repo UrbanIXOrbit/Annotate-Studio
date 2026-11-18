@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCapture, captureEntry, captureNoteName, captureTime, dayHeading } from './scratch-note.ts';
+import { appendCapture, captureEntry, captureNoteName, captureTime, dayHeading, withLineEndings } from './scratch-note.ts';
 
 // Fixed local dates so the assertions hold in any timezone.
 const morning = new Date(2026, 10, 14, 9, 5);
@@ -60,4 +60,11 @@ test('captureNoteName strips extensions, illegal characters and extra spaces', (
   assert.equal(captureNoteName('A/B: C?'), 'A-B- C-');
   assert.equal(captureNoteName('   '), 'Capture');
   assert.equal(captureNoteName('x'.repeat(90)).length, 60);
+});
+
+test('withLineEndings restores the note own endings without doubling them', () => {
+  const lf = '## Day\n- a\n- [x] b\n';
+  assert.equal(withLineEndings(lf, '\n'), lf);
+  assert.equal(withLineEndings(lf, '\r\n'), '## Day\r\n- a\r\n- [x] b\r\n');
+  assert.equal(withLineEndings(lf.replace(/\n/g, '\r\n'), '\n'), lf);
 });

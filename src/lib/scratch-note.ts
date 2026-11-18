@@ -57,6 +57,12 @@ export function appendCapture(existing: string, text: string, at: Date = new Dat
   return `${base}\n\n${heading}\n${entry}\n`;
 }
 
+/** Normalize LF-only board output to the note's own line endings before writing. */
+export function withLineEndings(text: string, eol: '\n' | '\r\n'): string {
+  const lf = text.replace(/\r\n?/g, '\n');
+  return eol === '\r\n' ? lf.replace(/\n/g, '\r\n') : lf;
+}
+
 /** A note title safe for a file name (the app adds the `.md` extension). */
 export function captureNoteName(raw: string): string {
   const cleaned = raw
