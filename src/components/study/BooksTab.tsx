@@ -262,15 +262,16 @@ export default function BooksTab() {
         return;
       }
 
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-
-      // ? — open the shortcut cheat-sheet (unless typing in a field)
-      if (event.key === '?' && !isTypingTarget(event.target)) {
+      // ? — open the shortcut cheat-sheet (unless typing in a field). This
+      // must run before the modifier check: Shift+/ has no meta/ctrl key.
+      if (event.key === '?' && !event.metaKey && !event.ctrlKey && !isTypingTarget(event.target)) {
         event.preventDefault();
         setHelpOpen(true);
         return;
       }
+
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
 
       // ⌘/Ctrl+F — jump to the search box, no matter what has focus
       if (key === 'f') {

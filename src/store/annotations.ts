@@ -37,6 +37,9 @@ export function fileKey(file: Pick<AnnotationFile, 'path' | 'modified_at' | 'siz
 }
 
 let chain: Promise<void> = Promise.resolve();
+/** Bumped when a path is invalidated, so a scan that started before the save
+ * cannot commit its stale result afterwards. */
+const generations = new Map<string, number>();
 
 export const useAnnotations = create<AnnotationsStore>((set, get) => {
   async function run(files: AnnotationFile[], force: boolean) {
@@ -52,15 +55,31 @@ export const useAnnotations = create<AnnotationsStore>((set, get) => {
     let done = 0;
     for (const file of stale) {
       const key = fileKey(file);
+      const generation = generations.get(file.path) ?? 0;
       set((state) => ({
         books: { ...state.books, [file.path]: { key, status: 'scanning', data: state.books[file.path]?.data } },
       }));
       try {
         const data = file.file_type === 'Book' ? await scanBookFile(file) : await scanPdfFile(file);
-        set((state) => ({ books: { ...state.books, [file.path]: { key, status: 'done', data } } }));
+        // A save landed while the scan was running: leave the key cleared so
+        // the revision-triggered re-scan picks up the saved content.
+        if ((generations.get(file.path) ?? 0) === generation) {
+          set((state) => ({ books: { ...state.books, [file.path]: { key, status: 'done', data } } }));
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        set((state) => ({ books: { ...state.books, [file.path]: { key, status: 'error', error: message } } }));
+        set((state) => ({
+          books: {
+            ...state.books,
+            [file.path]: {
+              key,
+              status: 'error',
+              error: message,
+              // A transient read error must not wipe annotations already shown.
+              data: state.books[file.path]?.data,
+            },
+          },
+        }));
       }
       done += 1;
       set({ progress: { done, total: stale.length } });
@@ -87,6 +106,7 @@ export const useAnnotations = create<AnnotationsStore>((set, get) => {
       return chain;
     },
     invalidate: (path) => set((state) => {
+      generations.set(path, (generations.get(path) ?? 0) + 1);
       const existing = state.books[path];
       return {
         revision: state.revision + 1,

@@ -450,7 +450,9 @@ function migrateBooksState(raw: unknown): BooksState {
               if (typeof rec.fileId !== 'string' && (!rec.manual || typeof rec.manual !== 'object')) return null;
               return {
                 id: typeof rec.id === 'string' && rec.id ? rec.id : uid(),
-                ...(typeof rec.fileId === 'string' && validFileIds.has(rec.fileId) ? { fileId: rec.fileId } : {}),
+                // Keep a dangling fileId: the bibliography dialog shows these
+                // rows as "source removed" and Undo can still restore them.
+                ...(typeof rec.fileId === 'string' ? { fileId: rec.fileId } : {}),
                 ...(rec.manual && typeof rec.manual === 'object' ? { manual: migrateBookCitation(rec.manual) ?? undefined } : {}),
                 included: rec.included !== false,
               };

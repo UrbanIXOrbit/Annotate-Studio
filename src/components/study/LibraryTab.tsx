@@ -394,7 +394,18 @@ export default function LibraryTab() {
       <div className="library-controls">
         <div className="search-field">
           <Search size={15} />
-          <input className="input" value={query} placeholder="Search names, tags, notes…" onChange={(event) => setQuery(event.target.value)} dir="auto" />
+          <input
+            className="input"
+            value={query}
+            placeholder="Search names, tags, notes…"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              // A saved collection overrides the manual criteria; editing the
+              // search must switch back to the live controls.
+              setActiveCollectionId(null);
+            }}
+            dir="auto"
+          />
         </div>
         <button
           type="button"

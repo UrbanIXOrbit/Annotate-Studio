@@ -159,3 +159,17 @@ test('export file stems are safe for every operating system', () => {
   assert.equal(exportFileStem('My Book: Vol/2?.pdf'), 'My Book Vol 2');
   assert.equal(exportFileStem('   '), 'Annotations');
 });
+
+test('markdown export keeps comments on drawings and matches chapter labels', () => {
+  const drawing: BookAnnotations = {
+    path: '/books/drawing.pdf',
+    title: 'Drawing.pdf',
+    pageCount: 4,
+    entries: [entry({ kind: 'drawing', text: '', comment: 'circle this figure', page: 3 })],
+  };
+  const report = buildReport([drawing], { groups: ALL_GROUPS, query: '' }, 'Drawing', new Date('2026-10-15T10:00:00Z'));
+  assert.match(reportToMarkdown(report), /- \*\*Drawing\*\*\n  - \*\*Comment:\*\* circle this figure/);
+
+  assert.equal(filterEntries(drawing.entries, { groups: ALL_GROUPS, query: 'chapter 3' }).length, 1);
+  assert.equal(filterEntries(drawing.entries, { groups: ALL_GROUPS, query: 'chapter 4' }).length, 0);
+});

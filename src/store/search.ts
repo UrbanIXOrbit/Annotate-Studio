@@ -5,7 +5,7 @@ import { isTauri, type StudyFile } from '@/lib/tauri-commands';
 import { isExternalPath, stripExtension } from '@/lib/utils';
 import { fileKey, useAnnotations, type AnnotationFile } from '@/store/annotations';
 import { useApp } from '@/store/app';
-import { useCanvas } from '@/store/canvas';
+import { useCanvas, type ResourceType } from '@/store/canvas';
 import { useLibrary } from '@/store/library';
 import { useNotes } from '@/store/notes';
 import { useSettings } from '@/store/settings';
@@ -89,7 +89,9 @@ function quoteDocs(): SearchDoc[] {
   return Object.entries(books).flatMap(([path, state]) => {
     if (state.status !== 'done' || !state.data) return [];
     return state.data.entries.map((entry) => ({
-      path: `${path}#quote-${entry.id}`,
+      // Keep the real file path: the synthetic `#quote-…` suffix made every
+      // jump fail the library lookup. The locator already carries the spot.
+      path,
       kind: 'quote' as const,
       title: state.data!.title,
       text: entry.text,
@@ -217,6 +219,13 @@ function ensureIndex() {
   chain = chain.then(runIndex).catch(() => undefined);
 }
 
+/** Rebuild the text index when the library's set of files changes. */
+export function invalidateSearchIndex(): void {
+  indexed = false;
+  chain = chain.then(runIndex).catch(() => undefined);
+  computeHits();
+}
+
 let debounce: ReturnType<typeof setTimeout> | undefined;
 
 export const useSearch = create<SearchState>((set) => ({
@@ -257,13 +266,13 @@ export function openSearchHit(hit: SearchHit): boolean {
     }
   }
   if (hit.locator?.cfi && (hit.kind === 'book' || hit.kind === 'quote')) {
-    if (openBookAtCfi(hit.path, hit.locator.cfi, hit.title)) {
+    if (openBookAtCfi(hit.path, hit.locator.cfi, hit.title, isExternalPath(hit.path))) {
       setView('canvas');
       return true;
     }
   }
   if (hit.locator?.page && (hit.kind === 'pdf' || hit.kind === 'quote')) {
-    if (openPdfAtPage(hit.path, hit.locator.page, hit.title)) {
+    if (openPdfAtPage(hit.path, hit.locator.page, hit.title, isExternalPath(hit.path))) {
       setView('canvas');
       return true;
     }
@@ -276,8 +285,9 @@ export function openSearchHit(hit: SearchHit): boolean {
   }
   // External files are usually registered in the library already; fall back to
   // opening them straight from their path when they are not listed yet.
-  if ((hit.kind === 'pdf' || hit.kind === 'book' || hit.kind === 'note') && !hit.path.startsWith('resource:')) {
-    canvas.openResource({ type: hit.kind, title: hit.title, filePath: hit.path });
+  if ((hit.kind === 'pdf' || hit.kind === 'book' || hit.kind === 'note' || hit.kind === 'quote') && !hit.path.startsWith('resource:')) {
+    const type: ResourceType = hit.kind === 'quote' ? (hit.locator?.cfi ? 'book' : 'pdf') : hit.kind;
+    canvas.openResource({ type, title: hit.title, filePath: hit.path }, { isExternal: isExternalPath(hit.path) });
     setView('canvas');
     return true;
   }

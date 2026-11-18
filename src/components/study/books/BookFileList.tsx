@@ -343,7 +343,7 @@ function FileRow({
                   icon: <Pencil size={14} />,
                   dividerBefore: true,
                   onClick: () => {
-                    setEditName(file.name);
+                    setEditName(label);
                     setEditing(true);
                   },
                 },
@@ -452,7 +452,17 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
   useEffect(() => {
     setNotice(null);
     setNoticeExpanded(false);
+    setRenameId(null);
   }, [projectId, selectedFolderId, searchQuery, searchProjectIds?.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Selections belong to a view. Keeping ids from a previous folder/search
+  // makes "Select all" and the bulk action buttons act on an invisible set.
+  const filesKey = files.map((file) => file.id).join('|');
+  useEffect(() => {
+    const visible = new Set(files.map((file) => file.id));
+    const stale = selectedFileIds.filter((id) => !visible.has(id));
+    if (stale.length > 0) setSelectedFiles(selectedFileIds.filter((id) => visible.has(id)));
+  }, [filesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeFolder = selectedFolderId ? folders[selectedFolderId] : null;
   const activeProjectName = projects.find((p) => p.id === projectId)?.name ?? 'Search results';
@@ -473,7 +483,7 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
     : activeFolder
       ? activeFolder.name
       : 'All files';
-  const allSelected = files.length > 0 && selectedFileIds.length === files.length;
+  const allSelected = files.length > 0 && files.every((file) => selectedFileIds.includes(file.id));
   const cutIds = clipboard?.mode === 'cut' ? new Set(clipboard.fileIds) : null;
 
   // The files panel is itself a drop target: dropping here moves (or, with
@@ -659,6 +669,9 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
         const [onlyId] = store.selectedFileIds;
         if (!visibleRef.current.fileIds.includes(onlyId)) return;
         event.preventDefault();
+        // The selected row may be outside the virtualized window: scroll it in
+        // first, then let its `wantRename` effect start editing once mounted.
+        virtualRef.current.scrollToId(onlyId);
         setRenameId(onlyId);
       }
 
@@ -1027,7 +1040,7 @@ export function BookFileList({ projectId, searchQuery, searchProjectIds }: BookF
                 selectionAnchorRef.current = file.id;
               }}
               onToggleCheck={() => toggleFileSelection(file.id)}
-              measureRef={(el) => virtual.measure(file.id, el)}
+              measureRef={virtual.measureFor(file.id)}
             />
           );
             })}

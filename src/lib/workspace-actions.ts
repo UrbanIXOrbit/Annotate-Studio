@@ -335,6 +335,14 @@ export async function renameFile(path: string, newName: string): Promise<StudyFi
       settings.forgetRecent(path);
       if (opened) settings.touchRecent(file.path);
       if (settings.noteClip.lastNote === path) settings.updateNoteClip({ lastNote: file.path });
+      // Tags, star and private note follow the file; so do capture-note refs.
+      settings.moveFileMeta(path, file.path);
+      if (settings.inboxNotePath === path || settings.captureNotes.some((note) => note.path === path)) {
+        settings.update({
+          inboxNotePath: settings.inboxNotePath === path ? file.path : settings.inboxNotePath,
+          captureNotes: settings.captureNotes.map((note) => (note.path === path ? { ...note, path: file.path } : note)),
+        });
+      }
     } else {
       useLibrary.getState().upsert(file);
     }
@@ -344,6 +352,12 @@ export async function renameFile(path: string, newName: string): Promise<StudyFi
     toast.error('Rename failed', error);
     return null;
   }
+}
+
+/** Keep tag facets and star counts in sync with the remaining library files. */
+function pruneMetadata(): void {
+  const settings = useSettings.getState();
+  settings.pruneFileMeta([...useLibrary.getState().files.map((file) => file.path), ...settings.externalFiles]);
 }
 
 export async function deleteFile(path: string): Promise<boolean> {
@@ -357,6 +371,7 @@ export async function deleteFile(path: string): Promise<boolean> {
       useLibrary.getState().removeExternal(path);
       useNotes.getState().drop(path);
       useSettings.getState().forgetRecent(path);
+      pruneMetadata();
       return true;
     }
     await deleteWorkspaceFile(path);
@@ -364,6 +379,7 @@ export async function deleteFile(path: string): Promise<boolean> {
     useLibrary.getState().remove(path);
     useNotes.getState().drop(path);
     useSettings.getState().forgetRecent(path);
+    pruneMetadata();
     return true;
   } catch (error) {
     toast.error('Delete failed', error);

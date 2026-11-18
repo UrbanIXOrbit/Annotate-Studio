@@ -289,6 +289,12 @@ export const useGraph = create<GraphState>((set) => ({
   setFocus: (focus) => set({ focus }),
 }));
 
+/** Rebuild the link index when files are added or removed from the library. */
+export function invalidateLibraryIndex(): void {
+  indexed = false;
+  useGraph.setState((state) => ({ revision: state.revision + 1 }));
+}
+
 /** Drop a path from the index (file deleted or moved) and bump the revision. */
 export function forgetPath(path: string) {
   if (!cache.has(path)) return;

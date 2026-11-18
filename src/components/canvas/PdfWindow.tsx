@@ -17,6 +17,7 @@ import { ZoomMode } from '@embedpdf/plugin-zoom';
 import { ExportPluginPackage, useExport } from '@embedpdf/plugin-export/react';
 import {
   PdfAnnotationSubtype,
+  PdfBlendMode,
   restorePosition,
   transformSize,
   type PdfAnnotationObject,
@@ -32,6 +33,7 @@ import {
   Copy,
   Download,
   Eraser,
+  Eye,
   Highlighter,
   Loader2,
   MessageSquareText,
@@ -69,6 +71,8 @@ import { clipToNewNote, clipToNote } from '@/lib/note-clip-actions';
 import { useSettings } from '@/store/settings';
 import { clampPosition, DEFAULT_ZOOM, positionFromVisibility, sanitizeZoom, type PdfZoom } from '@/lib/pdf-view';
 import { cardTitle, normalizeQuote } from '@/lib/cards';
+import { HIGHLIGHT_OPACITY, highlightTint } from '@/lib/pdf-highlight';
+import { scanPdfBytes } from '@/lib/annotation-scan';
 
 type Tool = 'select' | 'highlight' | 'pen' | 'marker' | 'text' | 'rectangle' | 'circle' | 'arrow' | 'eraser';
 
@@ -237,6 +241,7 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
   const dirty = useRef(false);
   const discarded = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const retries = useRef(0);
   const saving = useRef<Promise<void> | null>(null);
   const exporterRef = useRef(exporter);
   exporterRef.current = exporter;
@@ -262,9 +267,19 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
           useLibrary.getState().upsert(file);
         }
         useAnnotations.getState().invalidate(path);
+        retries.current = 0;
         setState('saved');
       } catch (error) {
+        // A transient lock or full disk must not leave this document unsaved
+        // for the rest of the session. Retry a bounded number of times.
         dirty.current = true;
+        if (retries.current < 3) {
+          retries.current += 1;
+          timer.current = setTimeout(() => void save(), 2000 * retries.current);
+          setState('pending');
+          return;
+        }
+        retries.current = 0;
         setState('error');
         toast.error('Could not save annotations', error);
       }
@@ -277,6 +292,7 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
 
   const markDirty = useCallback(() => {
     dirty.current = true;
+    retries.current = 0;
     setState('pending');
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void save(), 1500);
@@ -423,8 +439,19 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     for (const id of ['ink', 'square', 'circle', 'lineArrow', 'line']) {
       annotationCapability.setToolDefaults(id, { strokeColor: color, color: id === 'ink' ? color : 'transparent', strokeWidth: width } as never);
     }
-    annotationCapability.setToolDefaults('inkHighlighter', { strokeColor: highlightColor, color: highlightColor, strokeWidth: Math.max(8, width * 4) } as never);
-    annotationCapability.setToolDefaults('highlight', { strokeColor: highlightColor, color: highlightColor } as never);
+    annotationCapability.setToolDefaults('inkHighlighter', {
+      strokeColor: highlightTint(highlightColor),
+      color: highlightTint(highlightColor),
+      strokeWidth: Math.max(8, width * 4),
+      opacity: HIGHLIGHT_OPACITY,
+      blendMode: PdfBlendMode.Multiply,
+    } as never);
+    annotationCapability.setToolDefaults('highlight', {
+      strokeColor: highlightTint(highlightColor),
+      color: highlightTint(highlightColor),
+      opacity: HIGHLIGHT_OPACITY,
+      blendMode: PdfBlendMode.Multiply,
+    } as never);
     annotationCapability.setToolDefaults('freeText', { fontColor: color, fontSize: Math.max(10, Math.round(8 + width * 2)) } as never);
   }, [annotationCapability, color, highlightColor, width]);
 
@@ -467,11 +494,18 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
 
   const changeColor = (next: string) => {
     const isHighlightTool = tool === 'highlight' || tool === 'marker';
-    if (isHighlightTool) setHighlightColor(next);
+    const tint = isHighlightTool ? highlightTint(next) : next;
+    if (isHighlightTool) setHighlightColor(tint);
     else setColor(next);
     applyToSelection((annotation) => {
       switch (annotation.type) {
         case PdfAnnotationSubtype.HIGHLIGHT:
+          return {
+            strokeColor: tint,
+            color: tint,
+            opacity: HIGHLIGHT_OPACITY,
+            blendMode: PdfBlendMode.Multiply,
+          } as Partial<PdfAnnotationObject>;
         case PdfAnnotationSubtype.UNDERLINE:
         case PdfAnnotationSubtype.STRIKEOUT:
         case PdfAnnotationSubtype.SQUIGGLY:
@@ -508,6 +542,37 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     return true;
   }, [annotationScope, selectedUids]);
 
+  /** Repair highlights saved by older versions with opaque or dark rendering. */
+  const fixHighlights = useCallback(() => {
+    if (!annotationScope) return;
+    type HighlightLike = PdfAnnotationObject & { opacity?: number; strokeColor?: string };
+    const patches = annotationScope
+      .getAnnotations()
+      .filter((tracked) => tracked.object.type === PdfAnnotationSubtype.HIGHLIGHT)
+      .map((tracked) => {
+        const annotation = tracked.object as HighlightLike;
+        if ((annotation.opacity ?? 1) <= HIGHLIGHT_OPACITY + 0.05) return null;
+        const tint = highlightTint(annotation.strokeColor ?? highlightColor);
+        return {
+          pageIndex: annotation.pageIndex,
+          id: annotation.id,
+          patch: {
+            opacity: HIGHLIGHT_OPACITY,
+            blendMode: PdfBlendMode.Multiply,
+            strokeColor: tint,
+            color: tint,
+          } as Partial<PdfAnnotationObject>,
+        };
+      })
+      .filter((patch): patch is NonNullable<typeof patch> => patch !== null);
+    if (patches.length === 0) {
+      toast.info('Highlights already readable');
+      return;
+    }
+    annotationScope.updateAnnotations(patches);
+    toast.success('Highlights fixed', `${patches.length} highlight${patches.length === 1 ? '' : 's'} made translucent`);
+  }, [annotationScope, highlightColor]);
+
   const undo = useCallback(() => history?.forDocument(documentId).undo(), [history, documentId]);
   const redo = useCallback(() => history?.forDocument(documentId).redo(), [history, documentId]);
 
@@ -521,8 +586,14 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
 
   /** Create markup annotations for regions that were captured earlier (they may no longer be selected). */
   const markupItems = useCallback(
-    (items: FormattedSelection, subtype: PdfAnnotationSubtype.HIGHLIGHT | PdfAnnotationSubtype.UNDERLINE) => {
+    (
+      items: FormattedSelection,
+      subtype: PdfAnnotationSubtype.HIGHLIGHT | PdfAnnotationSubtype.UNDERLINE,
+      quoteText = '',
+    ) => {
       if (!annotationScope) return;
+      const isHighlight = subtype === PdfAnnotationSubtype.HIGHLIGHT;
+      const tint = highlightTint(highlightColor);
       for (const item of items) {
         annotationScope.createAnnotation(item.pageIndex, {
           id: crypto.randomUUID(),
@@ -530,9 +601,15 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
           pageIndex: item.pageIndex,
           rect: item.rect,
           segmentRects: item.segmentRects,
-          strokeColor: subtype === PdfAnnotationSubtype.HIGHLIGHT ? highlightColor : color,
-          color: subtype === PdfAnnotationSubtype.HIGHLIGHT ? highlightColor : color,
-          opacity: 1,
+          strokeColor: isHighlight ? tint : color,
+          color: isHighlight ? tint : color,
+          // Opaque highlights cover the glyphs; multiply at low opacity keeps
+          // text readable through the tint, like the live preview does.
+          opacity: isHighlight ? HIGHLIGHT_OPACITY : 1,
+          blendMode: isHighlight ? PdfBlendMode.Multiply : PdfBlendMode.Normal,
+          // Kept on the in-memory annotation so the annotation menu can act on
+          // its text without re-reading the file. Reloads fall back to the scan.
+          quoteText: isHighlight ? quoteText : undefined,
           author: 'Annotate Studio',
         } as never);
       }
@@ -541,17 +618,21 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
   );
 
   const markupSelection = useCallback(
-    (subtype: PdfAnnotationSubtype.HIGHLIGHT | PdfAnnotationSubtype.UNDERLINE) => {
+    async (subtype: PdfAnnotationSubtype.HIGHLIGHT | PdfAnnotationSubtype.UNDERLINE) => {
       if (!selection || !annotationScope) return;
-      markupItems(selection.getFormattedSelection(documentId), subtype);
+      const items = selection.getFormattedSelection(documentId);
+      const text = normalizeQuote(await selectedText());
+      markupItems(items, subtype, text);
       clearSelection();
     },
-    [selection, annotationScope, documentId, markupItems, clearSelection],
+    [selection, annotationScope, documentId, markupItems, selectedText, clearSelection],
   );
 
   // ───────── copy the selection to a note ─────────
   const [notePickerOpen, setNotePickerOpen] = useState(false);
   const noteAnchor = useRef<HTMLButtonElement>(null);
+  const [annotationNoteOpen, setAnnotationNoteOpen] = useState(false);
+  const annotationNoteAnchor = useRef<HTMLButtonElement>(null);
   /** What was selected when "To note" was clicked. Kept so a picker or name prompt cannot lose it. */
   const clipRef = useRef<{ text: string; page: number; items: FormattedSelection } | null>(null);
 
@@ -573,15 +654,17 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     async (target: { path: string } | 'new') => {
       const captured = clipRef.current;
       setNotePickerOpen(false);
+      setAnnotationNoteOpen(false);
+      annotationScope?.deselectAnnotation();
       if (!captured) return;
       const clip = { text: captured.text, title, page: captured.page };
       const done = target === 'new' ? await clipToNewNote(clip, resourceId) : await clipToNote(target.path, clip);
       if (!done) return;
-      if (useSettings.getState().noteClip.highlight) markupItems(captured.items, PdfAnnotationSubtype.HIGHLIGHT);
+      if (useSettings.getState().noteClip.highlight) markupItems(captured.items, PdfAnnotationSubtype.HIGHLIGHT, captured.text);
       clearSelection();
       clipRef.current = null;
     },
-    [title, resourceId, markupItems, clearSelection],
+    [title, resourceId, markupItems, clearSelection, annotationScope],
   );
 
   const sendToAi = useCallback(
@@ -603,7 +686,7 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     // Read the page before markupSelection clears the selection.
     const firstItem = selection?.getFormattedSelection(documentId)[0];
     const page = (firstItem?.pageIndex ?? Math.max(0, (scrollState?.currentPage ?? 1) - 1)) + 1;
-    markupSelection(PdfAnnotationSubtype.HIGHLIGHT);
+    await markupSelection(PdfAnnotationSubtype.HIGHLIGHT);
     const canvas = useCanvas.getState();
     const cardId = canvas.addCard({
       title: cardTitle(title, page),
@@ -728,6 +811,66 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     return () => element.removeEventListener('wheel', onWheel);
   }, [zoom, maximized]);
 
+  /** Text of an existing annotation: in-memory quote, saved scan, then a one-off file scan. */
+  const annotationText = useCallback(
+    async (annotation: { id: string; pageIndex: number }) => {
+      const tracked = annotationScope?.getAnnotationById(annotation.id);
+      const bag = tracked?.object as (PdfAnnotationObject & { quoteText?: string }) | undefined;
+      if (bag?.quoteText) return bag.quoteText;
+      const scanned = useAnnotations.getState().books[path]?.data?.entries.find((entry) => entry.id === annotation.id);
+      if (scanned?.text) return scanned.text;
+      try {
+        const bytes = isExternal ? await readExternalFileBytes(path) : await readFileBytes(path);
+        const data = await scanPdfBytes(bytes, path, title);
+        return data.entries.find((entry) => entry.id === annotation.id)?.text ?? '';
+      } catch {
+        return '';
+      }
+    },
+    [annotationScope, path, isExternal, title],
+  );
+
+  const annotationToCanvas = useCallback(
+    async (annotation: { id: string; pageIndex: number }) => {
+      // The floating menu stays while the annotation is selected — dismiss it
+      // immediately, before the (async) text lookup and card creation.
+      annotationScope?.deselectAnnotation();
+      const text = normalizeQuote(await annotationText(annotation));
+      if (!text) {
+        toast.warning('No text on this highlight', 'The highlight may be on a scanned page without text.');
+        return;
+      }
+      const page = annotation.pageIndex + 1;
+      const cardId = useCanvas.getState().addCard({
+        title: cardTitle(title, page),
+        content: text,
+        color: highlightColor,
+        source: { filePath: path, title, page, isExternal },
+        near: resourceId,
+      });
+      useToasts.getState().push({
+        kind: 'success',
+        title: 'Added to canvas',
+        description: `Page ${page}`,
+        action: { label: 'Show', run: () => useCanvas.getState().focusResource(cardId) },
+      });
+    },
+    [annotationScope, annotationText, title, highlightColor, path, isExternal, resourceId],
+  );
+
+  const annotationToNote = useCallback(
+    async (annotation: { id: string; pageIndex: number }) => {
+      const text = normalizeQuote(await annotationText(annotation));
+      if (!text) {
+        toast.warning('No text on this highlight', 'The highlight may be on a scanned page without text.');
+        return;
+      }
+      clipRef.current = { text, page: annotation.pageIndex + 1, items: [] };
+      setAnnotationNoteOpen(true);
+    },
+    [annotationText],
+  );
+
   const renderSelectionMenu = useCallback(
     ({ menuWrapperProps, placement }: { menuWrapperProps: React.HTMLAttributes<HTMLDivElement>; placement: { suggestTop?: boolean } }) => (
       <div {...menuWrapperProps}>
@@ -786,14 +929,31 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
       return (
         <div {...menuWrapperProps}>
           <div className={cn('pdf-float-menu', placement.suggestTop ? 'pdf-float-menu-top' : 'pdf-float-menu-bottom')}>
-            <button type="button" onClick={() => annotationScope?.deleteAnnotation(target.pageIndex, target.id)} className="danger" title="Delete (Del)">
+            <button type="button" className="pdf-float-primary" onClick={() => void annotationToCanvas(target)} title="Add this highlight to the canvas as a card">
+              <StickyNote size={13} /> To canvas
+            </button>
+            <button
+              ref={annotationNoteAnchor}
+              type="button"
+              className="pdf-float-primary"
+              onClick={() => void annotationToNote(target)}
+              title="Copy this highlight to a note"
+              aria-haspopup="listbox"
+              aria-expanded={annotationNoteOpen}
+            >
+              <NotebookPen size={13} /> To note
+            </button>
+            <button type="button" onClick={() => {
+              annotationScope?.deselectAnnotation();
+              annotationScope?.deleteAnnotation(target.pageIndex, target.id);
+            }} className="danger" title="Delete (Del)">
               <Trash2 size={13} /> Delete
             </button>
           </div>
         </div>
       );
     },
-    [annotationScope],
+    [annotationScope, annotationToCanvas, annotationToNote, annotationNoteOpen],
   );
 
   const drawingTool = tool !== 'select' && tool !== 'eraser' && tool !== 'highlight' && tool !== 'text';
@@ -1031,6 +1191,9 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
           <button type="button" className="tool-btn" onClick={redo} disabled={!historyState.canRedo} title="Redo (Ctrl+Shift+Z)">
             <Redo2 size={14} />
           </button>
+          <button type="button" className="tool-btn" onClick={fixHighlights} title="Make existing highlights translucent and readable">
+            <Eye size={14} />
+          </button>
         </div>
         <div className="pdf-tool-group">
           <button type="button" className="tool-btn" onClick={() => scroll?.scrollToPreviousPage()} disabled={currentPage <= 1} title="Previous page">
@@ -1088,6 +1251,16 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
         anchorRef={noteAnchor}
         open={notePickerOpen}
         onClose={() => setNotePickerOpen(false)}
+        onPickNote={(notePath) => void copyToNote({ path: notePath })}
+        onPickNew={() => void copyToNote('new')}
+      />
+      <NoteClipPicker
+        anchorRef={annotationNoteAnchor}
+        open={annotationNoteOpen}
+        onClose={() => {
+          setAnnotationNoteOpen(false);
+          annotationScope?.deselectAnnotation();
+        }}
         onPickNote={(notePath) => void copyToNote({ path: notePath })}
         onPickNew={() => void copyToNote('new')}
       />

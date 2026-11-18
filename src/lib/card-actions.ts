@@ -5,29 +5,29 @@ import { usePdfNav } from '@/lib/pdf-nav';
 import { openFileOnCanvas, resourceTypeFor } from '@/lib/workspace-actions';
 
 /** Focus (or open) a PDF on the canvas and scroll it to `page` (1-based). Returns false if the file is gone. */
-export function openPdfAtPage(path: string, page: number, fallbackTitle = 'PDF'): boolean {
+export function openPdfAtPage(path: string, page: number, fallbackTitle = 'PDF', isExternal = false): boolean {
   const library = useLibrary.getState();
   const file = library.files.find((candidate) => candidate.path === path);
-  if (library.loaded && !file) {
+  if (library.loaded && !file && !isExternal) {
     toast.warning('Source PDF not found', 'It may have been moved or deleted from your library.');
     return false;
   }
   if (file) openFileOnCanvas(file);
-  else useCanvas.getState().openResource({ type: 'pdf', title: fallbackTitle, filePath: path });
+  else useCanvas.getState().openResource({ type: 'pdf', title: fallbackTitle, filePath: path }, { isExternal });
   usePdfNav.getState().request(path, page);
   return true;
 }
 
 /** Focus (or open) an e-book on the canvas at an annotation's CFI location. Returns false if the file is gone. */
-export function openBookAtCfi(path: string, cfi: string, fallbackTitle = 'Book'): boolean {
+export function openBookAtCfi(path: string, cfi: string, fallbackTitle = 'Book', isExternal = false): boolean {
   const library = useLibrary.getState();
   const file = library.files.find((candidate) => candidate.path === path);
-  if (library.loaded && !file) {
+  if (library.loaded && !file && !isExternal) {
     toast.warning('Source book not found', 'It may have been moved or deleted from your library.');
     return false;
   }
   if (file) openFileOnCanvas(file);
-  else useCanvas.getState().openResource({ type: 'book', title: fallbackTitle, filePath: path });
+  else useCanvas.getState().openResource({ type: 'book', title: fallbackTitle, filePath: path }, { isExternal });
   usePdfNav.getState().request(path, 1, cfi);
   return true;
 }
@@ -35,7 +35,7 @@ export function openBookAtCfi(path: string, cfi: string, fallbackTitle = 'Book')
 /** Focus (or open) the source document of a highlight card and scroll it to the quote. */
 export function openCardSource(source: CardSource): void {
   if (!source.cfi) {
-    openPdfAtPage(source.filePath, source.page, source.title);
+    openPdfAtPage(source.filePath, source.page, source.title, source.isExternal);
     return;
   }
   const existing = activeWorkspace(useCanvas.getState()).resources.find(

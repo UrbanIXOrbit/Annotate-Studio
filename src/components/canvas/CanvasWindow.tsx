@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useCallback, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Copy,
@@ -101,7 +101,18 @@ function CanvasWindow({ resource }: { resource: Resource }) {
   const maximizedView = useCanvas((state) => (resource.maximized ? activeWorkspace(state).view : null));
   const maximizedViewport = useCanvas((state) => (resource.maximized ? state.viewport : null));
   const frameRef = useRef<HTMLDivElement>(null);
+  const dragCleanup = useRef<null | (() => void)>(null);
+  const resizeCleanup = useRef<null | (() => void)>(null);
   const [interaction, setInteraction] = useState<'dragging' | 'resizing' | null>(null);
+
+  // A gesture can be interrupted by the window closing or the view switching.
+  useEffect(
+    () => () => {
+      dragCleanup.current?.();
+      resizeCleanup.current?.();
+    },
+    [],
+  );
 
   const activate = useCallback(
     (event?: React.PointerEvent) => {
@@ -153,7 +164,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
           return !!candidate && !candidate.minimized && !candidate.maximized;
         }),
       ];
-      dragWindows({
+      dragCleanup.current = dragWindows({
         ids,
         start: { x: event.clientX, y: event.clientY },
         zoom: currentZoom(),
@@ -174,7 +185,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     }
     if (selection.length > 1 && selection.includes(resource.id)) {
       const plain = !(event.ctrlKey || event.metaKey || event.shiftKey);
-      dragWindows({
+      dragCleanup.current = dragWindows({
         ids: [resource.id, ...selection.filter((id) => id !== resource.id)],
         start: { x: event.clientX, y: event.clientY },
         zoom: currentZoom(),
@@ -192,7 +203,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
     }
     // One window drags through the same engine as a group: it never snaps to windows hidden inside a
     // collapsed group, and gets Alt (free move), Escape (cancel) and edge auto-pan like every other drag.
-    dragWindows({
+    dragCleanup.current = dragWindows({
       ids: [resource.id],
       start: { x: event.clientX, y: event.clientY },
       zoom: currentZoom(),
@@ -268,15 +279,24 @@ function CanvasWindow({ resource }: { resource: Resource }) {
       pointer.alt = e.altKey;
       update();
     };
+    const restore = () => {
+      frameEl.style.transform = `translate(${origin.x}px, ${origin.y}px)`;
+      frameEl.style.width = `${origin.width}px`;
+      frameEl.style.height = `${origin.height}px`;
+      setLiveRect(resource.id, null);
+    };
     const stop = () => {
       finished = true;
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onEnd);
       handle.removeEventListener('pointercancel', onEnd);
+      handle.removeEventListener('lostpointercapture', onLost);
+      window.removeEventListener('blur', onLost);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('keyup', onKey, true);
       useAlignmentGuides.getState().clear();
       setInteraction(null);
+      resizeCleanup.current = null;
     };
     function onEnd() {
       if (finished) return;
@@ -291,10 +311,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         e.preventDefault();
         e.stopImmediatePropagation();
         stop();
-        frameEl.style.transform = `translate(${origin.x}px, ${origin.y}px)`;
-        frameEl.style.width = `${origin.width}px`;
-        frameEl.style.height = `${origin.height}px`;
-        setLiveRect(resource.id, null);
+        restore();
         try {
           handle.releasePointerCapture(event.pointerId);
         } catch {
@@ -305,11 +322,24 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         update();
       }
     }
+    const onLost = () => {
+      if (finished) return;
+      stop();
+      restore();
+      try {
+        handle.releasePointerCapture(event.pointerId);
+      } catch {
+        // already released
+      }
+    };
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onEnd);
     handle.addEventListener('pointercancel', onEnd);
+    handle.addEventListener('lostpointercapture', onLost);
+    window.addEventListener('blur', onLost);
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
+    resizeCleanup.current = onLost;
   };
 
   const rename = async () => {

@@ -36,6 +36,7 @@ export function useBooksVirtualRows(ids: string[], estimate = 62, overscan = 6) 
   /** Measured pixel heights keyed by row id — survives unmount/scroll cycles */
   const heightsRef = useRef(new Map<string, number>());
   const rowElsRef = useRef(new Map<string, HTMLElement>());
+  const measureRefs = useRef(new Map<string, (el: HTMLElement | null) => void>());
   const observerRef = useRef<ResizeObserver | null>(null);
   const frameRef = useRef<number | null>(null);
   /** Row waiting to be focused once a scroll has mounted it (keyboard jumps) */
@@ -131,7 +132,19 @@ export function useBooksVirtualRows(ids: string[], estimate = 62, overscan = 6) 
       }
       rowElsRef.current.set(id, el);
       if (!observerRef.current) {
-        observerRef.current = new ResizeObserver(() => scheduleRecompute());
+        observerRef.current = new ResizeObserver(() => {
+          // observe() fires once for every element; only a real height change
+          // should schedule another layout pass.
+          let changed = false;
+          for (const [id, element] of rowElsRef.current) {
+            const height = element.offsetHeight;
+            if (heightsRef.current.get(id) !== height) {
+              heightsRef.current.set(id, height);
+              changed = true;
+            }
+          }
+          if (changed) scheduleRecompute();
+        });
       }
       observerRef.current.observe(el);
       const h = el.offsetHeight;
@@ -141,6 +154,19 @@ export function useBooksVirtualRows(ids: string[], estimate = 62, overscan = 6) 
       }
     },
     [scheduleRecompute],
+  );
+
+  /** Stable callback per row: React must not detach/re-observe on every render. */
+  const measureFor = useCallback(
+    (id: string) => {
+      let callback = measureRefs.current.get(id);
+      if (!callback) {
+        callback = (el: HTMLElement | null) => measure(id, el);
+        measureRefs.current.set(id, callback);
+      }
+      return callback;
+    },
+    [measure],
   );
 
   // Track scrolling and viewport resizes
@@ -204,5 +230,5 @@ export function useBooksVirtualRows(ids: string[], estimate = 62, overscan = 6) 
     [],
   );
 
-  return { scrollRef, measure, range, padTop: range.padTop, padBottom: range.padBottom, scrollToId };
+  return { scrollRef, measure, measureFor, range, padTop: range.padTop, padBottom: range.padBottom, scrollToId };
 }

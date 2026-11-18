@@ -118,6 +118,12 @@ interface SettingsStore extends PersistedSettings {
   removeTagEverywhere: (tag: string) => void;
   /** Drop metadata for paths that no longer exist in the library. */
   pruneFileMeta: (existingPaths: string[]) => void;
+  /** Move tags/star/note to a file's new path after a rename. */
+  moveFileMeta: (oldPath: string, newPath: string) => void;
+  /** Functional updates so overlapping registrations cannot overwrite each other. */
+  addExternalFile: (path: string) => void;
+  removeExternalFile: (path: string) => void;
+  replaceExternalFile: (oldPath: string, newPath: string) => void;
   createCollection: (name: string, criteria: SavedCollection['criteria']) => string;
   updateCollection: (id: string, patch: Partial<Pick<SavedCollection, 'name' | 'criteria'>>) => void;
   deleteCollection: (id: string) => void;
@@ -394,6 +400,24 @@ export const useSettings = create<SettingsStore>((set, get) => ({
       if (Object.keys(fileMeta).length === Object.keys(state.fileMeta).length) return state;
       return { fileMeta };
     }),
+  moveFileMeta: (oldPath, newPath) =>
+    set((state) => {
+      if (oldPath === newPath || !(oldPath in state.fileMeta)) return state;
+      const fileMeta = { ...state.fileMeta };
+      const previous = fileMeta[oldPath];
+      delete fileMeta[oldPath];
+      // A file may already exist at the destination: keep the newer metadata.
+      fileMeta[newPath] = { ...fileMeta[newPath], ...previous };
+      return { fileMeta };
+    }),
+  addExternalFile: (path) =>
+    set((state) => (state.externalFiles.includes(path) ? state : { externalFiles: [...state.externalFiles, path] })),
+  removeExternalFile: (path) =>
+    set((state) => ({ externalFiles: state.externalFiles.filter((entry) => entry !== path) })),
+  replaceExternalFile: (oldPath, newPath) =>
+    set((state) => ({
+      externalFiles: state.externalFiles.map((entry) => (entry === oldPath ? newPath : entry)),
+    })),
   createCollection: (name, criteria) => {
     const collection: SavedCollection = {
       id: uid(),

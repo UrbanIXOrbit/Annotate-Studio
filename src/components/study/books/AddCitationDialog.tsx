@@ -15,6 +15,7 @@ import {
 } from '@/lib/book-citations';
 import { SOURCE_LABELS, setGoogleBooksApiKey, setReferenceContactEmail, type SourceProgress } from '@/lib/reference-lookup.ts';
 import { errorMessage } from '@/lib/tauri-commands';
+import { baseName } from '@/lib/utils';
 import Dialog from '@/components/ui/Dialog';
 import { CITATION_STYLES, type CitationStyle } from '@/lib/citation-formats';
 import { CitationCandidateList } from './CitationCandidateList';
@@ -67,7 +68,7 @@ export function AddCitationDialog({ open, onClose, fileId }: AddCitationDialogPr
   // On by default while the display name is still the untouched filename — a
   // fetched citation usually knows the real title better than "10.1515_...pdf".
   const [renameToTitle, setRenameToTitle] = useState(
-    () => !file || file.name === (file.filePath.split('/').pop() ?? ''),
+    () => !file || file.name === baseName(file.filePath),
   );
   const [enabledSources, setEnabledSources] = useState<Record<string, boolean>>(loadEnabledSources);
   const [email, setEmail] = useState(() => {

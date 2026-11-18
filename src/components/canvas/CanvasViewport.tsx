@@ -174,19 +174,23 @@ export default function CanvasViewport() {
           markMoving();
         });
       };
-      const onEnd = (e: PointerEvent) => {
-        if (e.pointerId !== pointerId) return;
+      const onEnd = (e?: Event) => {
+        if (e && 'pointerId' in e && (e as PointerEvent).pointerId !== pointerId) return;
         if (frame) cancelAnimationFrame(frame);
         useCanvas.getState().setView({ x: origin.x + latest.x - start.x, y: origin.y + latest.y - start.y, zoom: origin.zoom });
         element.removeEventListener('pointermove', onMove);
         element.removeEventListener('pointerup', onEnd);
         element.removeEventListener('pointercancel', onEnd);
+        element.removeEventListener('lostpointercapture', onEnd);
+        window.removeEventListener('blur', onEnd);
         panPointer.current = null;
         setPanning(false);
       };
       element.addEventListener('pointermove', onMove);
       element.addEventListener('pointerup', onEnd);
       element.addEventListener('pointercancel', onEnd);
+      element.addEventListener('lostpointercapture', onEnd);
+      window.addEventListener('blur', onEnd);
       return true;
     },
     [markMoving],
@@ -371,11 +375,13 @@ export default function CanvasViewport() {
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', end, true);
       window.removeEventListener('pointercancel', end, true);
+      window.removeEventListener('blur', end);
       setMarquee(null);
     };
     window.addEventListener('pointermove', onMove, true);
     window.addEventListener('pointerup', end, true);
     window.addEventListener('pointercancel', end, true);
+    window.addEventListener('blur', end);
   };
 
   const onPointerDown = (event: React.PointerEvent) => {
@@ -476,12 +482,19 @@ export default function CanvasViewport() {
 
   const step = gridStep(view.zoom);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Culling follows the settled view, not every pan frame: a fast pan must not
+  // mount/unmount heavy PDF readers on the way to the destination.
+  const [settledView, setSettledView] = useState(view);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettledView(view), 200);
+    return () => window.clearTimeout(timer);
+  }, [view]);
   const hidden = useMemo(() => hiddenResourceIds(workspace), [workspace]);
   const renderedResources = useMemo(() => {
     const active = workspace.resources.filter((resource) => !resource.minimized && !hidden.has(resource.id));
     const maximizedResource = active.find((resource) => resource.maximized);
     if (maximizedResource) return [maximizedResource];
-    const visibleRect = visibleWorldRect(view, viewport);
+    const visibleRect = visibleWorldRect(settledView, viewport);
     // Render one complete viewport beyond every edge. Heavy readers therefore
     // initialize only when their window is within two viewports of the user.
     const bufferedRect = {
@@ -491,7 +504,7 @@ export default function CanvasViewport() {
       height: visibleRect.height * 3,
     };
     return active.filter((resource) => intersectsViewportBuffer(resource, bufferedRect));
-  }, [hidden, viewport, view, workspace.resources]);
+  }, [hidden, viewport, settledView, workspace.resources]);
 
   return (
     <div

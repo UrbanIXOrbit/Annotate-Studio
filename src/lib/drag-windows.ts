@@ -58,13 +58,13 @@ export interface DragWindowsOptions {
  * cancels the move (windows and view go back where they were), and holding the pointer near the edge of the
  * canvas pans the view so the windows can be carried further.
  */
-export function dragWindows(options: DragWindowsOptions): void {
+export function dragWindows(options: DragWindowsOptions): () => void {
   const { ids, start, zoom, handle, pointerId } = options;
   const workspace = activeWorkspace(useCanvas.getState());
   const targets = ids
     .map((id) => workspace.resources.find((r) => r.id === id))
     .filter((r): r is NonNullable<typeof r> => r !== undefined && !r.maximized);
-  if (targets.length === 0) return;
+  if (targets.length === 0) return () => undefined;
   const hidden = hiddenResourceIds(workspace);
   const movedIds = new Set(targets.map((r) => r.id));
   const others = workspace.resources.filter(
@@ -146,6 +146,8 @@ export function dragWindows(options: DragWindowsOptions): void {
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', onUp);
     handle.removeEventListener('pointercancel', onUp);
+    handle.removeEventListener('lostpointercapture', onLost);
+    window.removeEventListener('blur', onLost);
     window.removeEventListener('keydown', onKey, true);
     window.removeEventListener('keyup', onKey, true);
     useAlignmentGuides.getState().clear();
@@ -174,11 +176,18 @@ export function dragWindows(options: DragWindowsOptions): void {
     options.onFinish?.(moved && !cancelled);
   };
   const onUp = () => finish(false);
+  // Losing capture (window closed, view switched, focus lost) must not strand
+  // the live rectangle and alignment guides.
+  const onLost = () => finish(true);
 
   handle.addEventListener('pointermove', onMove);
   handle.addEventListener('pointerup', onUp);
   handle.addEventListener('pointercancel', onUp);
+  handle.addEventListener('lostpointercapture', onLost);
+  window.addEventListener('blur', onLost);
   // Capture phase, so Escape cancels the drag before anything else (the canvas clears the selection on Escape).
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('keyup', onKey, true);
+
+  return () => finish(true);
 }

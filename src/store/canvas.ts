@@ -317,6 +317,20 @@ export function toWorkspaceRelative(path: string): string {
   return normalized.replace(/^\.\//, '');
 }
 
+/**
+ * External files keep the absolute path the user chose. Only workspace paths
+ * are made relative; applying the normalizer to an external path can corrupt
+ * it when the user's own folders happen to contain an `annotate-studio` part.
+ */
+function normalizePath(raw: string, external = false): string {
+  return external ? raw : toWorkspaceRelative(raw);
+}
+
+/** View maps are keyed by absolute path for external files, relative for workspace files. */
+function normalizeViewPath(raw: string): string {
+  return isExternalPath(raw) ? raw : toWorkspaceRelative(raw);
+}
+
 function isResourceType(value: unknown): value is ResourceType {
   return value === 'pdf' || value === 'note' || value === 'image' || value === 'card' || value === 'book' || value === 'audiobook' || value === 'video' || value === 'article' || value === 'recorder';
 }
@@ -336,7 +350,8 @@ function migrateResource(raw: unknown, index: number): Resource | null {
   const baseY = wasFullscreen && previous ? previous.y : data.y ?? position.y;
   const baseW = wasFullscreen && previous ? previous.width : data.width ?? size.width;
   const baseH = wasFullscreen && previous ? previous.height : data.height ?? size.height;
-  const filePath = typeof data.filePath === 'string' && data.filePath.trim() ? toWorkspaceRelative(data.filePath.trim()) : undefined;
+  const external = data.isExternal === true;
+  const filePath = typeof data.filePath === 'string' && data.filePath.trim() ? normalizePath(data.filePath.trim(), external) : undefined;
   const rawArticle = data.article && typeof data.article === 'object' ? data.article as Record<string, unknown> : null;
   const content = typeof data.content === 'string'
     ? data.content
@@ -363,13 +378,13 @@ function migrateResource(raw: unknown, index: number): Resource | null {
   const tracks = type === 'audiobook' && Array.isArray(data.tracks)
     ? data.tracks.filter((track): track is Record<string, unknown> => !!track && typeof track === 'object')
         .filter((track) => typeof track.path === 'string' && typeof track.title === 'string' && typeof track.mediaType === 'string')
-        .map((track) => ({ path: toWorkspaceRelative(track.path as string), title: track.title as string, mediaType: track.mediaType as string }))
+        .map((track) => ({ path: normalizePath(track.path as string, external), title: track.title as string, mediaType: track.mediaType as string }))
     : undefined;
   const rawSource = data.source && typeof data.source === 'object' ? (data.source as Record<string, unknown>) : null;
   const source: CardSource | undefined =
     type === 'card' && rawSource && typeof rawSource.filePath === 'string' && rawSource.filePath.trim()
       ? {
-          filePath: toWorkspaceRelative(rawSource.filePath.trim()),
+          filePath: normalizePath(rawSource.filePath.trim(), rawSource.isExternal === true || external),
           title: typeof rawSource.title === 'string' && rawSource.title.trim() ? rawSource.title : 'PDF',
           page: Math.max(1, Math.round(finiteOr(rawSource.page, 1))),
           cfi: typeof rawSource.cfi === 'string' ? rawSource.cfi : undefined,
@@ -481,7 +496,7 @@ export function migrateCanvasState(raw: unknown): {
   if (workspaces.length === 0) workspaces = [newWorkspace('Default Workspace', 'default')];
   const requested = typeof data.activeWorkspaceId === 'string' ? data.activeWorkspaceId : '';
   const activeWorkspaceId = workspaces.some((w) => w.id === requested) ? requested : workspaces[0].id;
-  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, toWorkspaceRelative), bookViews: migrateBookViews(data.bookViews, toWorkspaceRelative) };
+  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, normalizeViewPath), bookViews: migrateBookViews(data.bookViews, normalizeViewPath) };
 }
 
 function topZ(resources: Resource[]): number {

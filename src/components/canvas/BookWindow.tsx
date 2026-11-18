@@ -129,6 +129,17 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
   const [selection, setSelection] = useState<Selection | null>(null);
   const [notePickerOpen, setNotePickerOpen] = useState(false);
   const noteAnchor = useRef<HTMLButtonElement>(null);
+  const [annotationNoteOpen, setAnnotationNoteOpen] = useState(false);
+  const annotationNoteAnchor = useRef<HTMLButtonElement>(null);
+  /** An existing highlight that was clicked in the book. */
+  const [annotationMenu, setAnnotationMenu] = useState<{
+    cfi: string;
+    index: number;
+    text: string;
+    source: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const clipRef = useRef<{ text: string; section: number; cfi: string; source: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +148,7 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
 
   const handleRelocate = useCallback(
     (event: CustomEvent<FoliateRelocateDetail>) => {
+      setAnnotationMenu(null);
       const detail = event.detail;
       setProgress({
         fraction: detail.fraction,
@@ -181,6 +193,7 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
       setSelection(null);
       return;
     }
+    setAnnotationMenu(null);
     const range = domSelection.getRangeAt(0);
     const frameRect = (doc.defaultView?.frameElement as HTMLElement | null)?.getBoundingClientRect();
     const rect = range.getBoundingClientRect();
@@ -269,6 +282,24 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
           const draw = style === 'underline' ? Overlayer.underline : Overlayer.highlight;
           detail.draw(draw, {
             color: highlightColorRef.current,
+          });
+        });
+        opened.addEventListener('show-annotation', (event) => {
+          const detail = (event as CustomEvent<{ value: string; index: number; range: Range }>).detail;
+          const text = normalizeQuote(detail.range.toString());
+          if (!text) return;
+          const rect = detail.range.getBoundingClientRect();
+          const doc = detail.range.startContainer.ownerDocument;
+          const frameRect = (doc?.defaultView?.frameElement as HTMLElement | null)?.getBoundingClientRect();
+          const item = annotationSetRef.current.items.find((entry) => annotationCfi(entry) === detail.value);
+          setSelection(null);
+          setAnnotationMenu({
+            cfi: detail.value,
+            index: detail.index,
+            text,
+            source: item?.target.source ?? opened.book.sections[detail.index]?.id ?? '',
+            x: (frameRect?.left ?? 0) + rect.left + rect.width / 2,
+            y: (frameRect?.top ?? 0) + rect.bottom,
           });
         });
         await openBook(bytes, title, opened);
@@ -439,6 +470,8 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
     async (target: { path: string } | 'new') => {
       const captured = clipRef.current;
       setNotePickerOpen(false);
+      setAnnotationNoteOpen(false);
+      setAnnotationMenu(null);
       if (!captured) return;
       const clip = { text: captured.text, title, page: captured.section };
       const done = target === 'new' ? await clipToNewNote(clip, resourceId) : await clipToNote(target.path, clip);
@@ -458,6 +491,34 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
     },
     [title, resourceId, clearSelection, persistAnnotation],
   );
+
+  /** Actions for a highlight that already exists in the book. */
+  const annotationToCanvas = useCallback(
+    (menu: { cfi: string; index: number; text: string }) => {
+      const section = menu.index + 1;
+      const cardId = useCanvas.getState().addCard({
+        title: cardTitle(stripExtension(title), section),
+        content: menu.text,
+        color: highlightColorRef.current,
+        source: { filePath: path, title, page: section, cfi: menu.cfi, isExternal },
+        near: resourceId,
+      });
+      useToasts.getState().push({
+        kind: 'success',
+        title: 'Added to canvas',
+        description: progress?.chapter ?? `Section ${section}`,
+        action: { label: 'Show', run: () => useCanvas.getState().focusResource(cardId) },
+      });
+      setSelection(null);
+      setAnnotationMenu(null);
+    },
+    [title, path, isExternal, resourceId, progress?.chapter],
+  );
+
+  const annotationToNote = useCallback((menu: { text: string; index: number; cfi: string; source: string }) => {
+    clipRef.current = { text: menu.text, section: menu.index + 1, cfi: menu.cfi, source: menu.source };
+    setAnnotationNoteOpen(true);
+  }, []);
 
   const sendToAi = useCallback(
     (mode: 'ask' | 'explain' | 'flashcards') => {
@@ -538,6 +599,43 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
         onPickNew={() => void copyToNote('new')}
       />
       <div ref={hostRef} className="book-viewport" />
+      <NoteClipPicker
+        anchorRef={annotationNoteAnchor}
+        open={annotationNoteOpen}
+        onClose={() => {
+          setAnnotationNoteOpen(false);
+          setAnnotationMenu(null);
+        }}
+        onPickNote={(notePath) => void copyToNote({ path: notePath })}
+        onPickNew={() => void copyToNote('new')}
+      />
+      {annotationMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          className="book-float-menu-holder"
+          style={{ left: Math.min(Math.max(annotationMenu.x, Math.min(360, window.innerWidth / 2)), window.innerWidth - Math.min(360, window.innerWidth / 2)), top: annotationMenu.y + 48 < window.innerHeight ? annotationMenu.y : Math.max(8, annotationMenu.y - 80) }}
+        >
+          <div className="pdf-float-menu">
+            <button type="button" onClick={() => void copyText(annotationMenu.text)} title="Copy the highlighted text">
+              <Copy size={13} /> Copy
+            </button>
+            <button type="button" className="pdf-float-primary" onClick={() => annotationToCanvas(annotationMenu)} title="Add this highlight to the canvas as a card">
+              <StickyNote size={13} /> To canvas
+            </button>
+            <button
+              ref={annotationNoteAnchor}
+              type="button"
+              className="pdf-float-primary"
+              onClick={() => annotationToNote(annotationMenu)}
+              title="Copy this highlight to a note"
+              aria-haspopup="listbox"
+              aria-expanded={annotationNoteOpen}
+            >
+              <NotebookPen size={13} /> To note
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
       {selection && typeof document !== 'undefined' && createPortal(
         <div
           className="book-float-menu-holder"

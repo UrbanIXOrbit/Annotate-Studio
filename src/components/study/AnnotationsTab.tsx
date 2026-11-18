@@ -25,6 +25,7 @@ import { useAnnotations } from '@/store/annotations';
 import type { AnnotationFile } from '@/store/annotations';
 import { useCanvas } from '@/store/canvas';
 import { toast } from '@/store/toast';
+import { statExternalFile } from '@/lib/tauri-commands';
 import {
   KIND_GROUPS,
   buildReport,
@@ -113,6 +114,29 @@ export default function AnnotationsTab() {
       .filter((resource) => (resource.type === 'pdf' || resource.type === 'book') && resource.isExternal && !!resource.filePath)
       .map((resource) => ({ path: resource.filePath!, type: resource.type }))),
   [canvasWorkspaces]);
+  // External documents are not in the library scan, so stat them for a real
+  // cache key — a constant key would never notice edits to the file on disk.
+  const [externalMeta, setExternalMeta] = useState<Record<string, { size: number; modified_at: string }>>({});
+  const externalKey = externalDocs.map((doc) => doc.path).join('|');
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      externalDocs.map(async ({ path }) => {
+        try {
+          const file = await statExternalFile(path);
+          return [path, file ? { size: file.size, modified_at: file.modified_at } : null] as const;
+        } catch {
+          return [path, null] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const found = entries.filter((entry): entry is readonly [string, { size: number; modified_at: string }] => !!entry[1]);
+      setExternalMeta(Object.fromEntries(found.map(([path, meta]) => [path, meta])));
+    });
+    return () => { cancelled = true; };
+  }, [externalKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setView = useApp((state) => state.setView);
   const { books, selected, groups, query, hideEmpty, scanning, progress, revision, select, setQuery, toggleGroup, setHideEmpty, scan } = useAnnotations();
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
@@ -124,13 +148,13 @@ export default function AnnotationsTab() {
       name: baseName(path),
       path,
       file_type: type === 'book' ? 'Book' : 'Pdf',
-      size: 0,
+      size: externalMeta[path]?.size ?? 0,
       created_at: '',
-      modified_at: '',
+      modified_at: externalMeta[path]?.modified_at ?? '',
       isExternal: true,
     }));
     return [...new Map([...inLibrary, ...outsideWorkspace].map((file) => [file.path, file])).values()];
-  }, [externalDocs, files]);
+  }, [externalDocs, files, externalMeta]);
 
   useEffect(() => {
     void scan(scannable);
@@ -171,19 +195,21 @@ export default function AnnotationsTab() {
 
   /** Jump to an annotation: e-books by their saved CFI location, PDFs by page. */
   const openAnnotation = (book: BookAnnotations, entry: AnnotationEntry) => {
+    const isExternal = rows.find((row) => row.file.path === book.path)?.file.isExternal === true;
     const opened = entry.cfi
-      ? openBookAtCfi(book.path, entry.cfi, book.title)
-      : openPdfAtPage(book.path, entry.page, book.title);
+      ? openBookAtCfi(book.path, entry.cfi, book.title, isExternal)
+      : openPdfAtPage(book.path, entry.page, book.title, isExternal);
     if (opened) setView('canvas');
   };
 
   const openGroup = (book: BookAnnotations, entries: AnnotationEntry[]) => {
+    const isExternal = rows.find((row) => row.file.path === book.path)?.file.isExternal === true;
     const withCfi = entries.find((entry) => entry.cfi);
     if (withCfi?.cfi) {
-      if (openBookAtCfi(book.path, withCfi.cfi, book.title)) setView('canvas');
+      if (openBookAtCfi(book.path, withCfi.cfi, book.title, isExternal)) setView('canvas');
       return;
     }
-    if (openPdfAtPage(book.path, entries[0]?.page ?? 1, book.title)) setView('canvas');
+    if (openPdfAtPage(book.path, entries[0]?.page ?? 1, book.title, isExternal)) setView('canvas');
   };
 
   const exportAs = async (format: ExportFormat) => {

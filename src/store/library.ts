@@ -25,6 +25,19 @@ interface LibraryStore {
 }
 
 let inflight: Promise<StudyFile[]> | null = null;
+let indexTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Rebuild the graph/search indexes when the set of library files changes. */
+function invalidateIndexes(): void {
+  if (indexTimer) clearTimeout(indexTimer);
+  indexTimer = setTimeout(() => {
+    indexTimer = undefined;
+    void Promise.all([
+      import('./graph').then((module) => module.invalidateLibraryIndex()),
+      import('./search').then((module) => module.invalidateSearchIndex()),
+    ]).catch(() => undefined);
+  }, 250);
+}
 
 function sortFiles(files: StudyFile[]): StudyFile[] {
   return [...files].sort((a, b) => b.modified_at.localeCompare(a.modified_at));
@@ -42,34 +55,51 @@ export const useLibrary = create<LibraryStore>((set) => ({
       try {
         const files = await listWorkspaceFiles();
         // Files kept outside the workspace are referenced in place: stat each
-        // registered path, list the ones still on disk, and prune the rest.
+        // registered path, list the ones still on disk, and keep the rest.
         const externals = useSettings.getState().externalFiles;
-        const stats = await Promise.all(externals.map((path) => statExternalFile(path).catch(() => null)));
+        const stats = await Promise.all(
+          externals.map(async (path) => {
+            try {
+              return { path, file: await statExternalFile(path) };
+            } catch {
+              return { path, file: null };
+            }
+          }),
+        );
         const root = await getDataDir().catch(() => '');
         const listed = new Set(files.map((file) => file.path));
-        const kept: string[] = [];
         const externalFiles: StudyFile[] = [];
-        stats.forEach((file, index) => {
-          const requested = externals[index];
-          if (!file) return;
-          kept.push(requested);
+        const unavailable: string[] = [];
+        for (const { path, file } of stats) {
+          // A failed stat (unplugged drive, transient lock) is not proof the
+          // user removed the file. Keep both the registration and its metadata
+          // so the file comes back on a later refresh.
+          if (!file) {
+            unavailable.push(path);
+            continue;
+          }
           // Files inside the workspace's top-level documents/notes folders are
           // already listed by the scan; only keep the workspace-relative entry.
           const relative = root && (file.path.startsWith(`${root}/`) || file.path.startsWith(`${root}\\`))
             ? file.path.slice(root.length).replace(/^[\\/]+/, '')
             : null;
-          if (relative && listed.has(relative)) return;
-          if (/^(documents|notes)[\\/][^\\/]+$/.test(relative ?? '')) return;
+          if (relative && listed.has(relative)) continue;
+          if (/^(documents|notes)[\\/][^\\/]+$/.test(relative ?? '')) continue;
           externalFiles.push(file);
-        });
-        if (kept.length !== externals.length) {
-          useSettings.getState().update({ externalFiles: kept });
         }
         const merged = sortFiles([...files, ...externalFiles]);
-        // Metadata is keyed by path; drop entries whose file left the library.
-        useSettings.getState().pruneFileMeta(merged.map((file) => file.path));
-        set({ files: merged, loading: false, loaded: true, error: null });
-        return merged;
+        // Anything added while the scan was in flight still belongs in the
+        // library; committing the scan result alone would drop it.
+        const concurrent = useLibrary.getState().files.filter(
+          (file) => !merged.some((entry) => entry.path === file.path),
+        );
+        const finalFiles = sortFiles([...merged, ...concurrent]);
+        const previousPaths = new Set(useLibrary.getState().files.map((file) => file.path));
+        // Keep metadata for temporarily unavailable external files.
+        useSettings.getState().pruneFileMeta([...finalFiles.map((file) => file.path), ...unavailable]);
+        set({ files: finalFiles, loading: false, loaded: true, error: null });
+        if (finalFiles.length !== previousPaths.size) invalidateIndexes();
+        return finalFiles;
       } catch (error: unknown) {
         set({ loading: false, loaded: true, error: error instanceof Error ? error.message : String(error) });
         return [] as StudyFile[];
@@ -81,15 +111,19 @@ export const useLibrary = create<LibraryStore>((set) => ({
   },
   upsert: (file) =>
     set((state) => ({ files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path)]) })),
-  remove: (path) => set((state) => ({ files: state.files.filter((file) => file.path !== path) })),
-  replace: (oldPath, file) =>
+  remove: (path) => {
+    set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
+    invalidateIndexes();
+  },
+  replace: (oldPath, file) => {
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
-    })),
+    }));
+    invalidateIndexes();
+  },
   registerExternal: async (path) => {
     const file = await statExternalFile(path);
     if (!file) return null;
-    const settings = useSettings.getState();
     const root = await getDataDir().catch(() => '');
     const relative = root && (path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
       ? path.slice(root.length).replace(/^[\\/]+/, '')
@@ -98,29 +132,24 @@ export const useLibrary = create<LibraryStore>((set) => ({
     // the scan already; deeper workspace folders and truly external paths are
     // referenced through the registry so they survive a refresh.
     const scanListed = relative !== null && /^(documents|notes)[\\/][^\\/]+$/.test(relative);
-    if (!scanListed && !settings.externalFiles.includes(path)) {
-      settings.update({ externalFiles: [...settings.externalFiles, path] });
-    }
+    if (!scanListed) useSettings.getState().addExternalFile(path);
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path && existing.path !== relative)]),
     }));
+    invalidateIndexes();
     return file;
   },
   removeExternal: (path) => {
-    const settings = useSettings.getState();
-    if (settings.externalFiles.includes(path)) {
-      settings.update({ externalFiles: settings.externalFiles.filter((entry) => entry !== path) });
-    }
+    useSettings.getState().removeExternalFile(path);
     set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
+    invalidateIndexes();
   },
   replaceExternal: (oldPath, file) => {
-    const settings = useSettings.getState();
-    if (settings.externalFiles.includes(oldPath)) {
-      settings.update({ externalFiles: settings.externalFiles.map((entry) => (entry === oldPath ? file.path : entry)) });
-    }
+    useSettings.getState().replaceExternalFile(oldPath, file.path);
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
     }));
+    invalidateIndexes();
   },
 }));
 

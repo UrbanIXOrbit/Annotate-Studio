@@ -11,14 +11,17 @@ export function createSaver<T>(
   write: (value: T) => Promise<void>,
   delay = 400,
   onError?: (error: unknown) => void,
+  maxWait = 2000,
 ): Saver<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let latest: { value: T } | null = null;
   let chain: Promise<void> = Promise.resolve();
+  let firstScheduledAt = 0;
 
   const drain = (): Promise<void> => {
     if (timer) clearTimeout(timer);
     timer = undefined;
+    firstScheduledAt = 0;
     const job = latest;
     latest = null;
     if (job) {
@@ -29,9 +32,13 @@ export function createSaver<T>(
 
   const saver: Saver<T> = {
     schedule(value) {
+      const now = Date.now();
+      if (!latest) firstScheduledAt = now;
       latest = { value };
       if (timer) clearTimeout(timer);
-      timer = setTimeout(drain, delay);
+      // Continuous activity must not postpone the write forever.
+      const remaining = maxWait - (now - firstScheduledAt);
+      timer = setTimeout(drain, Math.max(0, Math.min(delay, remaining)));
     },
     flush: drain,
   };

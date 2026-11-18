@@ -210,7 +210,8 @@ export function matchesFilter(entry: AnnotationEntry, filter: EntryFilter): bool
     entry.comment.toLowerCase().includes(query) ||
     kindLabel(entry.kind).toLowerCase().includes(query) ||
     String(entry.page) === query ||
-    `page ${entry.page}` === query
+    `page ${entry.page}` === query ||
+    `chapter ${entry.page}` === query
   );
 }
 
@@ -340,8 +341,11 @@ export function reportToMarkdown(report: Report): string {
     for (const page of book.pages) {
       lines.push(`### ${book.locationUnit === 'chapter' ? 'Chapter' : 'Page'} ${page.page}`, '');
       for (const item of page.items) {
+        // Same rule as the Word/PDF exporters: quoted text is the body, except
+        // for notes/text boxes where the comment itself is the body. Drawings
+        // and stamps can have a comment without a quote — keep it either way.
         const body = item.text || (item.kind === 'note' || item.kind === 'text' ? item.comment : '');
-        const comment = item.text ? item.comment : '';
+        const comment = item.text ? item.comment : body ? '' : item.comment;
         let line = `- **${item.label}**`;
         if (body) line += ` — ${indentBlock(escapeMarkdown(body), '  ')}`;
         lines.push(line);
