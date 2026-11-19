@@ -292,6 +292,11 @@ export const useGraph = create<GraphState>((set) => ({
 /** Rebuild the link index when files are added or removed from the library. */
 export function invalidateLibraryIndex(): void {
   indexed = false;
+  const valid = new Set(useLibrary.getState().files.map((file) => file.path));
+  for (const path of [...cache.keys()]) {
+    // Resource nodes (cards/articles) are not library files.
+    if (!path.startsWith('res:') && !valid.has(path)) cache.delete(path);
+  }
   useGraph.setState((state) => ({ revision: state.revision + 1 }));
 }
 

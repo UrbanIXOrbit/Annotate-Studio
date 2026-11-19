@@ -150,6 +150,7 @@ test('markdown lists books, then pages, then annotations with comments', () => {
 test('markdown escapes formatting characters and handles an empty report', () => {
   assert.equal(escapeMarkdown('a_b *c* [d]'), 'a\\_b \\*c\\* \\[d\\]');
   assert.equal(escapeMarkdown('# not a heading'), '\\# not a heading');
+  assert.equal(escapeMarkdown('$x$ ~~gone~~ | cell'), '\\$x\\$ \\~\\~gone\\~\\~ \\| cell');
   assert.equal(escapeMarkdown('1. not a list'), '1\\. not a list');
   const empty = reportToMarkdown(buildReport([], { groups: ALL_GROUPS, query: '' }, 'X', new Date('2026-01-01T00:00:00Z')));
   assert.match(empty, /No annotations to export/);

@@ -5,8 +5,9 @@ use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::external_access::{ensure_external_access, external_read_allowed};
 use crate::state::AppState;
 use crate::storage::{read_json, write_atomic, write_json};
 
@@ -145,12 +146,15 @@ fn write_epub_annotation_file(
 
 #[tauri::command(async)]
 pub fn read_book_annotation_set(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     is_external: bool,
 ) -> Result<Option<Value>, String> {
     let full = if is_external {
-        PathBuf::from(path)
+        let full = PathBuf::from(path);
+        ensure_external_access(&app, &state, &full)?;
+        full
     } else {
         state.workspace.resolve_user_file(&path)?
     };
@@ -177,6 +181,7 @@ pub fn read_book_annotation_set(
 
 #[tauri::command(async)]
 pub fn write_book_annotation_set(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     is_external: bool,
@@ -189,7 +194,9 @@ pub fn write_book_annotation_set(
         return Err("The book annotation set is too large to save.".into());
     }
     let full = if is_external {
-        PathBuf::from(path)
+        let full = PathBuf::from(path);
+        ensure_external_access(&app, &state, &full)?;
+        full
     } else {
         state.workspace.resolve_user_file(&path)?
     };
@@ -234,7 +241,19 @@ fn outcome_error(path: String, error: String) -> ExternalImportOutcome {
 /// Every requested path gets an outcome so partial failures are visible
 /// instead of silently dropping files.
 #[tauri::command(async)]
-pub fn import_external_files(paths: Vec<String>) -> Result<Vec<ExternalImportOutcome>, String> {
+pub fn import_external_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<ExternalImportOutcome>, String> {
+    let allowed = paths
+        .into_iter()
+        .filter(|path| external_read_allowed(&app, &state, Path::new(path)))
+        .collect();
+    import_external_files_inner(allowed)
+}
+
+fn import_external_files_inner(paths: Vec<String>) -> Result<Vec<ExternalImportOutcome>, String> {
     let mut outcomes = Vec::new();
 
     for path_str in paths {
@@ -335,11 +354,22 @@ pub struct ExternalFileStatus {
 }
 
 #[tauri::command(async)]
-pub fn external_files_exist(paths: Vec<String>) -> Result<Vec<ExternalFileStatus>, String> {
+pub fn external_files_exist(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<ExternalFileStatus>, String> {
+    external_files_exist_inner(paths, |path| external_read_allowed(&app, &state, Path::new(path)))
+}
+
+fn external_files_exist_inner(
+    paths: Vec<String>,
+    allowed: impl Fn(&str) -> bool,
+) -> Result<Vec<ExternalFileStatus>, String> {
     Ok(paths
         .into_iter()
         .map(|path| ExternalFileStatus {
-            exists: Path::new(&path).is_file(),
+            exists: allowed(&path) && Path::new(&path).is_file(),
             path,
         })
         .collect())
@@ -377,23 +407,36 @@ pub fn save_books_state(state: State<'_, AppState>, books_state: Value) -> Resul
 
 /// Open a file with the system default application
 #[tauri::command(async)]
-pub fn open_external_file(path: String) -> Result<(), String> {
-    let file_path = Path::new(&path);
+pub fn open_external_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let full = PathBuf::from(path.trim());
+    ensure_external_access(&app, &state, &full)?;
+    open_external_file_inner(&path)
+}
+
+/// Opens a file after the caller has validated the path (used by video too).
+pub fn open_external_file_inner(path: &str) -> Result<(), String> {
+    let file_path = Path::new(path);
 
     // Verify file exists
     if !file_path.exists() {
-        return Err(format!("File not found: {}", path));
+        return Err(format!("File not found: {path}"));
     }
 
     if !file_path.is_file() {
-        return Err(format!("Path is not a file: {}", path));
+        return Err(format!("Path is not a file: {path}"));
     }
 
     // Open the file with the system default application
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path])
+        // Pass the path as a single argument: `cmd /C start` re-parses the
+        // command line, so names containing `&` or `|` could run extra commands.
+        std::process::Command::new("explorer.exe")
+            .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
@@ -492,7 +535,13 @@ fn open_folder_windows(folder: std::path::PathBuf) -> Result<(), String> {
 
 /// Read external file bytes
 #[tauri::command(async)]
-pub fn read_external_file_bytes(path: String) -> Result<Vec<u8>, String> {
+pub fn read_external_file_bytes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    let full = PathBuf::from(path.trim());
+    ensure_external_access(&app, &state, &full)?;
     let file_path = Path::new(&path);
 
     // Verify file exists
@@ -531,7 +580,7 @@ mod tests {
             file2.to_string_lossy().into_owned(),
         ];
 
-        let result = import_external_files(paths);
+        let result = import_external_files_inner(paths);
         assert!(result.is_ok());
 
         let outcomes = result.unwrap();
@@ -550,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_import_reports_missing_paths() {
-        let result = import_external_files(vec![
+        let result = import_external_files_inner(vec![
             "/non/existent/file.pdf".to_string(),
             "/another/missing.txt".to_string(),
         ]);
@@ -569,7 +618,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let paths = vec![temp_dir.path().to_string_lossy().into_owned()];
 
-        let result = import_external_files(paths);
+        let result = import_external_files_inner(paths);
         assert!(result.is_ok());
         let outcomes = result.unwrap();
         assert_eq!(outcomes.len(), 1);
@@ -583,11 +632,11 @@ mod tests {
         let file = temp_dir.path().join("real.txt");
         fs::write(&file, b"content").unwrap();
 
-        let statuses = external_files_exist(vec![
+        let statuses = external_files_exist_inner(vec![
             file.to_string_lossy().into_owned(),
             "/non/existent/file.pdf".to_string(),
             temp_dir.path().to_string_lossy().into_owned(),
-        ])
+        ], |_| true)
         .unwrap();
 
         assert_eq!(statuses.len(), 3);
@@ -599,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_open_external_file_not_found() {
-        let result = open_external_file("/non/existent/file.pdf".to_string());
+        let result = open_external_file_inner("/non/existent/file.pdf");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("File not found"));
     }

@@ -28,6 +28,13 @@ let inflight: Promise<StudyFile[]> | null = null;
 let indexTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Rebuild the graph/search indexes when the set of library files changes. */
+function forgetPath(path: string): void {
+  void Promise.all([
+    import('./graph').then((module) => module.forgetPath(path)),
+    import('./search').then((module) => module.forgetSearchPath(path)),
+  ]).catch(() => undefined);
+}
+
 function invalidateIndexes(): void {
   if (indexTimer) clearTimeout(indexTimer);
   indexTimer = setTimeout(() => {
@@ -113,12 +120,14 @@ export const useLibrary = create<LibraryStore>((set) => ({
     set((state) => ({ files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path)]) })),
   remove: (path) => {
     set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
+    forgetPath(path);
     invalidateIndexes();
   },
   replace: (oldPath, file) => {
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
     }));
+    forgetPath(oldPath);
     invalidateIndexes();
   },
   registerExternal: async (path) => {
@@ -142,6 +151,7 @@ export const useLibrary = create<LibraryStore>((set) => ({
   removeExternal: (path) => {
     useSettings.getState().removeExternalFile(path);
     set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
+    forgetPath(path);
     invalidateIndexes();
   },
   replaceExternal: (oldPath, file) => {
@@ -149,6 +159,7 @@ export const useLibrary = create<LibraryStore>((set) => ({
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== oldPath && existing.path !== file.path)]),
     }));
+    forgetPath(oldPath);
     invalidateIndexes();
   },
 }));

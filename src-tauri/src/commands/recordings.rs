@@ -430,27 +430,41 @@ pub fn start_audio_recording(
     if name.trim().is_empty() {
         return Err("Give the recording a name first.".into());
     }
-    let path = target_path(&directory, &name)?;
     let (start_tx, start_rx) = mpsc::channel::<Result<String, String>>();
     let (control_tx, control_rx) = mpsc::channel::<RecorderControl>();
 
-    let recorder_path = path.clone();
-    std::thread::Builder::new()
-        .name("audio-recorder".into())
-        .spawn(move || recorder_run(recorder_path, start_tx, control_rx))
-        .map_err(|_| "Could not start the recorder thread.")?;
-
-    // Reserve the slot before waiting so a second start cannot race past the
-    // "already in progress" check.
+    // Reserve the slot FIRST: a second start must not spawn a recorder or pick
+    // a file path before the "already in progress" check has run.
     {
         let mut active = state.inner.lock().map_err(|_| "Recorder is unavailable")?;
         if active.is_some() {
             return Err("A recording is already in progress.".into());
         }
         *active = Some(ActiveRecording {
-            path: path.clone(),
+            path: PathBuf::new(),
             control: control_tx,
         });
+    }
+    let path = match target_path(&directory, &name) {
+        Ok(path) => path,
+        Err(error) => {
+            release_reservation(&state);
+            return Err(error);
+        }
+    };
+    let recorder_path = path.clone();
+    if std::thread::Builder::new()
+        .name("audio-recorder".into())
+        .spawn(move || recorder_run(recorder_path, start_tx, control_rx))
+        .is_err()
+    {
+        release_reservation(&state);
+        return Err("Could not start the recorder thread.".into());
+    }
+    if let Ok(mut active) = state.inner.lock() {
+        if let Some(slot) = active.as_mut() {
+            slot.path = path.clone();
+        }
     }
 
     match start_rx.recv_timeout(Duration::from_secs(15)) {

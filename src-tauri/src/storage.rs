@@ -44,6 +44,40 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     write_atomic_with(path, bytes, false)
 }
 
+/// Overwrite an existing file without replacing it. Used for external files:
+/// rename-based atomic writes break symlinks/hardlinks, drop extended
+/// attributes and reset permissions (a private note could become world-readable).
+pub fn write_in_place(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let backup = parent.join(format!(
+        ".bak-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let backup_result = std::fs::copy(path, &backup);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).truncate(true).open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    match result {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&backup);
+            Ok(())
+        }
+        Err(err) => {
+            if backup_result.is_ok() {
+                let _ = std::fs::copy(&backup, path);
+                let _ = std::fs::remove_file(&backup);
+            }
+            Err(format!("Failed to write {}: {err}", path.display()))
+        }
+    }
+}
+
 pub fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
     write_atomic(path, &json)

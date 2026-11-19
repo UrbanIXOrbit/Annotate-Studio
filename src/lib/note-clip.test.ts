@@ -120,3 +120,10 @@ test('a quote without a source is still a block quote, and markdown in comments 
   const clip = formatCardsClip([{ text: 'Own words *here*', comment: '# not a heading' }], 'markdown');
   assert.equal(clip, '> Own words \\*here\\*\n\n\\# not a heading');
 });
+
+test('clips label chapters and sections correctly, and omit location when asked', () => {
+  const base = { text: 'a passage', title: 'Book.epub', page: 3 };
+  assert.match(formatClip({ ...base, unit: 'chapter' }, 'markdown'), /chapter 3/);
+  assert.match(formatClip({ ...base, unit: 'section' }, 'text'), /section 3/);
+  assert.equal(formatClip({ ...base, unit: 'none' }, 'markdown'), '> a passage\n>\n> \u2014 *Book.epub*');
+});

@@ -80,3 +80,14 @@ test('parseBibtex joins # concatenation', () => {
   const result = parseBibtex('@misc{c, note = {"see " # "page " # {12}}\n}');
   assert.equal(result.entries[0].fields.note, 'see page 12');
 });
+
+test('parseBibtex decodes LaTeX accent escapes in author names', () => {
+  const result = parseBibtex(String.raw`@article{kuhn2020,
+  author = {K{\"u}hn, Hartmut and Mu{\~n}oz, Mar{\'i}a},
+  title = {A study},
+  year = 2020
+}`);
+  assert.equal(result.entries.length, 1);
+  assert.match(result.entries[0].fields.author ?? '', /Kühn, Hartmut/);
+  assert.match(result.entries[0].fields.author ?? '', /Muñoz, María/);
+});

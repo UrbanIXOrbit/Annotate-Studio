@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import ExternalRelinkDialog from './ExternalRelinkDialog';
 import {
   Check,
   CheckCircle2,
@@ -9,7 +10,9 @@ import {
   Cpu,
   Database,
   Download,
+  FolderOpen,
   Keyboard,
+  Link2,
   Loader2,
   Monitor,
   Palette,
@@ -22,9 +25,12 @@ import {
 import {
   addAIProvider,
   checkOllama,
+  createSnapshot,
   exportData,
   getDataDir,
+  getBackupsDir,
   importData,
+  inspectBackup,
   isTauri,
   removeAIProvider,
   reserveCommands,
@@ -80,7 +86,8 @@ const MODEL_HINTS: Record<string, string> = {
 };
 
 const SHORTCUTS: { keys: string; action: string }[] = [
-  { keys: 'Ctrl + 1…7 / Ctrl + ,', action: 'Go to canvas, library, annotations, flashcards, exams, pomodoro, motivation / settings' },
+  { keys: 'Ctrl + 1…9 / Ctrl + ,', action: 'Go to canvas, library, books, annotations, flashcards, exams, pomodoro, motivation, inbox / settings' },
+  { keys: 'Ctrl + K', action: 'Search across notes, PDFs, books and highlights' },
   { keys: 'Ctrl + J', action: 'Show or hide the assistant' },
   { keys: 'Drag background / Space + drag / middle mouse', action: 'Pan the canvas' },
   { keys: 'Ctrl + scroll, pinch', action: 'Zoom the canvas around the pointer' },
@@ -116,10 +123,15 @@ function ProvidersPane() {
   const [testing, setTesting] = useState<string | null>(null);
   const [ollama, setOllama] = useState<boolean | null>(null);
 
+  const ollamaEndpoint = providers.find((provider) => provider.type === 'ollama')?.endpoint ?? undefined;
   useEffect(() => {
+    let cancelled = false;
     void refresh();
-    checkOllama().then(setOllama).catch(() => setOllama(false));
-  }, [refresh]);
+    checkOllama(ollamaEndpoint)
+      .then((ok) => { if (!cancelled) setOllama(ok); })
+      .catch(() => { if (!cancelled) setOllama(false); });
+    return () => { cancelled = true; };
+  }, [refresh, ollamaEndpoint]);
 
   const needsKey = type !== 'ollama';
   const hasEndpoint = type === 'ollama' || type === 'openrouter';
@@ -174,7 +186,7 @@ function ProvidersPane() {
 
       <div className={cn('status-row', ollama ? 'status-ok' : 'status-off')}>
         {ollama === null ? <Loader2 size={14} className="spin" /> : ollama ? <Wifi size={14} /> : <WifiOff size={14} />}
-        {ollama === null ? 'Looking for Ollama…' : ollama ? 'Ollama is running on this computer' : 'Ollama was not found on localhost:11434'}
+        {ollama === null ? 'Looking for Ollama…' : ollama ? 'Ollama is running on this computer' : `Ollama was not found at ${ollamaEndpoint || 'localhost:11434'}`}
       </div>
 
       <div className="settings-card">
@@ -188,7 +200,13 @@ function ProvidersPane() {
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={async () => setProviders(await setDefaultAIProvider(provider.type, provider.model))}
+                  onClick={async () => {
+                    try {
+                      setProviders(await setDefaultAIProvider(provider.type, provider.model));
+                    } catch (error) {
+                      toast.error('Could not set the default model', error);
+                    }
+                  }}
                   title={provider.active ? 'Default model' : 'Make default'}
                 >
                   {provider.active ? <CheckCircle2 size={17} /> : <Circle size={17} />}
@@ -273,11 +291,54 @@ function ProvidersPane() {
 
 function DataPane() {
   const [dataDir, setDataDir] = useState('');
-  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+  const [busy, setBusy] = useState<'export' | 'import' | 'snapshot' | null>(null);
+  const [relinkOpen, setRelinkOpen] = useState(false);
+  const [includeExternal, setIncludeExternal] = useState(false);
+  const autoSnapshots = useSettings((state) => state.autoSnapshots);
 
   useEffect(() => {
     getDataDir().then(setDataDir).catch(() => setDataDir(''));
   }, []);
+
+  useEffect(() => {
+    if (!autoSnapshots || !isTauri()) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem('annotate-last-snapshot') === today) return;
+    void (async () => {
+      try {
+        await flushAll();
+        const path = await createSnapshot();
+        localStorage.setItem('annotate-last-snapshot', today);
+        toast.success('Snapshot saved', path);
+      } catch (error) {
+        toast.error('Snapshot failed', error);
+      }
+    })();
+  }, [autoSnapshots]);
+
+  const openBackupsFolder = async () => {
+    try {
+      const dir = isTauri() ? await getBackupsDir() : '';
+      if (!dir) return;
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(dir);
+    } catch (error) {
+      toast.error('Could not open the backups folder', error);
+    }
+  };
+
+  const takeSnapshot = async () => {
+    setBusy('snapshot');
+    try {
+      await flushAll();
+      const path = await createSnapshot();
+      toast.success('Snapshot saved', path);
+    } catch (error) {
+      toast.error('Snapshot failed', error);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const doExport = async () => {
     if (!isTauri()) return;
@@ -290,7 +351,7 @@ function DataPane() {
     setBusy('export');
     try {
       await flushAll();
-      const count = await exportData(path);
+      const count = await exportData(path, includeExternal);
       toast.success('Backup saved', `${count} files · ${path}`);
     } catch (error) {
       toast.error('Backup failed', error);
@@ -304,6 +365,17 @@ function DataPane() {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const selection = await open({ multiple: false, filters: [{ name: 'Annotate Studio backup', extensions: ['anos', 'zip'] }] });
     if (!selection || Array.isArray(selection)) return;
+    let externalDir: string | undefined;
+    try {
+      const info = await inspectBackup(selection);
+      if (info.includesExternalFiles) {
+        const folder = await open({ directory: true, multiple: false });
+        if (!folder || Array.isArray(folder)) return;
+        externalDir = folder;
+      }
+    } catch {
+      // Older backups have no manifest; restore app data only.
+    }
     const ok = await confirmDialog({
       title: 'Restore this backup?',
       message: 'Files in the backup replace your current data. A safety copy of your current data is saved in the backups folder first.',
@@ -315,7 +387,7 @@ function DataPane() {
     try {
       await flushAll();
       reserveCommands('import_data');
-      const count = await importData(selection);
+      const count = await importData(selection, externalDir);
       toast.success('Backup restored', `${count} files — reloading…`);
       setTimeout(() => window.location.reload(), 900);
     } catch (error) {
@@ -330,7 +402,7 @@ function DataPane() {
       <h2>Data & backup</h2>
       <div className="settings-card">
         <h3>Where your data lives</h3>
-        <p className="muted">Everything is stored locally in this folder: documents, notes, canvas layouts, flashcards, exams and settings.</p>
+        <p className="muted">App-owned data lives here: documents, notes, canvas layouts, flashcards, books, exams and settings. Files you opened from elsewhere stay where they are and are referenced by path.</p>
         <div className="path-row">
           <code>{dataDir || '…'}</code>
           <button type="button" className="icon-btn" onClick={() => void copyText(dataDir).then((ok) => ok && toast.success('Path copied'))} title="Copy path">
@@ -340,9 +412,37 @@ function DataPane() {
       </div>
       <div className="settings-card">
         <h3>Back up everything</h3>
-        <p className="muted">Save all your study data into a single .anos file you can restore later or on another computer.</p>
+        <p className="muted">Saves all app-owned data, including Books, into a single .anos file, plus a manifest of the external files you reference. External files and API keys are not copied.</p>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={includeExternal} onChange={(event) => setIncludeExternal(event.target.checked)} />
+          Include external PDFs, books and notes (complete backup)
+        </label>
         <button type="button" className="btn btn-primary" onClick={() => void doExport()} disabled={busy !== null}>
           {busy === 'export' ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Create backup
+        </button>
+      </div>
+      <div className="settings-card">
+        <h3>Automatic snapshots</h3>
+        <p className="muted">Keep a local snapshot of app-owned data once a day in the backups folder (last five are kept).</p>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={autoSnapshots}
+            onChange={(event) => useSettings.getState().update({ autoSnapshots: event.target.checked })}
+          />
+          Create a snapshot when the app opens
+        </label>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => void takeSnapshot()}
+          disabled={busy !== null || !autoSnapshots}
+          title={autoSnapshots ? 'Save a snapshot now' : 'Turn on automatic snapshots first'}
+        >
+          {busy === 'snapshot' ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Snapshot now
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => void openBackupsFolder()}>
+          <FolderOpen size={15} /> Open backups folder
         </button>
       </div>
       <div className="settings-card">
@@ -352,6 +452,14 @@ function DataPane() {
           {busy === 'import' ? <Loader2 size={15} className="spin" /> : <Upload size={15} />} Restore backup…
         </button>
       </div>
+      <div className="settings-card">
+        <h3>Reconnect external files</h3>
+        <p className="muted">After a restore or moving files, find references that no longer resolve and point them at their new location.</p>
+        <button type="button" className="btn btn-secondary" onClick={() => setRelinkOpen(true)}>
+          <Link2 size={15} /> Find missing files…
+        </button>
+      </div>
+      <ExternalRelinkDialog open={relinkOpen} onClose={() => setRelinkOpen(false)} />
     </div>
   );
 }

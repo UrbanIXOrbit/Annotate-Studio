@@ -224,6 +224,8 @@ interface BooksActions {
   importFiles: (projectId: string, folderId: string | null, paths: string[]) => Promise<BooksImportResult>;
   verifyLibrary: () => Promise<string[]>;
   updateFile: (id: string, patch: Partial<Pick<BookFile, 'name' | 'displayName' | 'tags' | 'notes' | 'citation'>>) => void;
+  /** Re-point saved file references after a backup restore (old path → new path). */
+  relinkFilePaths: (mapping: Record<string, string>) => void;
   moveFiles: (fileIds: string[], targetProjectId: string, targetFolderId: string | null) => void;
   copyFiles: (fileIds: string[], targetProjectId: string, targetFolderId: string | null) => number;
   removeFiles: (fileIds: string[]) => void;
@@ -943,6 +945,22 @@ export const useBooks = create<BooksStore>((set, get) => ({
         [id]: state.files[id] ? { ...state.files[id], ...patch } : state.files[id],
       },
     }));
+  },
+  relinkFilePaths: (mapping) => {
+    set((state) => {
+      let changed = false;
+      const files: Record<string, BookFile> = {};
+      for (const [id, file] of Object.entries(state.files)) {
+        const nextPath = mapping[file.filePath];
+        if (nextPath && nextPath !== file.filePath) {
+          files[id] = { ...file, filePath: nextPath };
+          changed = true;
+        } else {
+          files[id] = file;
+        }
+      }
+      return changed ? { files } : state;
+    });
   },
   
   moveFiles: (fileIds, targetProjectId, targetFolderId) => {

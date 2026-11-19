@@ -2,14 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::filesystem::{describe, describe_absolute, list_study_files, FileType, StudyFile};
 use crate::paths::{
     sanitize_file_name, sanitize_stem, split_name, unique_in_dir, DOCUMENTS_DIR, NOTES_DIR,
 };
+use crate::external_access::{ensure_external_access, external_read_allowed};
 use crate::state::AppState;
-use crate::storage::write_atomic;
+use crate::storage::{write_atomic, write_in_place};
 use crate::text::{bytes_look_binary, text_from_file};
 
 fn io_error(path: &str, err: std::io::Error) -> String {
@@ -189,9 +190,13 @@ pub fn read_file_bytes(state: State<'_, AppState>, path: String) -> Result<Respo
 /// workspace (recordings, notes in their own folders) are referenced in place, never
 /// copied, and this is how the library learns what they are.
 #[tauri::command(async)]
-pub fn stat_external_file(path: String) -> Result<Option<StudyFile>, String> {
+pub fn stat_external_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<StudyFile>, String> {
     let full = PathBuf::from(path.trim());
-    if !full.is_absolute() {
+    if !full.is_absolute() || !external_read_allowed(&app, &state, &full) {
         return Ok(None);
     }
     Ok(describe_absolute(&full))
@@ -201,6 +206,8 @@ pub fn stat_external_file(path: String) -> Result<Option<StudyFile>, String> {
 /// into the workspace. The note lives where the user pointed and is referenced there.
 #[tauri::command(async)]
 pub fn create_external_note(
+    app: AppHandle,
+    state: State<'_, AppState>,
     directory: String,
     name: String,
     content: String,
@@ -209,6 +216,7 @@ pub fn create_external_note(
     if !folder.is_absolute() || !folder.is_dir() {
         return Err("Choose an existing folder on this device for the note.".into());
     }
+    ensure_external_access(&app, &state, &folder)?;
     let requested = name.trim();
     let stem = strip_extension_ignore_case(requested, "md")
         .or_else(|| strip_extension_ignore_case(requested, "markdown"))
@@ -222,11 +230,17 @@ pub fn create_external_note(
 /// Renames a file at an absolute path in place, like `rename_workspace_file` but
 /// without any workspace restriction.
 #[tauri::command(async)]
-pub fn rename_external_file(path: String, new_name: String) -> Result<StudyFile, String> {
+pub fn rename_external_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    new_name: String,
+) -> Result<StudyFile, String> {
     let from = PathBuf::from(path.trim());
     if !from.is_absolute() || !from.is_file() {
         return Err(format!("File not found: {path}"));
     }
+    ensure_external_access(&app, &state, &from)?;
     let parent = from
         .parent()
         .ok_or_else(|| "Invalid file location".to_string())?;
@@ -308,7 +322,11 @@ pub async fn write_file_bytes(
 /// Writes a user-selected external file. This is deliberately separate from
 /// `write_file_bytes`, whose paths are restricted to the app workspace.
 #[tauri::command]
-pub async fn write_external_file_bytes(request: Request<'_>) -> Result<(), String> {
+pub async fn write_external_file_bytes(
+    request: Request<'_>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let InvokeBody::Raw(body) = request.body() else {
         return Err("Expected a binary payload".into());
     };
@@ -318,7 +336,8 @@ pub async fn write_external_file_bytes(request: Request<'_>) -> Result<(), Strin
     if !full.is_absolute() || !full.is_file() {
         return Err("External file not found".into());
     }
-    write_atomic(&full, data)
+    ensure_external_access(&app, &state, &full)?;
+    write_in_place(&full, data)
         .map_err(|error| format!("Could not save external file {path}: {error}"))
 }
 

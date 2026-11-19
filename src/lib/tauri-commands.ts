@@ -232,6 +232,8 @@ export interface ChatOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /** Set to allow cancelling this request with cancelGeneration(id). */
+  requestId?: string;
 }
 
 export const aiChat = (messages: ChatMessagePayload[], options: ChatOptions = {}) =>
@@ -240,6 +242,7 @@ export const aiChat = (messages: ChatMessagePayload[], options: ChatOptions = {}
     model: options.model || null,
     temperature: options.temperature,
     maxTokens: options.maxTokens,
+    requestId: options.requestId ?? null,
   });
 
 export interface GenerateOptions {
@@ -291,8 +294,19 @@ export const setDefaultAIProvider = (providerType: string, model?: string) =>
 export const testAIProvider = (model?: string) => call<AIResponse>('test_ai_provider', { model: model || null });
 export const checkOllama = (endpoint?: string) => call<boolean>('check_ollama', { endpoint: endpoint || null });
 
-export const exportData = (outputPath: string) => call<number>('export_data', { outputPath });
-export const importData = (archivePath: string) => call<number>('import_data', { archivePath });
+export const exportData = (outputPath: string, includeExternal = false) =>
+  call<number>('export_data', { outputPath, includeExternal });
+export const importData = (archivePath: string, externalDir?: string) =>
+  call<number>('import_data', { archivePath, externalDir: externalDir ?? null });
+export interface BackupInfo {
+  includesExternalFiles: boolean;
+  externalCount: number;
+  version: number | null;
+  createdAt: string | null;
+}
+export const inspectBackup = (archivePath: string) => call<BackupInfo>('inspect_backup', { archivePath });
+export const createSnapshot = () => call<string>('create_snapshot');
+export const getBackupsDir = () => call<string>('get_backups_dir');
 
 // Books Manager - Virtual File System
 export interface ExternalFileRef {

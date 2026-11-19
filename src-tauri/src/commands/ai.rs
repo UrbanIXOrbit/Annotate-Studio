@@ -60,6 +60,7 @@ pub async fn ai_chat(
     model: Option<String>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    request_id: Option<String>,
 ) -> Result<AIResponse, String> {
     let router = router_snapshot(&state)?;
     let defaults = ChatOptions::default();
@@ -67,7 +68,17 @@ pub async fn ai_chat(
         temperature: temperature.or(defaults.temperature),
         max_tokens: max_tokens.unwrap_or(defaults.max_tokens).clamp(256, 32_000),
     };
-    router.chat(&messages, model.as_deref(), options).await
+    let generation = state.generations.begin(request_id.as_deref().unwrap_or("chat"));
+    let chat = router.chat(&messages, model.as_deref(), options);
+    tokio::select! {
+        result = chat => result,
+        _ = async {
+            loop {
+                if generation.is_cancelled() { break; }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        } => Err("Generation cancelled".into()),
+    }
 }
 
 async fn request_cards(

@@ -195,9 +195,9 @@ export default function GraphView() {
     <Dialog open onClose={hide} title="Knowledge graph" width={920}>
       <div className="graph-view">
         <div className="graph-toolbar">
-          <div className="segmented" role="tablist" aria-label="Node types">
+          <div className="segmented" role="group" aria-label="Node types">
             {KINDS.map((kind) => (
-              <button key={kind} type="button" className={cn(!hiddenKinds.has(kind) && 'active')} onClick={() => toggleKind(kind)}>
+              <button key={kind} type="button" className={cn(!hiddenKinds.has(kind) && 'active')} aria-pressed={!hiddenKinds.has(kind)} onClick={() => toggleKind(kind)}>
                 {KIND_META[kind].icon} {KIND_META[kind].label}
               </button>
             ))}
@@ -230,7 +230,7 @@ export default function GraphView() {
           onMouseMove={onMouseMove}
           onMouseUp={endDrag}
           onMouseLeave={endDrag}
-          role="img"
+          role="group"
           aria-label="Knowledge graph of notes, files and canvas connections"
         >
           <rect
@@ -283,6 +283,15 @@ export default function GraphView() {
                 onMouseEnter={() => setHovered(node.id)}
                 onMouseLeave={() => setHovered((current) => (current === node.id ? null : current))}
                 onClick={() => activateNode(node.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    activateNode(node.id);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`Open ${node.title}`}
               >
                 <circle cx={point.x} cy={point.y} r={radius} />
                 <text x={point.x} y={point.y + radius + 11} textAnchor="middle">
@@ -308,6 +317,15 @@ export default function GraphView() {
                 onMouseEnter={() => setHovered(id)}
                 onMouseLeave={() => setHovered((current) => (current === id ? null : current))}
                 onClick={() => activateNode(id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    activateNode(id);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`Open unresolved link ${target}`}
               >
                 <circle cx={point.x} cy={point.y} r={6} />
                 <text x={point.x} y={point.y + 17} textAnchor="middle">

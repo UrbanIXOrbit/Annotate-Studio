@@ -206,9 +206,13 @@ export async function captureTo(
   text: string,
 ): Promise<string | null> {
   let path = target.path ?? null;
-  if (!path && target.newName?.trim()) {
-    const created = await createCaptureNote(target.newName);
+  const wantsNewNote = !path && !!target.newName?.trim();
+  if (wantsNewNote) {
+    const created = await createCaptureNote(target.newName!.trim());
     path = created?.path ?? null;
+    // The user asked for a specific new note. If it could not be created, do
+    // not silently redirect the capture into the default Inbox.
+    if (!path) return null;
   }
   if (!path) path = await resolveInboxPath();
   if (!path) return null;

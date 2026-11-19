@@ -52,9 +52,12 @@ export const usePomodoro = create<PomodoroStore>((set, get) => {
     let completedToday = sameDay ? state.completedToday : 0;
     let next: PomodoroPhase;
     if (completedPhase === 'focus') {
-      if (fullDuration) completedToday += 1;
-      focusStreak += 1;
-      next = focusStreak % config.longBreakEvery === 0 ? 'longBreak' : 'shortBreak';
+      // Skipping a session must not move the long-break streak forward.
+      if (fullDuration) {
+        completedToday += 1;
+        focusStreak += 1;
+      }
+      next = focusStreak > 0 && focusStreak % config.longBreakEvery === 0 ? 'longBreak' : 'shortBreak';
     } else {
       next = 'focus';
       if (completedPhase === 'longBreak') focusStreak = 0;

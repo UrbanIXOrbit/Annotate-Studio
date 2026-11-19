@@ -2,12 +2,14 @@
 
 import { useEffect } from 'react';
 import { getStudyStats, isTauri, logStudyActivity } from '@/lib/tauri-commands';
-import { flushAll } from '@/lib/persist';
+import { flushAll, setSaveErrorReporter } from '@/lib/persist';
 import { notify } from '@/lib/notify';
 import { playChime } from '@/lib/sound';
 import { isEditableTarget, isModalOpen } from '@/lib/utils';
+import { VIEW_KEYS } from '@/lib/view-shortcuts';
 import { migrateInlineNotes, registerExternalResources } from '@/lib/workspace-actions';
-import { useApp, type ViewMode } from '@/store/app';
+import { useSearch } from '@/store/search';
+import { useApp } from '@/store/app';
 import { useCanvas } from '@/store/canvas';
 import { isDue, isNewCard, useFlashcards } from '@/store/flashcards';
 import { useLibrary } from '@/store/library';
@@ -20,18 +22,6 @@ const PHASE_LABEL: Record<PomodoroPhase, string> = {
   focus: 'Focus',
   shortBreak: 'Short break',
   longBreak: 'Long break',
-};
-
-const VIEW_KEYS: Record<string, ViewMode> = {
-  '1': 'canvas',
-  '2': 'library',
-  '3': 'annotations',
-  '4': 'flashcards',
-  '5': 'exams',
-  '6': 'pomodoro',
-  '7': 'motivation',
-  '9': 'inbox',
-  ',': 'settings',
 };
 
 let startup: Promise<void> | null = null;
@@ -117,14 +107,20 @@ export function useAppEngines() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (isModalOpen()) return;
+      if (isModalOpen() || isEditableTarget(event.target)) return;
       const view = VIEW_KEYS[event.key];
-      if (view && !isEditableTarget(event.target)) {
+      if (view) {
         event.preventDefault();
         useApp.getState().setView(view);
         return;
       }
-      if (event.key.toLowerCase() === 'j') {
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        useSearch.getState().show();
+        return;
+      }
+      if (key === 'j') {
         event.preventDefault();
         const app = useApp.getState();
         if (app.currentView !== 'canvas') app.setView('canvas');
@@ -136,6 +132,7 @@ export function useAppEngines() {
   }, []);
 
   useEffect(() => {
+    setSaveErrorReporter((error) => toast.error('Could not save your data', error));
     const onBeforeUnload = () => {
       void flushAll();
     };
@@ -145,8 +142,13 @@ export function useAppEngines() {
     if (isTauri()) {
       void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
         getCurrentWindow()
-          .onCloseRequested(async () => {
-            await Promise.race([flushAll(), new Promise((resolve) => setTimeout(resolve, 4000))]);
+          .onCloseRequested(async (event) => {
+            // Hold the window open until every queued write has settled, then
+            // close explicitly — a timeout would cut off in-flight saves.
+            event.preventDefault();
+            await flushAll();
+            const window_ = getCurrentWindow();
+            await window_.destroy();
           })
           .then((fn) => {
             if (disposed) fn();
@@ -156,6 +158,7 @@ export function useAppEngines() {
     }
     return () => {
       disposed = true;
+      setSaveErrorReporter(null);
       window.removeEventListener('beforeunload', onBeforeUnload);
       unlisten?.();
     };

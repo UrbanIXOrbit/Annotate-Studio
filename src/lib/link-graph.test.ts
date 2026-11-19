@@ -124,3 +124,13 @@ test('countDegrees counts both endpoints of resolved links', () => {
     ['/b.md', 1],
   ]);
 });
+
+test('extractLinks ignores wiki links inside tilde code fences', () => {
+  const md = `Real [[Chapter One]] link.
+
+~~~markdown
+Not a link: [[Phantom Target]]
+~~~
+`;
+  assert.deepEqual(extractLinks(md), ['Chapter One']);
+});

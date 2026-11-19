@@ -46,6 +46,10 @@ function PickerBody({ onPickNote, onPickNew, showHighlight = true, title = 'Copy
       event.preventDefault();
       setActive((index) => Math.max(0, index - 1));
     } else if (event.key === 'Enter') {
+      // A focused row activates itself natively — don't pick the arrow-key
+      // `active` row instead.
+      const target = event.target as HTMLElement | null;
+      if (target?.getAttribute('role') === 'option' && target.dataset.index !== undefined) return;
       event.preventDefault();
       const chosen = notes[active];
       if (chosen) onPickNote(chosen.path);
@@ -69,6 +73,8 @@ function PickerBody({ onPickNote, onPickNew, showHighlight = true, title = 'Copy
               key={file.path}
               type="button"
               role="option"
+              data-index={index}
+              onFocus={() => setActive(index)}
               aria-selected={index === active}
               className={cn('note-pick-row', index === active && 'active')}
               onMouseEnter={() => setActive(index)}

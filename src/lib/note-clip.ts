@@ -5,8 +5,10 @@ export interface ClipSource {
   text: string;
   /** The book's title (file name is fine; ".pdf" is dropped). */
   title: string;
-  /** 1-based page number. */
+  /** 1-based page, chapter or section number. */
   page: number;
+  /** How `page` should be labelled in the note. Defaults to a page. */
+  unit?: 'page' | 'chapter' | 'section' | 'none';
 }
 
 export type ClipKind = 'markdown' | 'text';
@@ -20,6 +22,13 @@ export interface NoteLike {
 
 export function isNoteFile(file: Pick<NoteLike, 'file_type'>): boolean {
   return file.file_type === 'Markdown' || file.file_type === 'Text';
+}
+
+function location(source: ClipSource): string {
+  if (source.unit === 'none') return '';
+  if (source.unit === 'chapter') return `chapter ${source.page}`;
+  if (source.unit === 'section') return `section ${source.page}`;
+  return `p. ${source.page}`;
 }
 
 /** Markdown notes get a block quote; plain-text notes get plain quotation marks. */
@@ -45,12 +54,13 @@ export function bookLabel(title: string): string {
 export function formatClip(source: ClipSource, kind: ClipKind): string {
   const text = source.text.replace(/\r\n?/g, '\n').trim();
   const book = bookLabel(source.title);
-  if (kind === 'text') return `\u201C${text}\u201D\n\u2014 ${book}, p. ${source.page}`;
+  const where = location(source);
+  if (kind === 'text') return `\u201C${text}\u201D\n\u2014 ${book}${where ? `, ${where}` : ''}`;
   const quote = escapeMarkdown(text)
     .split('\n')
     .map((line) => (line ? `> ${line}` : '>'))
     .join('\n');
-  return `${quote}\n>\n> \u2014 *${escapeMarkdown(book)}*, p. ${source.page}`;
+  return `${quote}\n>\n> \u2014 *${escapeMarkdown(book)}*${where ? `, ${where}` : ''}`;
 }
 
 /**

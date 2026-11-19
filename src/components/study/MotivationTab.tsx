@@ -5,6 +5,7 @@ import { ArrowUp, HeartHandshake, Quote, RefreshCw, Sparkles, Square, SquarePen 
 import MarkdownRenderer from '@/components/markdown/MarkdownRenderer';
 import ModelPicker from '@/components/ui/ModelPicker';
 import SessionMenu from '@/components/chatbot/SessionMenu';
+import { cancelGeneration } from '@/lib/tauri-commands';
 import { aiChat, errorMessage } from '@/lib/tauri-commands';
 import { trimHistory } from '@/lib/ai';
 import { useMotivationSessions, type ChatMessage } from '@/store/sessions';
@@ -44,6 +45,7 @@ export default function MotivationTab() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const requestRef = useRef(0);
+  const activeRequestRef = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const messages = useMotivationSessions((state) => state.sessions.find((s) => s.id === state.activeId)?.messages ?? EMPTY);
 
@@ -65,6 +67,8 @@ export default function MotivationTab() {
     store.appendMessage(sessionId, { role: 'user', content });
     setInput('');
     const id = ++requestRef.current;
+    const requestId = crypto.randomUUID();
+    activeRequestRef.current = requestId;
     setBusy(true);
     try {
       const response = await aiChat(
@@ -73,7 +77,12 @@ export default function MotivationTab() {
           ...trimHistory(history.filter((m) => !m.error).map((m) => ({ role: m.role, content: m.content })), 12),
           { role: 'user', content },
         ],
-        { model: useSettings.getState().selectedModel || undefined, temperature: 0.8, maxTokens: 800 },
+        {
+          model: useSettings.getState().selectedModel || undefined,
+          temperature: 0.8,
+          maxTokens: 800,
+          requestId,
+        },
       );
       if (id !== requestRef.current) return;
       useMotivationSessions.getState().appendMessage(sessionId, { role: 'assistant', content: response.content });
@@ -85,7 +94,10 @@ export default function MotivationTab() {
         error: true,
       });
     } finally {
-      if (id === requestRef.current) setBusy(false);
+      if (id === requestRef.current) {
+        activeRequestRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -190,6 +202,11 @@ export default function MotivationTab() {
                     type="button"
                     className="send-btn send-btn-stop"
                     onClick={() => {
+                      // The Tauri request carries its id, so stop actually
+                      // cancels the in-flight generation instead of just
+                      // discarding its response.
+                      const requestId = activeRequestRef.current;
+                      if (requestId) void cancelGeneration(requestId);
                       requestRef.current += 1;
                       setBusy(false);
                     }}

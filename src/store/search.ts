@@ -219,9 +219,20 @@ function ensureIndex() {
   chain = chain.then(runIndex).catch(() => undefined);
 }
 
+/** Drop one path from the text index (file deleted or renamed away). */
+export function forgetSearchPath(path: string): void {
+  if (!cache.delete(path)) return;
+  computeHits();
+}
+
 /** Rebuild the text index when the library's set of files changes. */
 export function invalidateSearchIndex(): void {
   indexed = false;
+  // Prune first so a deleted file cannot keep showing up as a live hit.
+  const valid = new Set(useLibrary.getState().files.map((file) => file.path));
+  for (const path of [...cache.keys()]) {
+    if (!path.startsWith('resource:') && !valid.has(path)) cache.delete(path);
+  }
   chain = chain.then(runIndex).catch(() => undefined);
   computeHits();
 }

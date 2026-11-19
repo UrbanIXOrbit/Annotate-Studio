@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::filesystem::{describe, FileType, StudyFile};
 use crate::paths::{sanitize_stem, unique_in_dir, Workspace, DOCUMENTS_DIR};
+use crate::external_access::ensure_external_access;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -210,6 +211,9 @@ pub fn allow_video_asset(
     is_external: bool,
 ) -> Result<String, String> {
     let full = video_path(&state.workspace, &path, is_external)?;
+    if is_external {
+        ensure_external_access(&app, &state, &full)?;
+    }
     app.asset_protocol_scope()
         .allow_file(full.clone())
         .map_err(|e| format!("Could not prepare video for playback: {e}"))?;
@@ -223,7 +227,7 @@ pub fn open_video_in_system_player(
     is_external: bool,
 ) -> Result<(), String> {
     let full = video_path(&state.workspace, &path, is_external)?;
-    crate::commands::books::open_external_file(full.to_string_lossy().into_owned())
+    crate::commands::books::open_external_file_inner(&full.to_string_lossy())
 }
 
 #[tauri::command]
@@ -243,7 +247,7 @@ pub fn open_video_with_player(
 ) -> Result<(), String> {
     let full = video_path(&state.workspace, &path, is_external)?;
     if player_id == "system-default" {
-        return crate::commands::books::open_external_file(full.to_string_lossy().into_owned());
+        return crate::commands::books::open_external_file_inner(&full.to_string_lossy());
     }
     let player = video_player_launches()
         .into_iter()
@@ -264,11 +268,15 @@ pub fn is_ffmpeg_available(state: State<'_, AppState>) -> bool {
 
 #[tauri::command]
 pub fn convert_video_for_playback(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     is_external: bool,
 ) -> Result<StudyFile, String> {
     let input = video_path(&state.workspace, &path, is_external)?;
+    if is_external {
+        ensure_external_access(&app, &state, &input)?;
+    }
     let ffmpeg = find_ffmpeg(&state.workspace).ok_or_else(|| {
         "FFmpeg is not installed. Add a minimal FFmpeg binary at <workspace>/tools/ffmpeg (or ffmpeg.exe on Windows), or install ffmpeg on PATH.".to_string()
     })?;

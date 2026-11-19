@@ -131,6 +131,10 @@ export default function PomodoroTab() {
                 className={cn(phase === entry.id && 'active')}
                 onClick={() => {
                   if (status === 'running' && phase === entry.id) return;
+                  if ((status === 'running' || status === 'paused') && phase !== entry.id) {
+                    const ok = window.confirm('Switching phase discards the current session. Continue?');
+                    if (!ok) return;
+                  }
                   usePomodoro.setState({ phase: entry.id, status: 'idle', endsAt: null, remaining: phaseSeconds(entry.id, settings) });
                 }}
               >

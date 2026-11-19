@@ -318,7 +318,7 @@ export function reportSummary(report: Report): string {
 /** Escape characters that would be read as Markdown formatting inside running text. */
 export function escapeMarkdown(text: string): string {
   return text
-    .replace(/([\\`*_[\]<>])/g, '\\$1')
+    .replace(/([\\`*_[\]<>~$|])/g, '\\$1')
     .replace(/^(\s*)([#>+-])/gm, '$1\\$2')
     .replace(/^(\s*\d+)\./gm, '$1\\.');
 }

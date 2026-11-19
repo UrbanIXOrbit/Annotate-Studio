@@ -26,14 +26,34 @@ export interface ParseResult {
 /** Month macros standard in BibTeX (index = month number - 1). */
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-/** Strip one level of braces and unescape BibTeX's \" outside braces. */
+const COMBINING_ACCENTS: Record<string, string> = {
+  '"': '\u0308', "'": '\u0301', '`': '\u0300', '^': '\u0302',
+  '~': '\u0303', 'v': '\u030C', 'c': '\u0327', '=': '\u0304', '.': '\u0307',
+};
+
+const SPECIAL_LETTERS: Record<string, string> = {
+  ss: 'ß', ae: 'æ', AE: 'Æ', oe: 'œ', OE: 'Œ', O: 'Ø', o: 'ø',
+  l: 'ł', L: 'Ł', d: 'đ', D: 'Đ',
+};
+
+/** Decode the LaTeX escapes that Zotero/Better-BibTeX put in author names. */
+function decodeLatexAccents(value: string): string {
+  return value
+    .replace(/\{?\\(ss|ae|AE|oe|OE|O|o|l|L|d|D)\b\}?/g, (_match, letter: string) => SPECIAL_LETTERS[letter] ?? _match)
+    .replace(/\{?\\(["'`^~=vc.])\{?([A-Za-z])\}?/g, (_match, accent: string, letter: string) => {
+      const combining = COMBINING_ACCENTS[accent];
+      return combining ? `${letter}${combining}`.normalize('NFC') : _match;
+    });
+}
+
+/** Strip one level of braces and decode BibTeX's LaTeX accent escapes. */
 function cleanValue(raw: string): string {
   let value = raw.trim();
   // Drop one uniform outer brace pair that wraps the whole value.
   while (value.startsWith('{') && value.endsWith('}') && wrapsWhole(value)) {
     value = value.slice(1, -1).trim();
   }
-  return value.replace(/\s+/g, ' ');
+  return decodeLatexAccents(value.replace(/\s+/g, ' '));
 }
 
 /** True when the first and last braces of `value` form a matched pair. */

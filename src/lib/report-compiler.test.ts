@@ -116,3 +116,16 @@ test('compileReport skips empty sections entirely', () => {
   );
   assert.equal(stats.words, (markdown.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []).length);
 });
+
+test('compileReport omits excluded and duplicate bibliography entries', () => {
+  const bibliography: ResolvedEntry[] = [
+    resolved('Spaced learning'),
+    { ...resolved('Excluded work'), entry: { id: 'excluded', included: false } } as unknown as ResolvedEntry,
+    { ...resolved('Duplicate work'), duplicateOfId: 'Spaced learning' } as unknown as ResolvedEntry,
+  ];
+  const { markdown, stats } = compileReport(base({ bibliography }));
+  assert.doesNotMatch(markdown, /Excluded work/);
+  assert.doesNotMatch(markdown, /Duplicate work/);
+  assert.match(markdown, /1\. Author, A\. \(2020\)\. Spaced learning/);
+  assert.equal(stats.citations, 1);
+});

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Inbox, Loader2 } from 'lucide-react';
 import Dialog from '@/components/ui/Dialog';
 import { useScratch } from '@/store/scratch';
@@ -22,6 +22,7 @@ export default function ScratchCaptureDialog() {
   const [target, setTarget] = useState('');
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // Fresh composer every time it opens; the last target is not sticky.
@@ -50,10 +51,11 @@ export default function ScratchCaptureDialog() {
   }, []);
 
   const creating = target === '__new';
-  const canSave = text.trim().length > 0 && (!creating || newName.trim().length > 0) && !saving;
+  const canSave = text.trim().length > 0 && (!creating || newName.trim().length > 0) && !saving && !savingRef.current;
 
   const save = async () => {
     if (!canSave) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     const written = await captureTo(
@@ -63,6 +65,7 @@ export default function ScratchCaptureDialog() {
       },
       text,
     );
+    savingRef.current = false;
     setSaving(false);
     if (written) {
       closeComposer();

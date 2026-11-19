@@ -85,6 +85,7 @@ function AudiobookWindow({ resourceId }: { resourceId: string }) {
         });
         if (cancelled) {
           navigator.destroy();
+          navigator = null;
           return;
         }
         navigatorRef.current = navigator;

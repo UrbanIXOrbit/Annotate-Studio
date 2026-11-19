@@ -99,15 +99,26 @@ export default function ExamEditor({ open, exam, onClose, onSave }: ExamEditorPr
     };
     const questionsChanged = JSON.stringify(cleaned.map((q) => [q.type, q.question, q.options, q.correctAnswer])) !==
       JSON.stringify(base.questions.map((q) => [q.type, q.question, q.options, q.correctAnswer]));
+    const reset = questionsChanged && base.status !== 'draft';
     onSave({
       ...base,
+      ...(reset
+        ? {
+            score: undefined,
+            total: undefined,
+            percentage: undefined,
+            completedAt: undefined,
+            startedAt: undefined,
+            deadline: undefined,
+          }
+        : {}),
       title: title.trim(),
       subject: subject.trim(),
       description: description.trim(),
       timeLimit: Math.max(0, Math.round(timeLimit)),
       showAnswersImmediately: instantFeedback,
       questions: questionsChanged ? cleaned.map(({ userAnswer, verdict, feedback, ...rest }) => rest) : cleaned,
-      status: questionsChanged && base.status !== 'draft' ? 'draft' : base.status,
+      status: reset ? 'draft' : base.status,
     });
   };
 

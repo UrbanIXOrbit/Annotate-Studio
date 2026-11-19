@@ -2,6 +2,7 @@ pub mod ai_json;
 pub mod ai_router;
 pub mod analytics;
 pub mod commands;
+pub mod external_access;
 pub mod filesystem;
 pub mod paths;
 pub mod spaced_repetition;
@@ -90,6 +91,9 @@ pub fn run() {
             ai::check_ollama,
             backup::export_data,
             backup::import_data,
+            backup::inspect_backup,
+            backup::create_snapshot,
+            backup::get_backups_dir,
             books::import_external_files,
             books::external_files_exist,
             books::load_books_state,

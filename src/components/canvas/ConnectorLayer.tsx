@@ -131,12 +131,20 @@ export default function ConnectorLayer({ clientToWorld }: Props) {
       window.removeEventListener('pointerup', finish, true);
       window.removeEventListener('pointercancel', cancel, true);
       const world = clientToWorld(e.clientX, e.clientY);
-      const current = useConnectUi.getState().drag;
       ui.setDrag(null);
-      if (!current) return;
+      // Re-evaluate at the release point: the last pointermove can be stale or
+      // coalesced, so trusting it connects to the wrong window (or creates a
+      // card) when the user releases quickly.
+      const dropTarget = targetAt(world);
+      const sourceResource = useCanvas
+        .getState()
+        .workspaces.find((w) => w.id === useCanvas.getState().activeWorkspaceId)
+        ?.resources.find((r) => r.id === fromId);
+      const facing = sourceResource ? anchorPoint(boxOf(sourceResource), fromSide) : origin;
+      const dropSide = dropTarget ? pickTargetSide(boxOf(dropTarget), world, facing) : null;
       const canvas = useCanvas.getState();
-      if (current.targetId && current.targetSide) {
-        canvas.addConnector({ from: fromId, to: current.targetId, fromSide, toSide: current.targetSide });
+      if (dropTarget && dropSide) {
+        canvas.addConnector({ from: fromId, to: dropTarget.id, fromSide, toSide: dropSide });
         return;
       }
       const source = canvas.workspaces.find((w) => w.id === canvas.activeWorkspaceId)?.resources.find((r) => r.id === fromId);

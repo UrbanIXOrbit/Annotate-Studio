@@ -4,7 +4,7 @@
  * the backlink index, and a deterministic force layout for the graph view.
  * No store imports.
  */
-import { parseInline, type Inline } from './markdown.ts';
+import { parseBlocks, parseInline, type Block, type Inline } from './markdown.ts';
 
 /** One indexed document's links: raw targets kept, resolved at query time. */
 export interface LinkDoc {
@@ -45,13 +45,33 @@ export interface ResolvedLinks {
 /** Collect raw link targets from markdown text. */
 export function extractLinks(markdown: string): string[] {
   const targets: string[] = [];
-  const visit = (nodes: Inline[]) => {
+  const visitInline = (nodes: Inline[]) => {
     for (const node of nodes) {
       if (node.type === 'wikilink') targets.push(node.target);
-      else if (node.type === 'link' || node.type === 'strong' || node.type === 'em' || node.type === 'del') visit(node.children);
+      else if (node.type === 'link' || node.type === 'strong' || node.type === 'em' || node.type === 'del') {
+        visitInline(node.children);
+      }
     }
   };
-  visit(parseInline(markdown));
+  const visitBlock = (block: Block) => {
+    switch (block.type) {
+      case 'heading':
+      case 'paragraph':
+        visitInline(block.children);
+        break;
+      case 'quote':
+        block.children.forEach(visitBlock);
+        break;
+      case 'list':
+        block.items.forEach((item) => item.children.forEach(visitBlock));
+        break;
+      case 'table':
+        [...block.header, ...block.rows.flat()].forEach(visitInline);
+        break;
+      // code, math and hr never render wiki links — skip them, matching the renderer.
+    }
+  };
+  for (const block of parseBlocks(markdown.split('\n'))) visitBlock(block);
   return targets;
 }
 

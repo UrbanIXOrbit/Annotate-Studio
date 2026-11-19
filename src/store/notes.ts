@@ -13,6 +13,10 @@ export interface NoteBuffer {
   savedAt: number | null;
   editable: boolean;
   lineEnding: '\n' | '\r\n';
+  /** Normalized content last seen on disk, used to detect external edits. */
+  diskContent: string | null;
+  /** Disk changed since load/save while this buffer has unsaved edits. */
+  conflict: boolean;
 }
 
 function normalizeNewlines(text: string): string {
@@ -21,12 +25,31 @@ function normalizeNewlines(text: string): string {
 
 /** Read a note kept outside the workspace through the external file commands,
  * mirroring what `read_note` does for workspace files (BOM strip, binary check). */
+function looksBinary(bytes: Uint8Array): boolean {
+  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
+  if (sample.includes(0)) return true;
+  const control = sample.reduce(
+    (count, byte) => count + (byte < 0x20 && ![10, 13, 9, 12, 27].includes(byte) ? 1 : 0),
+    0,
+  );
+  return control * 20 > sample.length;
+}
+
 async function readExternalNote(path: string): Promise<{ content: string; editable: boolean }> {
   const bytes = await readExternalFileBytes(path);
   let body = bytes;
   if (body.length >= 3 && body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf) body = body.subarray(3);
-  const text = new TextDecoder().decode(body);
-  return { content: text, editable: !body.slice(0, 8000).includes(0) };
+  // Match the Rust read_note checks: strict UTF-8 plus a control-character
+  // heuristic. A lossy decode of Latin-1 bytes would be saved back corrupted.
+  let editable = !looksBinary(body);
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch {
+    editable = false;
+    text = new TextDecoder('utf-8').decode(body);
+  }
+  return { content: text, editable };
 }
 
 interface NotesStore {
@@ -37,11 +60,26 @@ interface NotesStore {
   move: (oldPath: string, newPath: string) => void;
   drop: (path: string) => void;
   reset: (path: string, content: string) => void;
+  resolveConflict: (path: string, choice: 'keep' | 'disk') => Promise<void>;
+  retrySave: (path: string) => Promise<void>;
 }
 
 const SAVE_DELAY = 700;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const inflight = new Map<string, Promise<void>>();
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const retryAttempts = new Map<string, number>();
+
+function clearRetryTimer(path: string): void {
+  const timer = retryTimers.get(path);
+  if (timer) clearTimeout(timer);
+  retryTimers.delete(path);
+}
+
+function clearRetry(path: string): void {
+  clearRetryTimer(path);
+  retryAttempts.delete(path);
+}
 
 export const useNotes = create<NotesStore>((set, get) => {
   const patch = (path: string, change: Partial<NoteBuffer>) =>
@@ -68,6 +106,8 @@ export const useNotes = create<NotesStore>((set, get) => {
             savedAt: null,
             editable: true,
             lineEnding: '\n',
+            diskContent: null,
+            conflict: false,
           },
         },
       }));
@@ -81,10 +121,19 @@ export const useNotes = create<NotesStore>((set, get) => {
           editable: note.editable,
           status: 'ready',
           error: null,
+          diskContent: normalizeNewlines(note.content),
+          conflict: false,
         });
       } catch (error) {
         if (fallback !== undefined) {
-          patch(path, { content: normalizeNewlines(fallback), status: 'ready', dirty: true, error: null });
+          patch(path, {
+            content: normalizeNewlines(fallback),
+            status: 'ready',
+            dirty: true,
+            error: null,
+            diskContent: null,
+            conflict: false,
+          });
           get().save(path).catch(() => {});
           return;
         }
@@ -100,14 +149,34 @@ export const useNotes = create<NotesStore>((set, get) => {
       timers.set(path, setTimeout(() => void get().save(path), SAVE_DELAY));
     },
     save: async (path) => {
+      clearRetryTimer(path);
       const timer = timers.get(path);
       if (timer) clearTimeout(timer);
       timers.delete(path);
       const previous = inflight.get(path);
       if (previous) await previous.catch(() => {});
       const buffer = get().buffers[path];
-      if (!buffer || !buffer.dirty || !buffer.editable) return;
+      if (!buffer || !buffer.dirty || !buffer.editable || buffer.conflict) return;
       const content = buffer.content;
+      // Detect a sync client or external editor changing the file underneath
+      // us. A blind write here would silently destroy those changes.
+      if (buffer.diskContent !== null) {
+        try {
+          const disk = isExternalPath(path) ? await readExternalNote(path) : await readNote(path);
+          if (normalizeNewlines(disk.content) !== buffer.diskContent) {
+            patch(path, {
+              saving: false,
+              conflict: true,
+              error: 'This note changed on disk while it was open.',
+            });
+            return;
+          }
+        } catch {
+          // A transient read failure must not cause a blind overwrite either.
+          patch(path, { saving: false, error: 'Could not check the note on disk before saving.' });
+          return;
+        }
+      }
       patch(path, { saving: true });
       const payload = buffer.lineEnding === '\r\n' ? content.replace(/\n/g, '\r\n') : content;
       const job = (isExternalPath(path)
@@ -117,7 +186,15 @@ export const useNotes = create<NotesStore>((set, get) => {
       )
         .then((file) => {
           const latest = get().buffers[path];
-          patch(path, { saving: false, dirty: latest ? latest.content !== content : false, savedAt: Date.now(), error: null });
+          patch(path, {
+            saving: false,
+            dirty: latest ? latest.content !== content : false,
+            savedAt: Date.now(),
+            error: null,
+            diskContent: content,
+            conflict: false,
+          });
+          clearRetry(path);
           if (file) useLibrary.getState().upsert(file);
           // The link index (backlinks/graph) re-reads just this file. Dynamic
           // import keeps the notes → graph edge cycle-safe.
@@ -127,6 +204,17 @@ export const useNotes = create<NotesStore>((set, get) => {
         })
         .catch((error: unknown) => {
           patch(path, { saving: false, error: error instanceof Error ? error.message : String(error) });
+          const attempt = retryAttempts.get(path) ?? 0;
+          if (attempt < 3) {
+            retryAttempts.set(path, attempt + 1);
+            retryTimers.set(
+              path,
+              setTimeout(() => {
+                retryTimers.delete(path);
+                void get().save(path).catch(() => undefined);
+              }, 2000 * (attempt + 1)),
+            );
+          }
           throw error;
         })
         .finally(() => inflight.delete(path));
@@ -135,6 +223,7 @@ export const useNotes = create<NotesStore>((set, get) => {
     },
     move: (oldPath, newPath) => {
       if (oldPath === newPath) return;
+      clearRetry(oldPath);
       const timer = timers.get(oldPath);
       if (timer) {
         clearTimeout(timer);
@@ -162,9 +251,51 @@ export const useNotes = create<NotesStore>((set, get) => {
     reset: (path, content) => {
       const current = get().buffers[path];
       if (!current || current.dirty) return;
-      patch(path, { content: normalizeNewlines(content), status: 'ready', error: null });
+      patch(path, { content: normalizeNewlines(content), status: 'ready', error: null, diskContent: normalizeNewlines(content), conflict: false });
     },
+    retrySave: async (path) => {
+      clearRetry(path);
+      await get().save(path);
+    },
+
+    resolveConflict: async (path, choice) => {
+      const buffer = get().buffers[path];
+      if (!buffer || !buffer.conflict) return;
+      if (choice === 'disk') {
+        try {
+          const disk = isExternalPath(path) ? await readExternalNote(path) : await readNote(path);
+          const content = normalizeNewlines(disk.content);
+          patch(path, {
+            content,
+            dirty: false,
+            saving: false,
+            conflict: false,
+            error: null,
+            diskContent: content,
+            lineEnding: disk.content.includes('\r\n') ? '\r\n' : '\n',
+            editable: disk.editable,
+          });
+        } catch (error) {
+          patch(path, { error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+      // Keep the editor version: adopt the current disk state as the baseline
+      // and allow the queued save to proceed.
+      let diskContent = buffer.diskContent;
+      try {
+        const disk = isExternalPath(path) ? await readExternalNote(path) : await readNote(path);
+        diskContent = normalizeNewlines(disk.content);
+      } catch {
+        // If the disk copy cannot be read, keep the old baseline; the actual
+        // write will still fail safely rather than clobber unknown bytes.
+      }
+      patch(path, { conflict: false, error: null, diskContent });
+      await get().save(path);
+    },
+
     drop: (path) => {
+      clearRetry(path);
       const timer = timers.get(path);
       if (timer) clearTimeout(timer);
       timers.delete(path);

@@ -1528,7 +1528,9 @@ input[type='checkbox'] {
   opacity: 0;
 }
 
-.menu-row:hover .icon-btn {
+.menu-row:hover .icon-btn,
+.menu-row:focus-within .icon-btn,
+.menu-row .icon-btn:focus-visible {
   opacity: 1;
 }
 

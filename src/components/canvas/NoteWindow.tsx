@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bold,
@@ -122,6 +122,8 @@ function BacklinksPanel({
 
 function NoteWindow({ resourceId, path, title }: { resourceId: string; path: string; title: string }) {
   const buffer = useNotes((state) => state.buffers[path]);
+  // Keep typing responsive: re-parse the preview only when React can afford it.
+  const previewContent = useDeferredValue(buffer?.content ?? '');
   const load = useNotes((state) => state.load);
   const edit = useNotes((state) => state.edit);
   const save = useNotes((state) => state.save);
@@ -178,7 +180,17 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
   const view: Mode = mode === 'split' && !canSplit ? 'edit' : mode;
   const showEditor = view !== 'preview';
   const showPreview = view !== 'edit';
-  const status = buffer.error ? 'Not saved' : buffer.saving || buffer.dirty ? 'Saving…' : buffer.savedAt ? 'Saved' : '';
+  const status = buffer.error
+    ? 'Not saved'
+    : buffer.conflict
+      ? 'Conflict'
+      : buffer.saving
+        ? 'Saving…'
+        : buffer.dirty
+          ? 'Unsaved changes'
+          : buffer.savedAt
+            ? 'Saved'
+            : '';
 
   const format = (action: () => void) => (event: React.MouseEvent) => {
     event.preventDefault();
@@ -253,6 +265,16 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
           <FileDown size={14} />
         </button>
         <span className="note-meta">{wordCount(buffer.content)} words</span>
+        {buffer.error && buffer.dirty && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => void useNotes.getState().retrySave(path)}
+            title="Try saving again"
+          >
+            Retry save
+          </button>
+        )}
         <span className={cn('save-state', buffer.error ? 'save-state-error' : buffer.dirty || buffer.saving ? 'save-state-pending' : 'save-state-saved')}>
           {status}
         </span>
@@ -260,6 +282,18 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
       {!buffer.editable && (
         <div className="note-readonly">
           <AlertTriangle size={13} /> This file is not UTF-8 text, so it opens read-only to keep its characters intact.
+        </div>
+      )}
+      {buffer.conflict && (
+        <div className="note-readonly" role="alert">
+          <AlertTriangle size={13} />
+          <span>This note changed on disk while you were editing. Choose which version to keep.</span>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void useNotes.getState().resolveConflict(path, 'keep')}>
+            Keep my changes
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void useNotes.getState().resolveConflict(path, 'disk')}>
+            Use disk version
+          </button>
         </div>
       )}
       <div className={cn('note-body', view === 'split' && 'note-body-split')}>
@@ -277,7 +311,7 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
         {showPreview && (
           <div className="note-pane note-preview-pane content-selectable">
             {buffer.content.trim() ? (
-              <MarkdownRenderer content={buffer.content} sourceId={resourceId} />
+              <MarkdownRenderer content={previewContent} sourceId={resourceId} />
             ) : (
               <div className="note-empty">Nothing to preview yet.</div>
             )}

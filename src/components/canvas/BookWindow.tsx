@@ -473,7 +473,7 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
       setAnnotationNoteOpen(false);
       setAnnotationMenu(null);
       if (!captured) return;
-      const clip = { text: captured.text, title, page: captured.section };
+      const clip = { text: captured.text, title, page: captured.section, unit: 'chapter' as const };
       const done = target === 'new' ? await clipToNewNote(clip, resourceId) : await clipToNote(target.path, clip);
       if (!done) return;
       if (useSettings.getState().noteClip.highlight) {

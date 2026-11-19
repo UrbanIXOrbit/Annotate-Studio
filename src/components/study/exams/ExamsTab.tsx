@@ -52,6 +52,20 @@ export default function ExamsTab() {
     setScreen({ kind: 'take', id: exam.id });
   };
 
+  const resume = async (exam: Exam) => {
+    if (exam.deadline && exam.deadline < Date.now()) {
+      const restart = await confirmDialog({
+        title: 'Time is up',
+        message: 'The time limit for this attempt has passed. Restart the exam to try again?',
+        confirmLabel: 'Restart exam',
+        cancelLabel: 'Back',
+      });
+      if (restart) start(exam);
+      return;
+    }
+    setScreen({ kind: 'take', id: exam.id });
+  };
+
   const submit = useCallback(
     (id: string) => {
       const exam = useExams.getState().exams.find((e) => e.id === id);
@@ -171,7 +185,7 @@ export default function ExamsTab() {
                 </div>
                 <div className="exam-card-actions">
                   {exam.status === 'in-progress' ? (
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setScreen({ kind: 'take', id: exam.id })}>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void resume(exam)}>
                       <Play size={13} /> Resume
                     </button>
                   ) : exam.status === 'completed' ? (

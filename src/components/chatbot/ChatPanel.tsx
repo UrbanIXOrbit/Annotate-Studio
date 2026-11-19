@@ -140,7 +140,12 @@ export default function ChatPanel({ visible }: { visible: boolean }) {
         </button>
       </div>
       {engine.lesson ? (
-        <LessonView lesson={engine.lesson} onChange={engine.setLesson} onAsk={(question) => void engine.askLesson(question)} />
+        <LessonView
+          lesson={engine.lesson}
+          onChange={engine.setLesson}
+          onAsk={(question) => void engine.askLesson(question)}
+          onStop={engine.stopLesson}
+        />
       ) : (
         <>
           <ChatMessages

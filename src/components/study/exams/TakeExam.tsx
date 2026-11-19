@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Clock, Flag, X } from 'lucide-react';
 import MarkdownRenderer from '@/components/markdown/MarkdownRenderer';
 import { useExams, type Exam } from '@/store/exams';
@@ -17,6 +17,8 @@ export default function TakeExam({ exam, onExit, onSubmit }: TakeExamProps) {
   const updateQuestion = useExams((state) => state.updateQuestion);
   const [index, setIndex] = useState(() => Math.max(0, exam.questions.findIndex((q) => !q.userAnswer?.trim())));
   const [now, setNow] = useState(() => Date.now());
+  // A deadline tick and a button click can fire in the same frame — grade once.
+  const submittedRef = useRef(false);
   const question = exam.questions[index];
   const total = exam.questions.length;
   const remaining = exam.deadline ? Math.max(0, Math.ceil((exam.deadline - now) / 1000)) : null;
@@ -31,10 +33,14 @@ export default function TakeExam({ exam, onExit, onSubmit }: TakeExamProps) {
   }, [exam.deadline]);
 
   useEffect(() => {
-    if (remaining === 0) onSubmit();
+    if (remaining === 0 && !submittedRef.current) {
+      submittedRef.current = true;
+      onSubmit();
+    }
   }, [remaining, onSubmit]);
 
   const submit = useCallback(async () => {
+    if (submittedRef.current) return;
     const unanswered = total - answeredCount;
     if (unanswered > 0) {
       const ok = await confirmDialog({
@@ -44,6 +50,7 @@ export default function TakeExam({ exam, onExit, onSubmit }: TakeExamProps) {
       });
       if (!ok) return;
     }
+    submittedRef.current = true;
     onSubmit();
   }, [total, answeredCount, onSubmit]);
 

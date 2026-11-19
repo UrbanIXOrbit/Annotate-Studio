@@ -61,7 +61,32 @@ impl Workspace {
         if clean.as_os_str().is_empty() {
             return Err("Path is empty".into());
         }
-        Ok(self.root.join(clean))
+        let full = self.root.join(clean);
+        self.reject_symlink_escape(&full)?;
+        Ok(full)
+    }
+
+    /// Reject paths whose canonical location escapes the workspace. A symlink
+    /// inside `documents/` must not give access to a file elsewhere on disk.
+    fn reject_symlink_escape(&self, full: &Path) -> Result<(), String> {
+        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let mut probe = full;
+        while !probe.exists() {
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => break,
+            }
+        }
+        if !probe.exists() {
+            return Ok(());
+        }
+        let canonical = std::fs::canonicalize(probe).map_err(|e| e.to_string())?;
+        let suffix = full.strip_prefix(probe).unwrap_or_else(|_| std::path::Path::new(""));
+        let effective = canonical.join(suffix);
+        if !effective.starts_with(&root) {
+            return Err(format!("Path points outside the workspace: {}", full.display()));
+        }
+        Ok(())
     }
 
     pub fn resolve_user_file(&self, input: &str) -> Result<PathBuf, String> {

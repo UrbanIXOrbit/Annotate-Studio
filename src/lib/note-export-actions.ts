@@ -63,7 +63,9 @@ export function noteExportMenu(getInput: () => Promise<NoteExportInput> | NoteEx
 /** The latest text of a note: the open editor buffer if there is one, otherwise the file on disk. */
 export async function currentNoteText(path: string): Promise<string> {
   const buffer = useNotes.getState().buffers[path];
-  if (buffer) return buffer.content;
+  // A loading buffer starts as an empty string — using it would silently
+  // export a blank note while the real content is still being read.
+  if (buffer && buffer.status === 'ready') return buffer.content;
   if (isExternalPath(path)) {
     const bytes = await readExternalFileBytes(path);
     return new TextDecoder().decode(bytes);

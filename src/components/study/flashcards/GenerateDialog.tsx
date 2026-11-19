@@ -46,6 +46,9 @@ export default function GenerateDialog({ open, defaultCollectionId, onClose }: G
     if (!open) return;
     setError(null);
     setProgress(null);
+    setSource('text');
+    setPath('');
+    setInstructions('');
     setCollectionId(defaultCollectionId && defaultCollectionId !== UNSORTED_ID ? defaultCollectionId : '');
     void useLibrary.getState().refresh();
   }, [open, defaultCollectionId]);
@@ -113,6 +116,8 @@ export default function GenerateDialog({ open, defaultCollectionId, onClose }: G
       toast.success(stoppedRef.current ? `Stopped early — created ${created}` : `Created ${created}`);
       setText('');
       setInstructions('');
+      setPath('');
+      setSource('text');
       onClose();
     } catch (err) {
       if (!stoppedRef.current) setError(err instanceof Error ? err.message : String(err));

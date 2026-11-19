@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ChevronDown,
   Clock,
   Eraser,
@@ -12,6 +13,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Sparkles,
   Trash2,
@@ -120,6 +122,7 @@ function CardRow({ card, onEdit, onDelete }: { card: Flashcard; onEdit: () => vo
 
 export default function FlashcardsTab() {
   const hydrated = useFlashcards((state) => state.hydrated);
+  const loadError = useFlashcards((state) => state.error);
   const cards = useFlashcards((state) => state.cards);
   const collections = useFlashcards((state) => state.collections);
   const activeId = useFlashcards((state) => state.activeCollectionId);
@@ -133,8 +136,9 @@ export default function FlashcardsTab() {
   const now = useMemo(() => Date.now(), [cards, tick]);
 
   useEffect(() => {
+    // hydrate() already loads cards and collections — a second unsynchronised
+    // fetch could overwrite cards created or reviewed just after mount.
     void useFlashcards.getState().hydrate();
-    void useFlashcards.getState().refreshCards();
     const timer = setInterval(() => setTick((value) => value + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
@@ -341,7 +345,18 @@ export default function FlashcardsTab() {
           </div>
         </div>
 
-        {scoped.length === 0 ? (
+        {loadError ? (
+          <div className="empty-state">
+            <AlertTriangle size={40} strokeWidth={1.4} />
+            <h2>Couldn't load your cards</h2>
+            <p className="muted">{loadError}</p>
+            <div className="empty-actions">
+              <button type="button" className="btn btn-primary" onClick={() => void useFlashcards.getState().refreshCards()}>
+                <RefreshCw size={15} /> Try again
+              </button>
+            </div>
+          </div>
+        ) : scoped.length === 0 ? (
           <div className="empty-state">
             <Layers size={40} strokeWidth={1.4} />
             <h2>No cards here yet</h2>

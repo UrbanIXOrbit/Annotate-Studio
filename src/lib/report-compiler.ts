@@ -226,7 +226,11 @@ export function compileReport(input: CompileInput): { markdown: string; stats: C
   }
 
   // ── Annotated bibliography ──
-  const citations = input.bibliography.filter((entry) => entry.citation);
+  // Match the Bibliography dialog: excluded rows and later duplicates must
+  // not leak into the compiled report (or its citation count).
+  const citations = input.bibliography.filter(
+    (entry) => entry.citation && entry.entry.included !== false && !entry.duplicateOfId,
+  );
   if (options.includeBibliography && citations.length > 0) {
     push('## Bibliography');
     const entries = citations.map((entry, index) => {

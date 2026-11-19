@@ -113,9 +113,9 @@ export default function GlobalSearchDialog() {
             dir="auto"
           />
         </div>
-        <div className="segmented search-palette-scopes" role="tablist" aria-label="Search scope">
+        <div className="segmented search-palette-scopes" role="group" aria-label="Search scope">
           {SCOPES.map((entry) => (
-            <button key={entry.id} type="button" className={cn(scope === entry.id && 'active')} onClick={() => setScope(entry.id)}>
+            <button key={entry.id} type="button" className={cn(scope === entry.id && 'active')} aria-pressed={scope === entry.id} onClick={() => setScope(entry.id)}>
               {entry.label}
             </button>
           ))}

@@ -161,7 +161,7 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
   const articleHighlights = resource?.articleHighlights ?? [];
   const containerRef = useRef<HTMLDivElement>(null);
   const noteAnchor = useRef<HTMLButtonElement>(null);
-  const clipRef = useRef<{ text: string; title: string; page: number } | null>(null);
+  const clipRef = useRef<{ text: string; title: string; page: number; unit: 'none' } | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(articleContent ? 'ready' : 'loading');
   const [error, setError] = useState('');
   const [articleTitle, setArticleTitle] = useState(resource?.title ?? 'Web article');
@@ -209,6 +209,9 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
     const root = containerRef.current;
     if (!root || status !== 'ready') return;
     root.innerHTML = safeArticleHtml(articleContent ?? '', articleUrl ?? 'https://example.com');
+    // The old selection points into detached nodes after a reload.
+    setSelection(null);
+    setMenuPosition(null);
     return () => {
       clearHighlights(resourceId);
     };
@@ -229,7 +232,11 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
       return;
     }
     const text = selected.toString().trim();
-    if (!text || text.length > 8000) return;
+    if (!text || text.length > 8000) {
+      setSelection(null);
+      setMenuPosition(null);
+      return;
+    }
     const bounds = range.getBoundingClientRect();
     const rootBounds = root.getBoundingClientRect();
     const anchor = anchorForSelection(root, range, text);
@@ -246,7 +253,7 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
     const root = containerRef.current;
     if (!root) return;
     paintHighlights(root, articleHighlights, selection, resourceId);
-  }, [articleHighlights, resourceId, selection]);
+  }, [articleHighlights, resourceId, selection, articleContent, status]);
 
   const makeHighlight = useCallback(() => {
     if (!selection) return;
@@ -262,7 +269,7 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
     window.getSelection()?.removeAllRanges();
     setSelection(null);
     toast.success('Highlight saved');
-  }, [articleHighlights, resourceId, selection]);
+  }, [articleHighlights, resourceId, selection, articleContent, status]);
 
   const sendToCanvas = useCallback(() => {
     if (!selection) return;
@@ -280,7 +287,7 @@ export default function ArticleWindow({ resourceId }: { resourceId: string }) {
 
   const openNotePicker = useCallback(() => {
     if (!selection) return;
-    clipRef.current = { text: selection.text, title: articleTitle, page: 1 };
+    clipRef.current = { text: selection.text, title: articleTitle, page: 1, unit: 'none' };
     setNotePickerOpen((open) => !open);
   }, [articleTitle, selection]);
 

@@ -65,6 +65,8 @@ export interface PersistedSettings {
   externalFiles: string[];
   /** Place new canvas items at the pointer's last canvas position instead of auto-placing them. */
   newItemAtPointer: boolean;
+  /** Keep local automatic snapshots of app-owned data (last five). */
+  autoSnapshots: boolean;
   /** Per-file app metadata (tags, star, private note) keyed by file path — never copied files. */
   fileMeta: Record<string, FileMeta>;
   /** Saved live filters (collections) evaluated against the current library. */
@@ -96,6 +98,7 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   captureNotes: [],
   externalFiles: [],
   newItemAtPointer: false,
+  autoSnapshots: false,
   fileMeta: {},
   collections: [],
 };
@@ -231,6 +234,7 @@ function sanitize(raw: unknown): PersistedSettings {
       ? [...new Set(data.externalFiles.filter((entry): entry is string => typeof entry === 'string' && /^([a-zA-Z]:[\\/]|[/\\])/.test(entry)))].slice(0, 400)
       : defaults.externalFiles,
     newItemAtPointer: bool(data.newItemAtPointer, defaults.newItemAtPointer),
+    autoSnapshots: bool(data.autoSnapshots, defaults.autoSnapshots),
     fileMeta: sanitizeFileMeta(data.fileMeta),
     collections: sanitizeCollections(data.collections),
   };
@@ -313,6 +317,7 @@ function snapshot(state: SettingsStore): PersistedSettings {
     captureNotes: state.captureNotes,
     externalFiles: state.externalFiles,
     newItemAtPointer: state.newItemAtPointer,
+    autoSnapshots: state.autoSnapshots,
     fileMeta: state.fileMeta,
     collections: state.collections,
   };

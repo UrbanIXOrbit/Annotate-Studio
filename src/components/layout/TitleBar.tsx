@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import { Copy, Minus, Pause, Play, Square, Timer, X } from 'lucide-react';
 import { isTauri } from '@/lib/tauri-commands';
 import { useIsClient } from '@/components/ui/Portal';
-import { flushAll } from '@/lib/persist';
 import { useApp } from '@/store/app';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { usePomodoro } from '@/store/pomodoro';
@@ -89,7 +88,7 @@ export default function TitleBar() {
             type="button"
             className="window-close"
             onClick={async () => {
-              await Promise.race([flushAll(), new Promise((resolve) => setTimeout(resolve, 4000))]);
+              // The global close-requested handler flushes every store first.
               const win = await currentWindow();
               await win.close();
             }}

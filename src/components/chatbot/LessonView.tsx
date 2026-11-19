@@ -10,9 +10,10 @@ interface LessonViewProps {
   lesson: LessonState;
   onChange: (lesson: LessonState | null) => void;
   onAsk: (question: string) => void;
+  onStop: () => void;
 }
 
-export default function LessonView({ lesson, onChange, onAsk }: LessonViewProps) {
+export default function LessonView({ lesson, onChange, onAsk, onStop }: LessonViewProps) {
   const [question, setQuestion] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
   const total = lesson.steps.length;
@@ -91,9 +92,15 @@ export default function LessonView({ lesson, onChange, onAsk }: LessonViewProps)
             }
           }}
         />
-        <button type="button" className="send-btn" onClick={ask} disabled={!question.trim() || lesson.asking} title="Ask">
-          <Send size={14} />
-        </button>
+        {lesson.asking ? (
+          <button type="button" className="send-btn send-btn-stop" onClick={onStop} title="Stop">
+            <X size={14} />
+          </button>
+        ) : (
+          <button type="button" className="send-btn" onClick={ask} disabled={!question.trim()} title="Ask">
+            <Send size={14} />
+          </button>
+        )}
       </div>
       <div className="lesson-nav">
         <button type="button" className="btn btn-ghost" onClick={() => go(lesson.index - 1)} disabled={lesson.index === 0}>

@@ -1,6 +1,12 @@
 type Flushable = () => Promise<void>;
 
 const flushers = new Set<Flushable>();
+let saveErrorReporter: ((error: unknown) => void) | null = null;
+
+/** Lets the app surface a single, visible warning for any failed store write. */
+export function setSaveErrorReporter(reporter: ((error: unknown) => void) | null): void {
+  saveErrorReporter = reporter;
+}
 
 export interface Saver<T> {
   schedule: (value: T) => void;
@@ -25,7 +31,10 @@ export function createSaver<T>(
     const job = latest;
     latest = null;
     if (job) {
-      chain = chain.then(() => write(job.value)).catch((error) => onError?.(error));
+      chain = chain.then(() => write(job.value)).catch((error) => {
+        onError?.(error);
+        saveErrorReporter?.(error);
+      });
     }
     return chain;
   };

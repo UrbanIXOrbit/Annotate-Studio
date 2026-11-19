@@ -38,6 +38,8 @@ export interface Attachment {
 }
 
 export interface LessonState {
+  /** Unique per opened lesson, so a late answer cannot land in a new lesson. */
+  token: string;
   topic: string;
   steps: string[];
   index: number;
@@ -85,6 +87,7 @@ export function useChatEngine() {
   const inflight = useRef<InflightRequest | null>(null);
   const stopped = useRef(new Map<number, StoppedRequest>());
   const generationRef = useRef<string | null>(null);
+  const chatRequestRef = useRef<string | null>(null);
   const cache = useRef(new Map<string, CachedText>());
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
@@ -121,6 +124,19 @@ export function useChatEngine() {
     const generation = generationRef.current;
     generationRef.current = null;
     if (generation) void cancelGeneration(generation).catch(() => undefined);
+    const chat = chatRequestRef.current;
+    chatRequestRef.current = null;
+    if (chat) void cancelGeneration(chat).catch(() => undefined);
+  };
+
+  const startChatRequest = () => {
+    const id = uid();
+    chatRequestRef.current = id;
+    return id;
+  };
+
+  const endChatRequest = (id: string) => {
+    if (chatRequestRef.current === id) chatRequestRef.current = null;
   };
 
   const supersede = () => {
@@ -305,17 +321,19 @@ export function useChatEngine() {
       const active = all.filter((a) => a.enabled);
       sessions.appendMessage(sessionId, { role: 'user', content: trimmed, attachments: active.map((a) => a.name) });
       const id = begin(active.length ? 'Reading attachments…' : 'Thinking…', sessionId);
+      let chatId: string | null = null;
       try {
         const context = await buildContext(active);
         if (id !== requestRef.current) return;
         setStatus('Thinking…');
+        chatId = startChatRequest();
         const response = await aiChat(
           [
             { role: 'system', content: STUDY_ASSISTANT_PROMPT },
             ...trimHistory(toPayload(previous)),
             { role: 'user', content: context ? `${context}\n\n${trimmed}` : trimmed },
           ],
-          { model: model() },
+          { model: model(), requestId: chatId },
         );
         if (id !== requestRef.current) return;
         useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: response.content });
@@ -323,6 +341,7 @@ export function useChatEngine() {
         if (id !== requestRef.current) return;
         useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: errorMessage(error), error: true });
       } finally {
+        if (chatId) endChatRequest(chatId);
         finish(id);
       }
     },
@@ -335,6 +354,7 @@ export function useChatEngine() {
     const sessionId = sessions.ensureSession();
     sessions.appendMessage(sessionId, { role: 'user', content: `Summarize ${title}`, replay: { kind: 'summarize', title, path, text } });
     const id = begin(`Reading ${title}…`, sessionId);
+      let chatId: string | null = null;
     try {
       let content = text ?? '';
       let truncated = false;
@@ -348,12 +368,13 @@ export function useChatEngine() {
       }
       if (id !== requestRef.current) return;
       setStatus('Summarizing…');
+      chatId = startChatRequest();
       const response = await aiChat(
         [
           { role: 'system', content: SUMMARY_PROMPT },
           { role: 'user', content: attachmentBlock(title, content, truncated ? 'only the beginning of a long document' : undefined) },
         ],
-        { model: model(), temperature: 0.3 },
+        { model: model(), temperature: 0.3, requestId: chatId },
       );
       if (id !== requestRef.current) return;
       useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: response.content });
@@ -361,6 +382,7 @@ export function useChatEngine() {
       if (id !== requestRef.current) return;
       useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: errorMessage(error), error: true });
     } finally {
+      if (chatId) endChatRequest(chatId);
       finish(id);
     }
   }, []);
@@ -377,6 +399,7 @@ export function useChatEngine() {
       replay: { kind: 'explain', topic: trimmed, context: options.context, path: options.path },
     });
     const id = begin('Preparing a step-by-step lesson…', sessionId);
+      let chatId: string | null = null;
     try {
       let material = '';
       if (options.path) {
@@ -392,12 +415,13 @@ export function useChatEngine() {
         material = await buildContext(active);
       }
       if (id !== requestRef.current) return;
+      chatId = startChatRequest();
       const response = await aiChat(
         [
           { role: 'system', content: EXPLAINER_PROMPT },
           { role: 'user', content: material ? `${material}\n\nTopic to explain: ${trimmed}` : `Topic to explain: ${trimmed}` },
         ],
-        { model: model(), temperature: 0.5 },
+        { model: model(), temperature: 0.5, requestId: chatId },
       );
       if (id !== requestRef.current) return;
       const steps = splitLesson(response.content);
@@ -406,11 +430,12 @@ export function useChatEngine() {
         content: `Lesson ready: **${trimmed}** — ${steps.length} part${steps.length === 1 ? '' : 's'}.`,
         explainer: { topic: trimmed, steps },
       });
-      setLesson({ topic: trimmed, steps, index: 0, thread: [], asking: false });
+      setLesson({ token: uid(), topic: trimmed, steps, index: 0, thread: [], asking: false });
     } catch (error) {
       if (id !== requestRef.current) return;
       useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: errorMessage(error), error: true });
     } finally {
+      if (chatId) endChatRequest(chatId);
       finish(id);
     }
   }, []);
@@ -437,6 +462,7 @@ export function useChatEngine() {
         replay: { kind: 'prompt', preset: presetId, text: options.text, context: options.context, path: options.path },
       });
       const id = begin(`Running ${preset.label}…`, sessionId);
+      let chatId: string | null = null;
       try {
         let material = '';
         let extra = '';
@@ -468,12 +494,13 @@ export function useChatEngine() {
         }
         if (id !== requestRef.current) return;
         setStatus(`Running ${preset.label}…`);
+        chatId = startChatRequest();
         const response = await aiChat(
           [
             { role: 'system', content: buildPromptSystemMessage(preset) },
             { role: 'user', content: userContent },
           ],
-          { model: model(), temperature: preset.temperature, maxTokens: 6000 },
+          { model: model(), temperature: preset.temperature, maxTokens: 6000, requestId: chatId },
         );
         if (id !== requestRef.current) return;
         const visualization = parseVisualization(extractJson(response.content));
@@ -495,6 +522,7 @@ export function useChatEngine() {
         if (id !== requestRef.current) return;
         useChatSessions.getState().appendMessage(sessionId, { role: 'assistant', content: errorMessage(error), error: true });
       } finally {
+        if (chatId) endChatRequest(chatId);
         finish(id);
       }
     },
@@ -525,15 +553,27 @@ export function useChatEngine() {
   );
 
   const openLesson = useCallback((topic: string, steps: string[]) => {
-    setLesson({ topic, steps, index: 0, thread: [], asking: false });
+    setLesson({ token: uid(), topic, steps, index: 0, thread: [], asking: false });
+  }, []);
+
+  const stopLesson = useCallback(() => {
+    const chat = chatRequestRef.current;
+    chatRequestRef.current = null;
+    if (chat) void cancelGeneration(chat).catch(() => undefined);
+    setLesson((latest) => (latest ? { ...latest, asking: false } : latest));
   }, []);
 
   const askLesson = useCallback(
     async (question: string) => {
       const current = lesson;
-      if (!current || !question.trim()) return;
+      if (!current || !question.trim() || current.asking) return;
+      const token = current.token;
       const thread = [...current.thread, { role: 'user' as const, content: question.trim() }];
       setLesson({ ...current, thread, asking: true });
+      const sessions = useChatSessions.getState();
+      const sessionId = sessions.ensureSession();
+      const id = begin('Thinking about your question…', sessionId);
+      const chatId = startChatRequest();
       try {
         const response = await aiChat(
           [
@@ -543,15 +583,25 @@ export function useChatEngine() {
             },
             ...thread,
           ],
-          { model: model() },
+          { model: model(), requestId: chatId },
         );
-        setLesson((latest) => (latest && latest.topic === current.topic ? { ...latest, thread: [...thread, { role: 'assistant', content: response.content }], asking: false } : latest));
-      } catch (error) {
+        if (id !== requestRef.current) return;
         setLesson((latest) =>
-          latest && latest.topic === current.topic
+          latest && latest.token === token
+            ? { ...latest, thread: [...thread, { role: 'assistant', content: response.content }], asking: false }
+            : latest,
+        );
+      } catch (error) {
+        if (id !== requestRef.current) return;
+        setLesson((latest) =>
+          latest && latest.token === token
             ? { ...latest, thread: [...thread, { role: 'assistant', content: `⚠️ ${errorMessage(error)}` }], asking: false }
             : latest,
         );
+      } finally {
+        if (chatId) endChatRequest(chatId);
+        setLesson((latest) => (latest && latest.token === token ? { ...latest, asking: false } : latest));
+        finish(id);
       }
     },
     [lesson],
@@ -574,6 +624,7 @@ export function useChatEngine() {
     runPrompt,
     openLesson,
     askLesson,
+    stopLesson,
     makeFlashcards,
     addAttachments,
     toggleAttachment,
