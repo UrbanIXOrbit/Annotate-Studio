@@ -55,7 +55,11 @@ import {
 import Popover from '@/components/ui/Popover';
 import ColorSwatches from '@/components/ui/ColorSwatches';
 import { getPdfEngine, type SharedPdfEngine } from '@/lib/pdf-engine';
-import { isTauri, readFileBytes, readExternalFileBytes, writeExternalFileBytes, writeFileBytes } from '@/lib/tauri-commands';
+import { changedSince } from '@/lib/file-conflict';
+import {
+  isTauri, readFileBytes, readExternalFileBytes, writeExternalFileBytes, writeFileBytes,
+  fileFingerprint, saveRecoveryFile, writeExternalCopy, type FileFingerprint,
+} from '@/lib/tauri-commands';
 import { registerFlusher } from '@/lib/persist';
 import { registerPdfSaver, trackPdfSave, waitForPdfSaves } from '@/lib/pdf-saves';
 import { openExternal } from '@/lib/external';
@@ -66,6 +70,7 @@ import { useApp } from '@/store/app';
 import { useLibrary } from '@/store/library';
 import { useAnnotations } from '@/store/annotations';
 import { toast, useToasts } from '@/store/toast';
+import { confirmDialog } from '@/store/dialogs';
 import { usePdfNav } from '@/lib/pdf-nav';
 import NoteClipPicker from './NoteClipPicker';
 import { clipToNewNote, clipToNote } from '@/lib/note-clip-actions';
@@ -106,7 +111,7 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode; key: string }[] =
 
 const STROKE_WIDTHS = [1, 2, 3, 5, 8, 12];
 
-type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'conflict';
 
 interface PdfWindowProps {
   resourceId: string;
@@ -146,6 +151,8 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
   const [engine, setEngine] = useState<SharedPdfEngine | null>(null);
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<FileFingerprint | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const isExternal = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.isExternal ?? false);
   const plugins = usePdfPlugins();
 
@@ -165,16 +172,17 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
     setError(null);
     const readFile = isExternal ? readExternalFileBytes : readFileBytes;
     (isExternal ? Promise.resolve() : waitForPdfSaves(path))
-      .then(() => readFile(path))
-      .then((data) => {
+      .then(() => Promise.all([readFile(path), isExternal ? fileFingerprint(path).catch(() => null) : Promise.resolve(null)]))
+      .then(([data, fp]) => {
         if (cancelled) return;
         setBytes(data.slice().buffer as ArrayBuffer);
+        setFingerprint(fp);
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : String(err)));
     return () => {
       cancelled = true;
     };
-  }, [path, isExternal]);
+  }, [path, isExternal, reloadKey]);
 
   if (error) {
     return (
@@ -194,12 +202,39 @@ function PdfWindow({ resourceId, path, title, active }: PdfWindowProps) {
   }
   return (
     <EmbedPDF engine={engine} plugins={plugins} autoMountDomElements={false}>
-      <PdfDocument resourceId={resourceId} path={path} title={title} active={active} bytes={bytes} isExternal={isExternal} />
+      <PdfDocument
+        key={`${path}:${reloadKey}`}
+        resourceId={resourceId}
+        path={path}
+        title={title}
+        active={active}
+        bytes={bytes}
+        isExternal={isExternal}
+        fingerprint={fingerprint}
+        onFingerprint={setFingerprint}
+        onReload={() => setReloadKey((value) => value + 1)}
+      />
     </EmbedPDF>
   );
 }
 
-function PdfDocument({ resourceId, path, title, active, bytes, isExternal }: PdfWindowProps & { bytes: ArrayBuffer; isExternal: boolean }) {
+function PdfDocument({
+  resourceId,
+  path,
+  title,
+  active,
+  bytes,
+  isExternal,
+  fingerprint,
+  onFingerprint,
+  onReload,
+}: PdfWindowProps & {
+  bytes: ArrayBuffer;
+  isExternal: boolean;
+  fingerprint: FileFingerprint | null;
+  onFingerprint: (value: FileFingerprint | null) => void;
+  onReload: () => void;
+}) {
   const manager = useDocumentManagerCapability()?.provides;
   const activeDocumentId = useActiveDocument()?.activeDocumentId;
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -235,10 +270,29 @@ function PdfDocument({ resourceId, path, title, active, bytes, isExternal }: Pdf
       </div>
     );
   }
-  return <PdfWorkspace documentId={activeDocumentId} resourceId={resourceId} path={path} title={title} active={active} isExternal={isExternal} />;
+  return (
+    <PdfWorkspace
+      documentId={activeDocumentId}
+      resourceId={resourceId}
+      path={path}
+      title={title}
+      active={active}
+      isExternal={isExternal}
+      fingerprint={fingerprint}
+      onFingerprint={onFingerprint}
+      onReload={onReload}
+    />
+  );
 }
 
-function useAutosave(documentId: string, path: string, isExternal: boolean) {
+function useAutosave(
+  documentId: string,
+  path: string,
+  isExternal: boolean,
+  fingerprint: FileFingerprint | null,
+  onConflict: (buffer: Uint8Array, current: FileFingerprint) => void,
+  onSaved: (fingerprint: FileFingerprint | null) => void,
+) {
   const exporter = useExport(documentId)?.provides;
   const annotations = useAnnotation(documentId)?.provides;
   const [state, setState] = useState<SaveState>('idle');
@@ -264,12 +318,21 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
         await annotationsRef.current?.commit().toPromise();
         const buffer = await exporterRef.current!.saveAsCopy().toPromise();
         if (discarded.current) return;
+        if (isExternal && fingerprint && (await changedSince(path, fingerprint))) {
+          const current = await fileFingerprint(path).catch(() => fingerprint);
+          const bytes = new Uint8Array(buffer);
+          await saveRecoveryFile(`pdf-conflict-${Date.now()}.pdf`, bytes).catch(() => undefined);
+          setState('conflict');
+          onConflict(bytes, current);
+          return;
+        }
         if (isExternal) {
           await writeExternalFileBytes(path, buffer);
         } else {
           const file = await writeFileBytes({ path }, buffer);
           useLibrary.getState().upsert(file);
         }
+        onSaved(isExternal ? await fileFingerprint(path).catch(() => null) : null);
         useAnnotations.getState().invalidate(path);
         retries.current = 0;
         setState('saved');
@@ -292,7 +355,7 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
     trackPdfSave(path, job);
     await job;
     saving.current = null;
-  }, [path]);
+  }, [path, isExternal, fingerprint, onConflict, onSaved]);
 
   const markDirty = useCallback(() => {
     dirty.current = true;
@@ -330,7 +393,20 @@ function useAutosave(documentId: string, path: string, isExternal: boolean) {
     [save],
   );
 
-  return { state, save };
+  const writeBuffer = useCallback(
+    async (buffer: Uint8Array) => {
+      if (isExternal) await writeExternalFileBytes(path, buffer);
+      else await writeFileBytes({ path }, buffer);
+      onSaved(isExternal ? await fileFingerprint(path).catch(() => null) : null);
+      useAnnotations.getState().invalidate(path);
+      setState('saved');
+    },
+    [isExternal, path, onSaved],
+  );
+
+  const markResolved = useCallback(() => setState('saved'), []);
+
+  return { state, save, writeBuffer, markResolved };
 }
 
 function useCanvasZoom(): number {
@@ -493,7 +569,23 @@ function CaptureLayer({
   );
 }
 
-function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal }: Omit<PdfWindowProps, 'bytes'> & { documentId: string; isExternal: boolean }) {
+function PdfWorkspace({
+  documentId,
+  resourceId,
+  path,
+  title,
+  active,
+  isExternal,
+  fingerprint,
+  onFingerprint,
+  onReload,
+}: Omit<PdfWindowProps, 'bytes'> & {
+  documentId: string;
+  isExternal: boolean;
+  fingerprint: FileFingerprint | null;
+  onFingerprint: (value: FileFingerprint | null) => void;
+  onReload: () => void;
+}) {
   // Where you were in this book last time. Read once: it only matters while the window opens.
   const savedViewRef = useRef(useCanvas.getState().pdfViews[path]);
   const restoredRef = useRef(false);
@@ -521,7 +613,15 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
   const scrollState = scrollResult?.state;
   const documentState = useDocumentState(documentId);
   const exporter = useExport(documentId)?.provides;
-  const { state: saveState, save } = useAutosave(documentId, path, isExternal);
+  const [conflict, setConflict] = useState<{ buffer: Uint8Array; current: FileFingerprint } | null>(null);
+  const { state: saveState, save, writeBuffer, markResolved } = useAutosave(
+    documentId,
+    path,
+    isExternal,
+    fingerprint,
+    useCallback((buffer: Uint8Array, current: FileFingerprint) => setConflict({ buffer, current }), []),
+    onFingerprint,
+  );
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const maximized = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === resourceId)?.maximized ?? false);
   const canvasZoom = useCanvasZoom();
@@ -1123,11 +1223,43 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
               const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
               if (blob) {
                 try {
-                  const file = await writeFileBytes(
-                    { dir: 'documents/captures', name: `pdf-capture-${Date.now()}.png`, unique: true },
-                    new Uint8Array(await blob.arrayBuffer()),
-                  );
-                  capturedPath = file.path;
+                  const bytes = new Uint8Array(await blob.arrayBuffer());
+                  const name = `pdf-capture-${Date.now()}.png`;
+                  let settings = useSettings.getState();
+                  if (!settings.captureFolder && !settings.captureFolderAsked) {
+                    settings.update({ captureFolderAsked: true });
+                    const choose = await confirmDialog({
+                      title: 'Where should captures be saved?',
+                      message: 'Captured images are generated by Annotate Studio. Choose a folder for them, or keep them in app-managed storage.',
+                      confirmLabel: 'Choose folder',
+                      cancelLabel: 'Use app storage',
+                    });
+                    if (choose) {
+                      try {
+                        const { open: pickFolder } = await import('@tauri-apps/plugin-dialog');
+                        const folder = await pickFolder({ directory: true, multiple: false });
+                        if (typeof folder === 'string') {
+                          useSettings.getState().update({ captureFolder: folder.replace(/[\\/]+$/, '') });
+                          toast.success('Captures will be saved to your folder');
+                        }
+                      } catch (error) {
+                        toast.error('Could not choose a folder', error);
+                      }
+                    }
+                    settings = useSettings.getState();
+                  }
+                  if (settings.captureFolder) {
+                    const separator = /\\/.test(settings.captureFolder) && !settings.captureFolder.includes('/') ? '\\' : '/';
+                    const target = `${settings.captureFolder.replace(/[\\/]+$/, '')}${separator}${name}`;
+                    await writeExternalCopy(target, bytes);
+                    capturedPath = target;
+                  } else {
+                    const file = await writeFileBytes(
+                      { dir: 'documents/captures', name, unique: true },
+                      bytes,
+                    );
+                    capturedPath = file.path;
+                  }
                 } catch (error) {
                   toast.error('Could not save the capture image', error);
                 }
@@ -1362,6 +1494,38 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
 
   return (
     <div className="pdf-window">
+      {conflict && (
+        <div className="pdf-conflict" role="alert">
+          <AlertTriangle size={14} />
+          <span>This PDF changed on disk while you were annotating. A recovery copy of your changes was saved.</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => {
+            setConflict(null);
+            onReload();
+          }}>Reload external changes</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
+            try {
+              const { save } = await import('@tauri-apps/plugin-dialog');
+              const target = await save({ filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+              if (!target) return;
+              await writeExternalCopy(target, conflict.buffer);
+              markResolved();
+              setConflict(null);
+              useCanvas.getState().openResource({ type: 'pdf', title: `${title} (copy)`, filePath: target }, { isExternal: true });
+              toast.success('Saved a copy', target);
+            } catch (error) {
+              toast.error('Could not save a copy', error);
+            }
+          }}>Save a copy</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
+            try {
+              await writeBuffer(conflict.buffer);
+              setConflict(null);
+            } catch (error) {
+              toast.error('Could not overwrite the file', error);
+            }
+          }}>Overwrite</button>
+        </div>
+      )}
       <div className="pdf-toolbar" data-no-drag>
         <div className="pdf-tool-group">
           {TOOLS.map((entry) => (
@@ -1481,7 +1645,7 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
         )}
         <div className="pdf-toolbar-spacer" />
         <span className={cn('save-state', `save-state-${saveState}`)}>
-          {saveState === 'pending' || saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Not saved' : ''}
+          {saveState === 'pending' || saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Not saved' : saveState === 'conflict' ? 'Conflict' : ''}
         </span>
         <button type="button" className="tool-btn" onClick={() => void exportCopy()} title="Export a copy">
           <Download size={14} />

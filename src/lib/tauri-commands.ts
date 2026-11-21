@@ -135,6 +135,30 @@ export const statWorkspaceFile = (path: string) => call<StudyFile | null>('stat_
 /** Metadata for a file at an absolute path outside the workspace, referenced in place. */
 export const statExternalFile = (path: string) => call<StudyFile | null>('stat_external_file', { path });
 export const pathExists = (path: string) => call<boolean>('path_exists', { path });
+
+export interface FileFingerprint {
+  size: number;
+  modifiedAt: string;
+  hash: string;
+}
+export const fileFingerprint = (path: string) => call<FileFingerprint>('file_fingerprint', { path });
+export async function saveRecoveryFile(name: string, data: Uint8Array): Promise<string> {
+  const header = new TextEncoder().encode(JSON.stringify({ name }));
+  const frame = new Uint8Array(4 + header.length + data.length);
+  new DataView(frame.buffer).setUint32(0, header.length, true);
+  frame.set(header, 4);
+  frame.set(data, 4 + header.length);
+  return call<string>('save_recovery_file', frame);
+}
+
+export async function writeExternalCopy(path: string, data: Uint8Array): Promise<void> {
+  const header = new TextEncoder().encode(JSON.stringify({ path }));
+  const frame = new Uint8Array(4 + header.length + data.length);
+  new DataView(frame.buffer).setUint32(0, header.length, true);
+  frame.set(header, 4);
+  frame.set(data, 4 + header.length);
+  return call<void>('write_external_copy', frame);
+}
 /** Creates a note in an absolute folder on the user's device, without copying it into the workspace. */
 export const createExternalNote = (directory: string, name: string, content: string) =>
   call<StudyFile>('create_external_note', { directory, name, content });
@@ -154,7 +178,6 @@ export const createNote = (name: string, content: string) => call<StudyFile>('cr
 export const renameWorkspaceFile = (path: string, newName: string) =>
   call<StudyFile>('rename_workspace_file', { path, newName });
 export const deleteWorkspaceFile = (path: string) => call<void>('delete_workspace_file', { path });
-export const importFiles = (paths: string[]) => call<StudyFile[]>('import_files', { paths });
 
 export async function readFileBytes(path: string): Promise<Uint8Array> {
   return toBytes(await call<unknown>('read_file_bytes', { path }));

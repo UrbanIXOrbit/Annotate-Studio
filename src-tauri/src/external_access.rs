@@ -42,7 +42,13 @@ fn persisted_external_paths(state: &AppState) -> BTreeSet<PathBuf> {
         // Only explicit path fields, never arbitrary keys from metadata records:
         // settings are renderer-writable, so using fileMeta/captureNotes as a
         // grant source would let injected script grant itself any path.
-        for field in ["externalFiles", "inboxNotePath", "noteFolder", "recordingFolder"] {
+        for field in [
+            "externalFiles",
+            "inboxNotePath",
+            "noteFolder",
+            "recordingFolder",
+            "captureFolder",
+        ] {
             add_all(settings.get(field), &mut allowed);
         }
     }

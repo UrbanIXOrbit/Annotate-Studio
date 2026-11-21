@@ -437,6 +437,16 @@ function CanvasWindow({ resource }: { resource: Resource }) {
         <span className="cw-title" title={resource.filePath ?? resource.title} dir="auto">
           {resource.title}
         </span>
+        {resource.filePath && (
+          <span
+            className={cn('cw-origin', resource.isExternal ? 'cw-origin-external' : 'cw-origin-managed')}
+            title={resource.isExternal
+              ? 'External file — edits are saved back to the original file where it lives'
+              : 'Managed by Annotate Studio in its own storage'}
+          >
+            {resource.isExternal ? 'External · edits original' : 'In app storage'}
+          </span>
+        )}
         <div className="cw-actions" data-no-drag>
           {resource.filePath && resource.type !== 'image' && resource.type !== 'audiobook' && resource.type !== 'video' && (
             <AiActionsButton path={resource.filePath} title={resource.title} resourceId={resource.id} />

@@ -89,7 +89,7 @@ function CanvasToolbar() {
   return (
     <div className="canvas-toolbar">
 
-      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('pdf')} title="Import PDF">
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('pdf')} title="Open external PDF — edits the original file">
         <FilePlus2 size={14} />
         <span className="toolbar-label">PDF</span>
       </button>
@@ -97,11 +97,11 @@ function CanvasToolbar() {
         <NotebookPen size={14} />
         <span className="toolbar-label">Note</span>
       </button>
-      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('image')} title="Import image">
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('image')} title="Open external image — edits the original file">
         <ImagePlus size={14} />
         <span className="toolbar-label">Image</span>
       </button>
-      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('audiobook')} title="Add audiobook">
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('audiobook')} title="Open external audiobook — edits the original file">
         <Headphones size={14} />
         <span className="toolbar-label">Audio</span>
       </button>
@@ -109,7 +109,7 @@ function CanvasToolbar() {
         <Mic size={14} />
         <span className="toolbar-label">Record</span>
       </button>
-      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('video')} title="Add video">
+      <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('video')} title="Open external video — edits the original file">
         <Film size={14} />
         <span className="toolbar-label">Video</span>
       </button>

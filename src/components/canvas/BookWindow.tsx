@@ -7,9 +7,12 @@ import Popover from '@/components/ui/Popover';
 import { Overlayer } from 'foliate-js/overlayer.js';
 import type { FoliateRelocateDetail, FoliateTocItem, FoliateView } from 'foliate-js/view.js';
 import { createBookView, ensureFoliateModule, openBook } from '@/lib/book-engine';
-import { readFileBytes, readExternalFileBytes } from '@/lib/tauri-commands';
+import {
+  readFileBytes, readExternalFileBytes, fileFingerprint, saveRecoveryFile, writeExternalCopy, type FileFingerprint,
+} from '@/lib/tauri-commands';
 import { registerWindowKeyHandler } from '@/lib/window-keys';
 import { copyText, stripExtension } from '@/lib/utils';
+import { changedSince } from '@/lib/file-conflict';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { useApp } from '@/store/app';
 import { useAnnotations } from '@/store/annotations';
@@ -121,6 +124,8 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
   const annotationStyleRef = useRef<AnnotationStyle>('highlight');
   const annotationStylesRef = useRef(new Map<string, AnnotationStyle>());
   const annotationSetRef = useRef<EpubAnnotationSet>(createEpubAnnotationSet(title));
+  const bookFingerprintRef = useRef<FileFingerprint | null>(null);
+  const [bookConflict, setBookConflict] = useState<{ set: EpubAnnotationSet } | null>(null);
   const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [progress, setProgress] = useState<Progress | null>(null);
   const [toc, setToc] = useState<TocEntry[]>([]);
@@ -220,6 +225,9 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
         // import has to settle first (the same reason getPdfEngine is async).
         await ensureFoliateModule();
         if (cancelled || !hostRef.current) return;
+        if (isExternal) {
+          bookFingerprintRef.current = await fileFingerprint(path).catch(() => null);
+        }
         try {
           const stored = await readBookAnnotationSet(path, isExternal, title);
           annotationSetRef.current = stored;
@@ -387,7 +395,16 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
         ],
       };
       annotationSetRef.current = next;
-      const save = annotationSaveQueueRef.current.then(() => writeBookAnnotationSet(path, isExternal, next));
+      if (isExternal && bookFingerprintRef.current && (await changedSince(path, bookFingerprintRef.current))) {
+        const encoded = new TextEncoder().encode(JSON.stringify(next, null, 2));
+        await saveRecoveryFile(`book-conflict-${Date.now()}.json`, encoded).catch(() => undefined);
+        setBookConflict({ set: next });
+        throw new Error('The book changed on disk. Your annotation changes were saved to a recovery copy.');
+      }
+      const save = annotationSaveQueueRef.current.then(async () => {
+        await writeBookAnnotationSet(path, isExternal, next);
+        bookFingerprintRef.current = await fileFingerprint(path).catch(() => null);
+      });
       annotationSaveQueueRef.current = save.then(() => undefined, () => undefined);
       await save;
       annotationStylesRef.current.set(annotationCfi(annotation), style);
@@ -552,6 +569,53 @@ function BookReader({ resourceId, path, title, bytes, isExternal }: BookWindowPr
 
   return (
     <div className="book-window">
+      {bookConflict && (
+        <div className="pdf-conflict" role="alert">
+          <AlertTriangle size={14} />
+          <span>This book changed on disk. Your annotation changes were saved to a recovery copy.</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={async () => {
+            try {
+              const stored = await readBookAnnotationSet(path, isExternal, title);
+              annotationSetRef.current = stored;
+              annotationStylesRef.current.clear();
+              for (const annotation of stored.items) {
+                annotationStylesRef.current.set(annotationCfi(annotation), annotation.body.highlight === 'underline' ? 'underline' : 'highlight');
+              }
+              bookFingerprintRef.current = await fileFingerprint(path).catch(() => null);
+              setBookConflict(null);
+              toast.success('Reloaded annotations from disk');
+            } catch (error) {
+              toast.error('Could not reload annotations', error);
+            }
+          }}>Reload external changes</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
+            try {
+              const { save } = await import('@tauri-apps/plugin-dialog');
+              const target = await save({ filters: [{ name: 'Annotation JSON', extensions: ['json'] }] });
+              if (!target) return;
+              await writeExternalCopy(target, new TextEncoder().encode(JSON.stringify(bookConflict.set, null, 2)));
+              setBookConflict(null);
+              toast.success('Saved a copy of your annotations');
+            } catch (error) {
+              toast.error('Could not save a copy', error);
+            }
+          }}>Save a copy</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
+            try {
+              await writeBookAnnotationSet(path, isExternal, bookConflict.set);
+              annotationStylesRef.current.clear();
+              for (const annotation of bookConflict.set.items) {
+                annotationStylesRef.current.set(annotationCfi(annotation), annotation.body.highlight === 'underline' ? 'underline' : 'highlight');
+              }
+              bookFingerprintRef.current = await fileFingerprint(path).catch(() => null);
+              setBookConflict(null);
+              toast.success('Annotations overwritten');
+            } catch (error) {
+              toast.error('Could not overwrite annotations', error);
+            }
+          }}>Overwrite</button>
+        </div>
+      )}
       <div className="pdf-toolbar" data-no-drag>
         <div className="pdf-tool-group">
           <button ref={tocAnchor} type="button" className="tool-btn" onClick={() => setTocOpen((v) => !v)} title="Contents" disabled={toc.length === 0}>

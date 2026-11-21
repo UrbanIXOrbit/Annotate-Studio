@@ -43,7 +43,7 @@ import ImportBibtexDialog from './ImportBibtexDialog';
 import { openBookFileOnCanvas } from './canvas-open';
 import { useBooksVirtualRows } from './useVirtualRows';
 import { IMAGE_EXTENSIONS, NOTE_EXTENSIONS } from '@/lib/workspace-actions';
-import { cn, formatBytes } from '@/lib/utils';
+import { cn, formatBytes, isExternalPath } from '@/lib/utils';
 
 const DOC_EXTENSIONS = ['docx', 'doc', 'odt', 'epub', 'mobi', 'rtf'];
 
@@ -268,7 +268,17 @@ function FileRow({
           </div>
 
           <div className="book-file-main" onClick={onSelectRow} onDoubleClick={handleOpenOnCanvas} title={file.filePath}>
-            <div className="book-file-name">{label}</div>
+            <div className="book-file-name">
+              {label}
+              <span
+                className={cn('book-origin', isExternalPath(file.filePath) ? 'book-origin-external' : 'book-origin-managed')}
+                title={isExternalPath(file.filePath)
+                  ? 'External file — edits are saved back to the original'
+                  : 'Managed by Annotate Studio in its own storage'}
+              >
+                {isExternalPath(file.filePath) ? 'External' : 'Managed'}
+              </span>
+            </div>
             <div className="book-file-meta">
               {missing && (
                 <button

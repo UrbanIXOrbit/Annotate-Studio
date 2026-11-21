@@ -11174,3 +11174,54 @@ input[type='checkbox'] {
   font-weight: 500;
   vertical-align: middle;
 }
+
+.pdf-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-card));
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pdf-conflict span {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* External vs app-managed file origin indicators. */
+.cw-origin {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cw-origin-external {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-secondary);
+}
+
+.cw-origin-managed {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.book-origin {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.book-origin-external {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-secondary);
+}

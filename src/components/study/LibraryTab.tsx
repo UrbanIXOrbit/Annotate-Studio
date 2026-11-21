@@ -441,7 +441,7 @@ export default function LibraryTab() {
             <NotebookPen size={15} /> New note
           </button>
           <button type="button" className="btn btn-primary" onClick={() => void pickAndImport('any')}>
-            <Upload size={15} /> Import files
+            <Upload size={15} /> Open external files
           </button>
         </div>
       </header>
@@ -584,11 +584,11 @@ export default function LibraryTab() {
         <div className="empty-state">
           <FolderOpen size={40} strokeWidth={1.4} />
           <h2>{filtersActive || activeCollection ? 'No matching files' : 'Your library is empty'}</h2>
-          <p>{filtersActive || activeCollection ? 'Try another search or filter.' : 'Import PDFs, audio, images or notes, or drop them onto the window.'}</p>
+          <p>{filtersActive || activeCollection ? 'Try another search or filter.' : 'Open PDFs, audio, images or notes from where they live, or drop files onto the window.'}</p>
           {!filtersActive && !activeCollection && (
             <div className="empty-actions">
               <button type="button" className="btn btn-primary" onClick={() => void pickAndImport('any')}>
-                <FolderOpen size={15} /> Import files
+                <FolderOpen size={15} /> Open external files
               </button>
               <button type="button" className="btn btn-secondary" onClick={() => void createNewNote()}>
                 <BookText size={15} /> New note
@@ -629,6 +629,14 @@ export default function LibraryTab() {
                   </div>
                   <div className="file-card-meta">
                     <span className={cn('badge', meta.tone)}>{meta.label}</span>
+                    <span
+                      className={cn('badge', isExternalPath(file.path) ? 'tone-blue' : 'tone-slate')}
+                      title={isExternalPath(file.path)
+                        ? 'External file — edits are saved back to the original'
+                        : 'Managed by Annotate Studio in its own storage'}
+                    >
+                      {isExternalPath(file.path) ? 'External' : 'Managed'}
+                    </span>
                     <span>{formatBytes(file.size)}</span>
                     <span>{formatRelativeTime(recent[file.path] ?? file.modified_at)}</span>
                     {openSet.has(file.path) && <span className="badge tone-primary">On canvas</span>}

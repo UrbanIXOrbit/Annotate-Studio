@@ -417,11 +417,11 @@ export default function CanvasViewport() {
           useCanvas.getState().select(id);
         },
       },
-      { label: 'Import PDF…', icon: <FilePlus2 size={13} />, onSelect: () => void pickAndImport('pdf', world) },
-      { label: 'Import image…', icon: <ImagePlus size={13} />, onSelect: () => void pickAndImport('image', world) },
-      { label: 'Add audiobook…', icon: <Headphones size={13} />, onSelect: () => void pickAndImport('audiobook', world) },
+      { label: 'Open external PDF…', icon: <FilePlus2 size={13} />, onSelect: () => void pickAndImport('pdf', world) },
+      { label: 'Open external image…', icon: <ImagePlus size={13} />, onSelect: () => void pickAndImport('image', world) },
+      { label: 'Open external audiobook…', icon: <Headphones size={13} />, onSelect: () => void pickAndImport('audiobook', world) },
       { label: 'Record audio…', icon: <Mic size={13} />, onSelect: () => state.openResource({ type: 'recorder', title: 'New recording' }, { at: world }) },
-      { label: 'Add video…', icon: <Film size={13} />, onSelect: () => void pickAndImport('video', world) },
+      { label: 'Open external video…', icon: <Film size={13} />, onSelect: () => void pickAndImport('video', world) },
       { label: 'Add web article…', icon: <Newspaper size={13} />, onSelect: () => void addWebArticle(world) },
       'separator',
       { label: 'Select all cards', shortcut: 'Ctrl+A', onSelect: () => state.selectAllCards() },
@@ -550,7 +550,7 @@ export default function CanvasViewport() {
           <p>Bring your PDFs, notes and media together and arrange them freely.</p>
           <div className="canvas-empty-actions">
             <button type="button" className="btn btn-primary" onClick={() => void pickAndImport('pdf')}>
-              <FilePlus2 size={15} /> Import PDF
+              <FilePlus2 size={15} /> Open external PDF
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void createNewNote()}>
               <NotebookPen size={15} /> New note

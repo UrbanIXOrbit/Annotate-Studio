@@ -304,7 +304,7 @@ export default function AnnotationsTab() {
         <div className="anno-empty-state">
           <Highlighter size={30} />
           <h2>Nothing to show yet</h2>
-          <p>Import a PDF or e-book, highlight or annotate it, and every annotation will be collected here, book by book and page by page.</p>
+          <p>Open a PDF or e-book, highlight or annotate it, and every annotation will be collected here, book by book and page by page.</p>
           <button type="button" className="btn btn-primary" onClick={() => setView('library')}>
             Go to Library
           </button>

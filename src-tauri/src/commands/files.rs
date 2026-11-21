@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, State};
 
-use crate::filesystem::{describe, describe_absolute, list_study_files, FileType, StudyFile};
+use crate::filesystem::{describe, describe_absolute, list_study_files, StudyFile};
 use crate::paths::{
-    sanitize_file_name, sanitize_stem, split_name, unique_in_dir, DOCUMENTS_DIR, NOTES_DIR,
+    sanitize_file_name, sanitize_stem, split_name, unique_in_dir, NOTES_DIR,
 };
 use crate::external_access::{ensure_external_access, external_read_allowed};
 use crate::state::AppState;
 use crate::storage::{write_atomic, write_in_place};
+use sha2::{Digest, Sha256};
 use crate::text::{bytes_look_binary, text_from_file};
 
 fn io_error(path: &str, err: std::io::Error) -> String {
@@ -24,6 +25,105 @@ fn io_error(path: &str, err: std::io::Error) -> String {
 fn describe_or_err(state: &AppState, path: &Path) -> Result<StudyFile, String> {
     describe(&state.workspace, path)
         .ok_or_else(|| format!("Could not read file information for {}", path.display()))
+}
+
+/// Write a new file at a path chosen through a dialog (e.g. "save a copy").
+/// The path must be in the current filesystem scope; existing files are not
+/// overwritten by this command.
+#[tauri::command(async)]
+pub async fn write_external_copy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Request<'_>,
+) -> Result<(), String> {
+    let InvokeBody::Raw(body) = request.body() else {
+        return Err("Expected a binary payload".into());
+    };
+    if body.len() < 4 {
+        return Err("Malformed binary payload".into());
+    }
+    let header_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+    if body.len() < 4 + header_len {
+        return Err("Malformed binary payload".into());
+    }
+    #[derive(Deserialize)]
+    struct CopyTarget {
+        path: String,
+    }
+    let target: CopyTarget = serde_json::from_slice(&body[4..4 + header_len])
+        .map_err(|e| format!("Malformed payload header: {e}"))?;
+    let full = PathBuf::from(target.path.trim());
+    if !full.is_absolute() {
+        return Err("Choose an absolute file path".into());
+    }
+    ensure_external_access(&app, &state, &full)?;
+    if full.exists() {
+        return Err("Choose a new file name — this copy will not overwrite an existing file".into());
+    }
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&full, &body[4 + header_len..]).map_err(|e| io_error(&target.path, e))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileFingerprint {
+    pub size: u64,
+    pub modified_at: String,
+    pub hash: String,
+}
+
+/// Snapshot of an external file, used to detect edits made by another program
+/// before we write our own changes back to it.
+#[tauri::command(async)]
+pub async fn file_fingerprint(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<FileFingerprint, String> {
+    let full = PathBuf::from(path.trim());
+    ensure_external_access(&app, &state, &full)?;
+    let meta = std::fs::metadata(&full).map_err(|e| io_error(&path, e))?;
+    let size = meta.len();
+    let modified_at = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_default();
+    let mut file = std::fs::File::open(&full).map_err(|e| io_error(&path, e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|e| io_error(&path, e))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let hash = format!("{:x}", hasher.finalize());
+    Ok(FileFingerprint { size, modified_at, hash })
+}
+
+/// Write a recovery copy of unsaved annotation changes into app-owned storage.
+/// Uses the same binary frame as `write_file_bytes`; the target's name is used.
+#[tauri::command(async)]
+pub async fn save_recovery_file(
+    state: State<'_, AppState>,
+    request: Request<'_>,
+) -> Result<String, String> {
+    let InvokeBody::Raw(body) = request.body() else {
+        return Err("Expected a binary payload".into());
+    };
+    let (target, data) = decode_frame(body)?;
+    let name = target.name.unwrap_or_else(|| format!("recovery-{}.bin", chrono::Utc::now().timestamp()));
+    let safe = sanitize_file_name(&name);
+    let dir = state.paths.backups_dir.join("recovery");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = unique_in_dir(&dir, &safe);
+    write_atomic(&path, data)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command(async)]
@@ -355,6 +455,7 @@ pub async fn write_external_file_bytes(
         .map_err(|error| format!("Could not save external file {path}: {error}"))
 }
 
+#[cfg(test)]
 fn same_content(a: &Path, b: &Path) -> bool {
     let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
         return false;
@@ -382,64 +483,6 @@ fn same_content(a: &Path, b: &Path) -> bool {
             return false;
         }
     }
-}
-
-fn import_one(state: &AppState, source: &Path) -> Result<StudyFile, String> {
-    let display = source.display().to_string();
-    if !source.is_file() {
-        return Err(format!("Not a file: {display}"));
-    }
-    let file_type = FileType::from_path(source);
-    if file_type == FileType::Unknown {
-        return Err(format!("Unsupported file type: {display}"));
-    }
-    if let Some(relative) = state.workspace.relative(source) {
-        if relative.starts_with(&format!("{DOCUMENTS_DIR}/"))
-            || relative.starts_with(&format!("{NOTES_DIR}/"))
-        {
-            return describe_or_err(state, source);
-        }
-    }
-    let dir = state.workspace.resolve(file_type.default_dir())?;
-    std::fs::create_dir_all(&dir).map_err(|e| io_error(&display, e))?;
-    let name = sanitize_file_name(
-        &source
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    );
-    let existing = dir.join(&name);
-    if existing.is_file() && same_content(source, &existing) {
-        return describe_or_err(state, &existing);
-    }
-    let target = unique_in_dir(&dir, &name);
-    std::fs::copy(source, &target).map_err(|e| io_error(&display, e))?;
-    describe_or_err(state, &target)
-}
-
-#[tauri::command(async)]
-pub fn import_files(
-    state: State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<Vec<StudyFile>, String> {
-    let mut imported = Vec::new();
-    let mut errors = Vec::new();
-    for raw in paths {
-        match import_one(&state, &PathBuf::from(&raw)) {
-            Ok(file) => imported.push(file),
-            Err(err) => errors.push(err),
-        }
-    }
-    if !errors.is_empty() {
-        // Surface partial failures so the UI never reports full success.
-        return Err(format!(
-            "Imported {} of {} files. Failures: {}",
-            imported.len(),
-            imported.len() + errors.len(),
-            errors.join("; ")
-        ));
-    }
-    Ok(imported)
 }
 
 #[cfg(test)]

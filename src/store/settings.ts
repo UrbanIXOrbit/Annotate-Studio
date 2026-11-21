@@ -59,6 +59,10 @@ export interface PersistedSettings {
   recordingFolder: string;
   /** Folder new notes are created in, picked by the user at creation time like recordings. */
   noteFolder: string;
+  /** Folder for generated assets (PDF captures, exports); blank = app-managed storage. */
+  captureFolder: string;
+  /** Whether the first-use capture-folder question has been asked. */
+  captureFolderAsked: boolean;
   /** Inbox note captures go to; blank = Inbox.md in the notes folder. */
   inboxNotePath: string;
   /** Extra named capture notes offered next to the default Inbox. */
@@ -98,6 +102,8 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   noteClip: { lastNote: '', highlight: true },
   recordingFolder: '',
   noteFolder: '',
+  captureFolder: '',
+  captureFolderAsked: false,
   inboxNotePath: '',
   captureNotes: [],
   externalFiles: [],
@@ -236,6 +242,8 @@ function sanitize(raw: unknown): PersistedSettings {
     },
     recordingFolder: typeof data.recordingFolder === 'string' ? data.recordingFolder.slice(0, 4000) : defaults.recordingFolder,
     noteFolder: typeof data.noteFolder === 'string' ? data.noteFolder.slice(0, 4000) : defaults.noteFolder,
+    captureFolder: typeof data.captureFolder === 'string' ? data.captureFolder.slice(0, 4000) : defaults.captureFolder,
+    captureFolderAsked: bool(data.captureFolderAsked, defaults.captureFolderAsked),
     inboxNotePath: typeof data.inboxNotePath === 'string' ? data.inboxNotePath.slice(0, 4000) : defaults.inboxNotePath,
     captureNotes: sanitizeCaptureNotes(data.captureNotes),
     externalFiles: Array.isArray(data.externalFiles)
@@ -322,6 +330,8 @@ function snapshot(state: SettingsStore): PersistedSettings {
     noteClip: state.noteClip,
     recordingFolder: state.recordingFolder,
     noteFolder: state.noteFolder,
+    captureFolder: state.captureFolder,
+    captureFolderAsked: state.captureFolderAsked,
     inboxNotePath: state.inboxNotePath,
     captureNotes: state.captureNotes,
     externalFiles: state.externalFiles,

@@ -274,6 +274,7 @@ function DataPane() {
   const noteFolder = useSettings((state) => state.noteFolder);
   const recordingFolder = useSettings((state) => state.recordingFolder);
   const inboxNotePath = useSettings((state) => state.inboxNotePath);
+  const captureFolder = useSettings((state) => state.captureFolder);
 
   useEffect(() => {
     getDataDir().then(setDataDir).catch(() => setDataDir(''));
@@ -295,7 +296,7 @@ function DataPane() {
     })();
   }, [autoSnapshots]);
 
-  const changeFolder = async (key: 'noteFolder' | 'recordingFolder' | 'inboxNotePath') => {
+  const changeFolder = async (key: 'noteFolder' | 'recordingFolder' | 'inboxNotePath' | 'captureFolder') => {
     if (!isTauri()) return;
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
@@ -410,6 +411,7 @@ function DataPane() {
           { label: 'New notes', value: noteFolder, key: 'noteFolder' as const },
           { label: 'Recordings', value: recordingFolder, key: 'recordingFolder' as const },
           { label: 'Inbox note', value: inboxNotePath, key: 'inboxNotePath' as const },
+          { label: 'Captures & generated files', value: captureFolder, key: 'captureFolder' as const },
         ].map((folder) => (
           <div className="path-row" key={folder.key}>
             <div>
