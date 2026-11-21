@@ -354,6 +354,7 @@ function CanvasWindow({ resource }: { resource: Resource }) {
       await renameFile(resource.filePath, value);
     } else {
       useCanvas.getState().updateResource(resource.id, { title: value }, true);
+      useCanvas.getState().recordActivity(`Renamed to ${value}`, [resource.id]);
     }
   };
 

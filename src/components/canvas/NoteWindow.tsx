@@ -30,7 +30,7 @@ import { lineForLink } from '@/lib/link-graph';
 import { useNotes } from '@/store/notes';
 import { useLibrary } from '@/store/library';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
-import { computeGraph, useGraph } from '@/store/graph';
+import { getGraphModel, useGraph } from '@/store/graph';
 import { openFileOnCanvas, openWikiLink } from '@/lib/workspace-actions';
 import { cn } from '@/lib/utils';
 
@@ -135,7 +135,7 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
   // window moves to another file (typing updates it on the next debounced save).
   const revision = useGraph((state) => state.revision);
   const links = useMemo(() => {
-    const model = computeGraph();
+    const model = getGraphModel();
     const outgoing = model.outgoing.get(path) ?? [];
     const unresolved = [...new Set(outgoing.filter((link) => !link.resolved).map((link) => link.target))];
     return {
@@ -201,18 +201,18 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
     <div className="note-window">
       <div className="note-toolbar" data-no-drag>
         <div className="segmented">
-          <button type="button" className={cn(mode === 'edit' && 'active')} onClick={() => setMode('edit')} title="Edit">
+          <button type="button" aria-pressed={mode === 'edit'} className={cn(mode === 'edit' && 'active')} onClick={() => setMode('edit')} title="Edit">
             <PenLine size={13} />
           </button>
           <button
             type="button"
-            className={cn(mode === 'split' && 'active')}
+            aria-pressed={mode === 'split'} className={cn(mode === 'split' && 'active')}
             onClick={() => setMode('split')}
             title={canSplit ? 'Split view' : 'Split view (widen the window to see the preview)'}
           >
             <Columns2 size={13} />
           </button>
-          <button type="button" className={cn(mode === 'preview' && 'active')} onClick={() => setMode('preview')} title="Preview">
+          <button type="button" aria-pressed={mode === 'preview'} className={cn(mode === 'preview' && 'active')} onClick={() => setMode('preview')} title="Preview">
             <Eye size={13} />
           </button>
         </div>
@@ -264,7 +264,7 @@ function NoteWindow({ resourceId, path, title }: { resourceId: string; path: str
         >
           <FileDown size={14} />
         </button>
-        <span className="note-meta">{wordCount(buffer.content)} words</span>
+        <span className="note-meta">{wordCount(previewContent)} words</span>
         {buffer.error && buffer.dirty && (
           <button
             type="button"

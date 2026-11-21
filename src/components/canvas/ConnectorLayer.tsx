@@ -99,14 +99,15 @@ export default function ConnectorLayer({ clientToWorld }: Props) {
     const origin = clientToWorld(event.clientX, event.clientY);
     ui.setDrag({ fromId, fromSide, pointer: origin, targetId: null, targetSide: null });
 
-    const targetAt = (world: Point) => {
-      const candidates = useCanvas
-        .getState()
-        .workspaces.find((w) => w.id === useCanvas.getState().activeWorkspaceId)
-        ?.resources.filter((r) => !r.minimized && !hiddenResourceIds(useCanvas.getState().workspaces.find((w) => w.id === useCanvas.getState().activeWorkspaceId)!).has(r.id))
-        .map((r) => ({ ...r, ...boxOf(r) }));
-      return candidates ? hitTestBox(candidates, world, fromId) : null;
-    };
+    // Snapshot candidates once per drag. Recomputing hiddenResourceIds() for
+    // every resource on every pointermove was quadratic in window count.
+    const canvasState = useCanvas.getState();
+    const active = canvasState.workspaces.find((w) => w.id === canvasState.activeWorkspaceId);
+    const hidden = active ? hiddenResourceIds(active) : new Set<string>();
+    const candidates = (active?.resources ?? [])
+      .filter((r) => !r.minimized && !hidden.has(r.id))
+      .map((r) => ({ ...r, ...boxOf(r) }));
+    const targetAt = (world: Point) => hitTestBox(candidates, world, fromId);
 
     const onMove = (e: PointerEvent) => {
       const world = clientToWorld(e.clientX, e.clientY);

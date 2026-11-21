@@ -1,18 +1,12 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Copy, Minus, Pause, Play, Square, Timer, X } from 'lucide-react';
-import { isTauri } from '@/lib/tauri-commands';
-import { useIsClient } from '@/components/ui/Portal';
+import React from 'react';
+import { Pause, Play, Timer } from 'lucide-react';
+import WorkspaceSwitcher from '@/components/canvas/WorkspaceSwitcher';
 import { useApp } from '@/store/app';
-import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { usePomodoro } from '@/store/pomodoro';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
 import { cn, formatDuration } from '@/lib/utils';
-
-async function currentWindow() {
-  const { getCurrentWindow } = await import('@tauri-apps/api/window');
-  return getCurrentWindow();
-}
 
 function PomodoroChip() {
   const status = usePomodoro((state) => state.status);
@@ -37,67 +31,50 @@ function PomodoroChip() {
   );
 }
 
+/**
+ * The OS draws the real title bar now. This bar holds the app-owned controls
+ * that used to live in the custom header: workspace switcher, timer and help.
+ */
 export default function TitleBar() {
-  const [maximized, setMaximized] = useState(false);
-  const isClient = useIsClient();
-  const desktop = isClient && isTauri();
   const view = useApp((state) => state.currentView);
-  const workspaceName = useCanvas((state) => activeWorkspace(state).name);
-
-  useEffect(() => {
-    if (!desktop) return;
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void currentWindow().then(async (win) => {
-      setMaximized(await win.isMaximized());
-      const fn = await win.onResized(async () => setMaximized(await win.isMaximized()));
-      if (disposed) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [desktop]);
-
+  const allWorkspaces = useWorkspaceScopes((state) => state.allWorkspaces);
+  const setAllWorkspaces = useWorkspaceScopes((state) => state.setAllWorkspaces);
+  const showScope = view === 'library' || view === 'annotations';
   return (
-    <header className="titlebar" data-tauri-drag-region>
-      <div className="titlebar-brand" data-tauri-drag-region>
-        <span className="titlebar-logo" data-tauri-drag-region>
-          A
-        </span>
-        <span data-tauri-drag-region>Annotate Studio</span>
-        {view === 'canvas' && (
-          <span className="titlebar-context" data-tauri-drag-region>
-            {workspaceName}
-          </span>
-        )}
-      </div>
-      <div className="titlebar-center" data-tauri-drag-region>
-        <PomodoroChip />
-      </div>
-      {desktop && (
-        <div className="window-controls">
-          <button type="button" onClick={() => void currentWindow().then((win) => win.minimize())} title="Minimize">
-            <Minus size={14} />
-          </button>
-          <button type="button" onClick={() => void currentWindow().then((win) => win.toggleMaximize())} title={maximized ? 'Restore' : 'Maximize'}>
-            {maximized ? <Copy size={12} /> : <Square size={12} />}
+    <header className="titlebar app-bar">
+      <WorkspaceSwitcher />
+      {showScope && (
+        <div className="segmented scope-toggle" role="group" aria-label="Workspace scope">
+          <button
+            type="button"
+            className={allWorkspaces ? undefined : 'active'}
+            aria-pressed={!allWorkspaces}
+            onClick={() => setAllWorkspaces(false)}
+            title="Show only this workspace's items"
+          >
+            This workspace
           </button>
           <button
             type="button"
-            className="window-close"
-            onClick={async () => {
-              // The global close-requested handler flushes every store first.
-              const win = await currentWindow();
-              await win.close();
-            }}
-            title="Close"
+            className={allWorkspaces ? 'active' : undefined}
+            aria-pressed={allWorkspaces}
+            onClick={() => setAllWorkspaces(true)}
+            title="Show items from all workspaces (read-only)"
           >
-            <X size={15} />
+            All workspaces
           </button>
         </div>
       )}
+      <div className="app-bar-spacer" />
+      <PomodoroChip />
+      <button
+        type="button"
+        className="tool-btn"
+        onClick={() => window.dispatchEvent(new Event('annotate:show-shortcuts'))}
+        title="Keyboard shortcuts (?)"
+      >
+        ?
+      </button>
     </header>
   );
 }

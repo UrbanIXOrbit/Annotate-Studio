@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { useWorkspaceScopes } from './workspace-scopes';
+import { currentWorkspace } from './workspace-context';
 import { isTauri, loadSettings, saveSettings } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
 import { clamp, uid } from '@/lib/utils';
@@ -71,6 +73,8 @@ export interface PersistedSettings {
   fileMeta: Record<string, FileMeta>;
   /** Saved live filters (collections) evaluated against the current library. */
   collections: SavedCollection[];
+  /** Whether the one-time getting-started card has been dismissed. */
+  firstRunSeen: boolean;
 }
 
 export const DEFAULT_SETTINGS: PersistedSettings = {
@@ -101,6 +105,7 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
   autoSnapshots: false,
   fileMeta: {},
   collections: [],
+  firstRunSeen: false,
 };
 
 interface SettingsStore extends PersistedSettings {
@@ -123,6 +128,9 @@ interface SettingsStore extends PersistedSettings {
   pruneFileMeta: (existingPaths: string[]) => void;
   /** Move tags/star/note to a file's new path after a rename. */
   moveFileMeta: (oldPath: string, newPath: string) => void;
+  /** Drop metadata for a reference the user chose to forget. */
+  removeFileMeta: (path: string) => void;
+  dismissFirstRun: () => void;
   /** Functional updates so overlapping registrations cannot overwrite each other. */
   addExternalFile: (path: string) => void;
   removeExternalFile: (path: string) => void;
@@ -237,6 +245,7 @@ function sanitize(raw: unknown): PersistedSettings {
     autoSnapshots: bool(data.autoSnapshots, defaults.autoSnapshots),
     fileMeta: sanitizeFileMeta(data.fileMeta),
     collections: sanitizeCollections(data.collections),
+    firstRunSeen: bool(data.firstRunSeen, defaults.firstRunSeen),
   };
 }
 
@@ -320,6 +329,7 @@ function snapshot(state: SettingsStore): PersistedSettings {
     autoSnapshots: state.autoSnapshots,
     fileMeta: state.fileMeta,
     collections: state.collections,
+    firstRunSeen: state.firstRunSeen,
   };
 }
 
@@ -351,91 +361,131 @@ export const useSettings = create<SettingsStore>((set, get) => ({
   updatePomodoro: (patch) => set((state) => ({ pomodoro: { ...state.pomodoro, ...patch } })),
   updateChatLayout: (patch) => set((state) => ({ chatLayout: { ...state.chatLayout, ...patch } })),
   updateNoteClip: (patch) => set((state) => ({ noteClip: { ...state.noteClip, ...patch } })),
-  touchRecent: (path) => set((state) => ({ recentFiles: { ...state.recentFiles, [path]: Date.now() } })),
-  forgetRecent: (path) =>
-    set((state) => {
-      if (!(path in state.recentFiles)) return state;
-      const next = { ...state.recentFiles };
-      delete next[path];
-      return { recentFiles: next };
-    }),
-  setFileMeta: (path, patch) =>
-    set((state) => {
-      const current = state.fileMeta[path] ?? { tags: [] };
-      const next: FileMeta = {
-        tags: patch.tags ? normalizeTags(patch.tags) : current.tags,
-        ...(patch.starred !== undefined ? { starred: patch.starred || undefined } : { starred: current.starred }),
-        ...(patch.note !== undefined ? { note: patch.note || undefined } : { note: current.note }),
-      };
-      const fileMeta = { ...state.fileMeta };
-      // An empty record is not worth keeping.
-      if (next.tags.length === 0 && !next.starred && !next.note) delete fileMeta[path];
-      else fileMeta[path] = next;
-      return { fileMeta };
-    }),
-  toggleFileStar: (path) =>
-    set((state) => {
-      const current = state.fileMeta[path] ?? { tags: [] };
-      const starred = !current.starred;
-      const next: FileMeta = { tags: current.tags, ...(starred ? { starred: true } : {}), ...(current.note ? { note: current.note } : {}) };
-      const fileMeta = { ...state.fileMeta };
-      if (next.tags.length === 0 && !starred && !next.note) delete fileMeta[path];
-      else fileMeta[path] = next;
-      return { fileMeta };
-    }),
-  setFileTags: (path, tags) => {
-    get().setFileMeta(path, { tags });
+  touchRecent: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(id, { recentFiles: { ...scopes.get(id).recentFiles, [path]: Date.now() } });
   },
-  renameTagEverywhere: (from, to) =>
-    set((state) => {
-      const next = renameTagInMetas(state.fileMeta, from, to);
-      if (next === state.fileMeta) return state;
-      return { fileMeta: next };
-    }),
-  removeTagEverywhere: (tag) =>
-    set((state) => {
-      const next = removeTagFromMetas(state.fileMeta, tag);
-      if (next === state.fileMeta) return state;
-      return { fileMeta: next };
-    }),
-  pruneFileMeta: (existingPaths) =>
-    set((state) => {
-      const alive = new Set(existingPaths);
-      const fileMeta = Object.fromEntries(Object.entries(state.fileMeta).filter(([path]) => alive.has(path)));
-      if (Object.keys(fileMeta).length === Object.keys(state.fileMeta).length) return state;
-      return { fileMeta };
-    }),
-  moveFileMeta: (oldPath, newPath) =>
-    set((state) => {
-      if (oldPath === newPath || !(oldPath in state.fileMeta)) return state;
-      const fileMeta = { ...state.fileMeta };
-      const previous = fileMeta[oldPath];
-      delete fileMeta[oldPath];
-      // A file may already exist at the destination: keep the newer metadata.
-      fileMeta[newPath] = { ...fileMeta[newPath], ...previous };
-      return { fileMeta };
-    }),
-  addExternalFile: (path) =>
-    set((state) => (state.externalFiles.includes(path) ? state : { externalFiles: [...state.externalFiles, path] })),
-  removeExternalFile: (path) =>
-    set((state) => ({ externalFiles: state.externalFiles.filter((entry) => entry !== path) })),
-  replaceExternalFile: (oldPath, newPath) =>
-    set((state) => ({
-      externalFiles: state.externalFiles.map((entry) => (entry === oldPath ? newPath : entry)),
-    })),
+  forgetRecent: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const current = scopes.get(id).recentFiles;
+    if (!(path in current)) return;
+    const next = { ...current };
+    delete next[path];
+    scopes.set(id, { recentFiles: next });
+  },
+  setFileMeta: (path, patch) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const current = scopes.get(id).fileMeta[path] ?? { tags: [] };
+    const next: FileMeta = {
+      tags: patch.tags ? normalizeTags(patch.tags) : current.tags,
+      ...(patch.starred !== undefined ? { starred: patch.starred || undefined } : { starred: current.starred }),
+      ...(patch.note !== undefined ? { note: patch.note || undefined } : { note: current.note }),
+    };
+    const fileMeta = { ...scopes.get(id).fileMeta };
+    if (next.tags.length === 0 && !next.starred && !next.note) delete fileMeta[path];
+    else fileMeta[path] = next;
+    scopes.set(id, { fileMeta });
+  },
+  toggleFileStar: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const current = scopes.get(id).fileMeta[path] ?? { tags: [] };
+    const starred = !current.starred;
+    const next: FileMeta = { tags: current.tags, ...(starred ? { starred: true } : {}), ...(current.note ? { note: current.note } : {}) };
+    const fileMeta = { ...scopes.get(id).fileMeta };
+    if (next.tags.length === 0 && !starred && !next.note) delete fileMeta[path];
+    else fileMeta[path] = next;
+    scopes.set(id, { fileMeta });
+  },
+  setFileTags: (path, tags) => get().setFileMeta(path, { tags }),
+  renameTagEverywhere: (from, to) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const next = renameTagInMetas(scopes.get(id).fileMeta, from, to);
+    if (next !== scopes.get(id).fileMeta) scopes.set(id, { fileMeta: next });
+  },
+  removeTagEverywhere: (tag) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const next = removeTagFromMetas(scopes.get(id).fileMeta, tag);
+    if (next !== scopes.get(id).fileMeta) scopes.set(id, { fileMeta: next });
+  },
+  pruneFileMeta: (existingPaths) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const alive = new Set(existingPaths);
+    const fileMeta = Object.fromEntries(Object.entries(scopes.get(id).fileMeta).filter(([path]) => alive.has(path)));
+    if (Object.keys(fileMeta).length !== Object.keys(scopes.get(id).fileMeta).length) scopes.set(id, { fileMeta });
+  },
+  moveFileMeta: (oldPath, newPath) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    if (oldPath === newPath) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const fileMeta = { ...scopes.get(id).fileMeta };
+    if (!(oldPath in fileMeta)) return;
+    const previous = fileMeta[oldPath];
+    delete fileMeta[oldPath];
+    fileMeta[newPath] = { ...fileMeta[newPath], ...previous };
+    scopes.set(id, { fileMeta });
+  },
+  removeFileMeta: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    if (!(path in scopes.get(id).fileMeta)) return;
+    const fileMeta = { ...scopes.get(id).fileMeta };
+    delete fileMeta[path];
+    scopes.set(id, { fileMeta });
+  },
+  dismissFirstRun: () => set({ firstRunSeen: true }),
+  addExternalFile: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    if (!scopes.get(id).externalFiles.includes(path)) scopes.set(id, { externalFiles: [...scopes.get(id).externalFiles, path] });
+  },
+  removeExternalFile: (path) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(id, { externalFiles: scopes.get(id).externalFiles.filter((entry) => entry !== path) });
+  },
+  replaceExternalFile: (oldPath, newPath) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(id, { externalFiles: scopes.get(id).externalFiles.map((entry) => (entry === oldPath ? newPath : entry)) });
+  },
   createCollection: (name, criteria) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return '';
+    const id = currentWorkspace();
     const collection: SavedCollection = {
       id: uid(),
       name: name.trim().slice(0, 60) || 'Untitled collection',
       criteria,
       createdAt: new Date().toISOString(),
     };
-    set((state) => ({ collections: [...state.collections, collection].slice(-50) }));
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(id, { collections: [...scopes.get(id).collections, collection].slice(-50) });
     return collection.id;
   },
-  updateCollection: (id, patch) =>
-    set((state) => ({
-      collections: state.collections.map((collection) =>
+  updateCollection: (id, patch) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const workspaceId = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(workspaceId, {
+      collections: scopes.get(workspaceId).collections.map((collection) =>
         collection.id === id
           ? {
               ...collection,
@@ -444,8 +494,14 @@ export const useSettings = create<SettingsStore>((set, get) => ({
             }
           : collection,
       ),
-    })),
-  deleteCollection: (id) => set((state) => ({ collections: state.collections.filter((collection) => collection.id !== id) })),
+    });
+  },
+  deleteCollection: (id) => {
+    if (useWorkspaceScopes.getState().allWorkspaces) return;
+    const workspaceId = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    scopes.set(workspaceId, { collections: scopes.get(workspaceId).collections.filter((c) => c.id !== id) });
+  },
 }));
 
 useSettings.subscribe((state, previous) => {

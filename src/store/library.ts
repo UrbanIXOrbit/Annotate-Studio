@@ -6,13 +6,19 @@ import {
   type StudyFile,
 } from '@/lib/tauri-commands';
 import { useSettings } from './settings';
+import { useWorkspaceScopes } from './workspace-scopes';
+import { currentWorkspace } from './workspace-context';
 
 interface LibraryStore {
   files: StudyFile[];
+  /** Every file known to any workspace, for the global view. */
+  allFiles: StudyFile[];
   loading: boolean;
   loaded: boolean;
   error: string | null;
   refresh: () => Promise<StudyFile[]>;
+  /** Reload the active workspace's files after switching workspaces. */
+  reloadForWorkspace: () => Promise<void>;
   upsert: (file: StudyFile) => void;
   remove: (path: string) => void;
   replace: (oldPath: string, file: StudyFile) => void;
@@ -50,8 +56,9 @@ function sortFiles(files: StudyFile[]): StudyFile[] {
   return [...files].sort((a, b) => b.modified_at.localeCompare(a.modified_at));
 }
 
-export const useLibrary = create<LibraryStore>((set) => ({
+export const useLibrary = create<LibraryStore>((set, get) => ({
   files: [],
+  allFiles: [],
   loading: false,
   loaded: false,
   error: null,
@@ -61,11 +68,12 @@ export const useLibrary = create<LibraryStore>((set) => ({
     inflight = (async () => {
       try {
         const files = await listWorkspaceFiles();
-        // Files kept outside the workspace are referenced in place: stat each
-        // registered path, list the ones still on disk, and keep the rest.
-        const externals = useSettings.getState().externalFiles;
+        const scopes = useWorkspaceScopes.getState();
+        const id = currentWorkspace();
+        const scope = scopes.get(id);
+        const allExternals = [...new Set(Object.values(scopes.scopes).flatMap((entry) => entry.externalFiles))];
         const stats = await Promise.all(
-          externals.map(async (path) => {
+          allExternals.map(async (path) => {
             try {
               return { path, file: await statExternalFile(path) };
             } catch {
@@ -94,17 +102,38 @@ export const useLibrary = create<LibraryStore>((set) => ({
           if (/^(documents|notes)[\\/][^\\/]+$/.test(relative ?? '')) continue;
           externalFiles.push(file);
         }
-        const merged = sortFiles([...files, ...externalFiles]);
-        // Anything added while the scan was in flight still belongs in the
-        // library; committing the scan result alone would drop it.
-        const concurrent = useLibrary.getState().files.filter(
-          (file) => !merged.some((entry) => entry.path === file.path),
-        );
-        const finalFiles = sortFiles([...merged, ...concurrent]);
+        // Seed the default workspace with the legacy library on first use;
+        // new workspaces start with an empty owned list.
+        if (!scope.seeded) {
+          scopes.set(id, {
+            seeded: true,
+            files: id === 'default' ? [...files.map((file) => file.path), ...scope.externalFiles] : [...scope.externalFiles],
+          });
+        }
+        const owned = useWorkspaceScopes.getState().get(id);
+        const ownedPaths = new Set(owned.files);
+        const ownedExternal = new Set(owned.externalFiles);
+        const visibleFiles = files.filter((file) => ownedPaths.has(file.path));
+        const visibleExternal = externalFiles.filter((file) => ownedExternal.has(file.path));
+        const allKnown = sortFiles([...files, ...externalFiles]);
+        const merged = sortFiles([...visibleFiles, ...visibleExternal]);
+        // Only files owned by the active workspace belong in its library.
+        const finalFiles = merged;
         const previousPaths = new Set(useLibrary.getState().files.map((file) => file.path));
-        // Keep metadata for temporarily unavailable external files.
-        useSettings.getState().pruneFileMeta([...finalFiles.map((file) => file.path), ...unavailable]);
-        set({ files: finalFiles, loading: false, loaded: true, error: null });
+        // Prune the active workspace's metadata, not the legacy global copy.
+        const activeId = currentWorkspace();
+        const activeScope = scopes.get(activeId);
+        const valid = new Set([...finalFiles.map((file) => file.path), ...unavailable]);
+        const keptMeta = Object.fromEntries(Object.entries(activeScope.fileMeta).filter(([path]) => valid.has(path)));
+        if (Object.keys(keptMeta).length !== Object.keys(activeScope.fileMeta).length) {
+          scopes.set(activeId, { fileMeta: keptMeta });
+        }
+        set({ files: finalFiles, allFiles: allKnown, loading: false, loaded: true, error: null });
+        // A workspace switch can swap every file while keeping the count same.
+        void Promise.all([
+          import('./graph').then((module) => module.invalidateLibraryIndex()),
+          import('./search').then((module) => module.invalidateSearchIndex()),
+        ]).catch(() => undefined);
         if (finalFiles.length !== previousPaths.size) invalidateIndexes();
         return finalFiles;
       } catch (error: unknown) {
@@ -116,9 +145,35 @@ export const useLibrary = create<LibraryStore>((set) => ({
     })();
     return inflight;
   },
-  upsert: (file) =>
-    set((state) => ({ files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path)]) })),
+  reloadForWorkspace: async () => {
+    set({ files: [], loading: true, loaded: false });
+    void Promise.all([
+      import('./graph').then((module) => module.invalidateLibraryIndex()),
+      import('./search').then((module) => module.invalidateSearchIndex()),
+    ]).catch(() => undefined);
+    await get().refresh();
+  },
+  upsert: (file) => {
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const owned = scopes.get(id);
+    if (!scopes.allWorkspaces && !owned.files.includes(file.path)) {
+      scopes.set(id, { files: [...owned.files, file.path] });
+    }
+    set((state) => ({ files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path)]) }));
+  },
   remove: (path) => {
+    const id = currentWorkspace();
+    const scopes = useWorkspaceScopes.getState();
+    const owned = scopes.get(id);
+    if (owned.files.includes(path)) {
+      scopes.set(id, {
+        files: owned.files.filter((entry) => entry !== path),
+        externalFiles: owned.externalFiles.filter((entry) => entry !== path),
+        fileMeta: Object.fromEntries(Object.entries(owned.fileMeta).filter(([key]) => key !== path)),
+        books: Object.fromEntries(Object.entries(owned.books).filter(([key]) => key !== path)),
+      });
+    }
     set((state) => ({ files: state.files.filter((file) => file.path !== path) }));
     forgetPath(path);
     invalidateIndexes();
@@ -142,6 +197,11 @@ export const useLibrary = create<LibraryStore>((set) => ({
     // referenced through the registry so they survive a refresh.
     const scanListed = relative !== null && /^(documents|notes)[\\/][^\\/]+$/.test(relative);
     if (!scanListed) useSettings.getState().addExternalFile(path);
+    const scopes = useWorkspaceScopes.getState();
+    const owned = scopes.get(currentWorkspace());
+    if (!scopes.allWorkspaces && !owned.files.includes(file.path)) {
+      scopes.set(currentWorkspace(), { files: [...owned.files, file.path] });
+    }
     set((state) => ({
       files: sortFiles([file, ...state.files.filter((existing) => existing.path !== file.path && existing.path !== relative)]),
     }));

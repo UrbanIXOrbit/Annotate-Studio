@@ -39,14 +39,10 @@ fn add_all(value: Option<&serde_json::Value>, out: &mut BTreeSet<PathBuf>) {
 fn persisted_external_paths(state: &AppState) -> BTreeSet<PathBuf> {
     let mut allowed = BTreeSet::new();
     if let Some(settings) = read_json::<serde_json::Value>(&state.paths.settings) {
-        for field in [
-            "externalFiles",
-            "inboxNotePath",
-            "noteFolder",
-            "recordingFolder",
-            "captureNotes",
-            "fileMeta",
-        ] {
+        // Only explicit path fields, never arbitrary keys from metadata records:
+        // settings are renderer-writable, so using fileMeta/captureNotes as a
+        // grant source would let injected script grant itself any path.
+        for field in ["externalFiles", "inboxNotePath", "noteFolder", "recordingFolder"] {
             add_all(settings.get(field), &mut allowed);
         }
     }
@@ -55,7 +51,20 @@ fn persisted_external_paths(state: &AppState) -> BTreeSet<PathBuf> {
             add_all(Some(files), &mut allowed);
         }
     }
+    // External files are now registered per workspace, so include those too.
+    if let Some(scopes) = read_json::<serde_json::Value>(&state.paths.workspace_scopes) {
+        for value in scopes.as_object().map(|map| map.values()).into_iter().flatten() {
+            for field in ["externalFiles", "files"] {
+                add_all(value.get(field), &mut allowed);
+            }
+        }
+    }
+    // Canonicalize the allowlist so string-level tricks and symlinks cannot
+    // point at a different target than the one that was granted.
     allowed
+        .into_iter()
+        .filter_map(|path| std::fs::canonicalize(&path).ok())
+        .collect()
 }
 
 /// Ensure `path` was chosen in the app (now or in a previous session).
@@ -64,12 +73,13 @@ pub fn ensure_external_access(
     state: &AppState,
     path: &Path,
 ) -> Result<(), String> {
-    if app.fs_scope().is_allowed(path) {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if app.fs_scope().is_allowed(&canonical) {
         return Ok(());
     }
     let allowed = persisted_external_paths(state);
-    if allowed.contains(path)
-        || path
+    if allowed.contains(&canonical)
+        || canonical
             .parent()
             .map(|parent| allowed.contains(parent))
             .unwrap_or(false)

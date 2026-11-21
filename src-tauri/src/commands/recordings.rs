@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::paths::{sanitize_stem, unique_in_dir};
+use crate::state::AppState;
 
 /// Messages between the microphone callback and the writer thread.
 enum SampleMessage {
@@ -423,6 +424,8 @@ fn recorder_run(
 
 #[tauri::command(async)]
 pub fn start_audio_recording(
+    app: tauri::AppHandle,
+    app_state: State<'_, AppState>,
     state: State<'_, AudioRecorderState>,
     directory: String,
     name: String,
@@ -452,6 +455,10 @@ pub fn start_audio_recording(
             return Err(error);
         }
     };
+    if let Err(error) = crate::external_access::ensure_external_access(&app, &app_state, &path) {
+        release_reservation(&state);
+        return Err(error);
+    }
     let recorder_path = path.clone();
     if std::thread::Builder::new()
         .name("audio-recorder".into())

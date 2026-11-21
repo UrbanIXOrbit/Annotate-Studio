@@ -12,6 +12,19 @@ pub fn get_data_dir(state: State<'_, AppState>) -> String {
 }
 
 #[tauri::command(async)]
+pub fn load_workspace_scopes(state: State<'_, AppState>) -> Result<Value, String> {
+    Ok(read_json(&state.paths.workspace_scopes).unwrap_or(Value::Null))
+}
+
+#[tauri::command(async)]
+pub fn save_workspace_scopes(state: State<'_, AppState>, scopes: Value) -> Result<(), String> {
+    if !scopes.is_object() {
+        return Err("Workspace scopes must be an object".into());
+    }
+    write_json(&state.paths.workspace_scopes, &scopes)
+}
+
+#[tauri::command(async)]
 pub fn load_canvas_state(state: State<'_, AppState>) -> Result<Value, String> {
     Ok(read_json(&state.paths.canvas_state).unwrap_or(Value::Null))
 }

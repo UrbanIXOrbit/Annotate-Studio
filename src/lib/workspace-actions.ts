@@ -19,6 +19,8 @@ import { BOOK_EXTENSIONS, extractBookText } from './book-engine';
 import { baseName, extensionOf, isExternalPath, stripExtension } from './utils';
 import { useApp } from '@/store/app';
 import { useCanvas, type AudioTrack, type OpenOptions, type ResourceType } from '@/store/canvas';
+import { currentWorkspace, setCurrentWorkspace } from '@/store/workspace-context';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
 import { confirmDialog, promptDialog } from '@/store/dialogs';
 import { resolveWikiLink, useLibrary } from '@/store/library';
 import { useNotes } from '@/store/notes';
@@ -331,7 +333,8 @@ export async function renameFile(path: string, newName: string): Promise<StudyFi
         useLibrary.getState().replace(path, file);
       }
       const settings = useSettings.getState();
-      const opened = settings.recentFiles[path];
+      const scope = useWorkspaceScopes.getState().get(currentWorkspace());
+      const opened = scope.recentFiles[path];
       settings.forgetRecent(path);
       if (opened) settings.touchRecent(file.path);
       if (settings.noteClip.lastNote === path) settings.updateNoteClip({ lastNote: file.path });
@@ -405,7 +408,9 @@ export async function revealInExplorer(path: string): Promise<void> {
 
 export async function migrateInlineNotes(): Promise<void> {
   const { workspaces } = useCanvas.getState();
+  const previous = currentWorkspace();
   for (const workspace of workspaces) {
+    setCurrentWorkspace(workspace.id);
     for (const resource of workspace.resources) {
       if (resource.type !== 'note' || resource.content === undefined) continue;
       try {
@@ -429,6 +434,7 @@ export async function migrateInlineNotes(): Promise<void> {
       }
     }
   }
+  setCurrentWorkspace(previous);
 }
 
 /**
@@ -440,7 +446,9 @@ export async function migrateInlineNotes(): Promise<void> {
 export async function registerExternalResources(): Promise<void> {
   const { workspaces } = useCanvas.getState();
   const library = useLibrary.getState();
+  const previous = currentWorkspace();
   for (const workspace of workspaces) {
+    setCurrentWorkspace(workspace.id);
     for (const resource of workspace.resources) {
       if (!resource.isExternal || !resource.filePath || !isExternalPath(resource.filePath)) continue;
       try {
@@ -450,6 +458,7 @@ export async function registerExternalResources(): Promise<void> {
       }
     }
   }
+  setCurrentWorkspace(previous);
 }
 
 export interface DocumentText {

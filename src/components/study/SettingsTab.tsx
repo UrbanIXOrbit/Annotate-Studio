@@ -1,5 +1,6 @@
 'use client';
 
+import { APP_SHORTCUTS } from '@/lib/view-shortcuts';
 import React, { useEffect, useMemo, useState } from 'react';
 import ExternalRelinkDialog from './ExternalRelinkDialog';
 import {
@@ -84,31 +85,6 @@ const MODEL_HINTS: Record<string, string> = {
   perplexity: 'sonar-pro',
   cohere: 'command-r-plus',
 };
-
-const SHORTCUTS: { keys: string; action: string }[] = [
-  { keys: 'Ctrl + 1…9 / Ctrl + ,', action: 'Go to canvas, library, books, annotations, flashcards, exams, pomodoro, motivation, inbox / settings' },
-  { keys: 'Ctrl + K', action: 'Search across notes, PDFs, books and highlights' },
-  { keys: 'Ctrl + J', action: 'Show or hide the assistant' },
-  { keys: 'Drag background / Space + drag / middle mouse', action: 'Pan the canvas' },
-  { keys: 'Ctrl + scroll, pinch', action: 'Zoom the canvas around the pointer' },
-  { keys: 'Ctrl + = / Ctrl + - / Ctrl + 0', action: 'Zoom in, out, reset (PDF zoom when a PDF window is active)' },
-  { keys: 'Shift + 1 / Shift + 2', action: 'Fit all windows / zoom to the selected window' },
-  { keys: 'Ctrl + Z / Ctrl + Shift + Z', action: 'Undo / redo (layout, or annotations in the active PDF)' },
-  { keys: 'Double-click canvas', action: 'Create a note at that spot' },
-  { keys: 'Double-click title bar', action: 'Maximize or restore a window' },
-  { keys: 'Shift while dragging', action: 'Snap windows to a 20px grid' },
-  { keys: 'Alt while dragging or resizing', action: 'Move freely, with no snapping or guides' },
-  { keys: 'Alt + ← → ↑ ↓', action: 'Align the selection edges (left, right, top, bottom)' },
-  { keys: 'Alt + Shift + ← → / ↑ ↓', action: 'Spread the selection out evenly across or down' },
-  { keys: 'M', action: 'Show or hide the canvas minimap' },
-  { keys: 'Esc while dragging or resizing', action: 'Cancel the move and put everything back' },
-  { keys: 'Esc', action: 'Restore a maximized window / deselect' },
-  { keys: 'Ctrl + Alt + N', action: 'New note' },
-  { keys: 'V H P M T R O A E', action: 'PDF tools: select, highlight, pen, marker, text, rectangle, ellipse, arrow, eraser' },
-  { keys: 'Delete', action: 'Delete selected PDF annotations' },
-  { keys: 'Ctrl + B / I / E / K', action: 'Bold, italic, code, link in notes' },
-  { keys: 'Space, 1–4', action: 'Flip card and rate it while reviewing flashcards' },
-];
 
 function ProvidersPane() {
   const providers = useProviders((state) => state.providers);
@@ -238,7 +214,7 @@ function ProvidersPane() {
             <button
               key={id}
               type="button"
-              className={cn('chip', type === id && 'chip-active')}
+              aria-pressed={type === id} className={cn('chip', type === id && 'chip-active')}
               onClick={() => {
                 setType(id);
                 setEndpoint('');
@@ -295,6 +271,9 @@ function DataPane() {
   const [relinkOpen, setRelinkOpen] = useState(false);
   const [includeExternal, setIncludeExternal] = useState(false);
   const autoSnapshots = useSettings((state) => state.autoSnapshots);
+  const noteFolder = useSettings((state) => state.noteFolder);
+  const recordingFolder = useSettings((state) => state.recordingFolder);
+  const inboxNotePath = useSettings((state) => state.inboxNotePath);
 
   useEffect(() => {
     getDataDir().then(setDataDir).catch(() => setDataDir(''));
@@ -315,6 +294,23 @@ function DataPane() {
       }
     })();
   }, [autoSnapshots]);
+
+  const changeFolder = async (key: 'noteFolder' | 'recordingFolder' | 'inboxNotePath') => {
+    if (!isTauri()) return;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const folder = await open({ directory: true, multiple: false });
+      if (typeof folder !== 'string') return;
+      const clean = folder.replace(/[\\/]+$/, '');
+      const separator = /\\/.test(clean) && !clean.includes('/') ? '\\' : '/';
+      useSettings.getState().update(
+        key === 'inboxNotePath' ? { inboxNotePath: `${clean}${separator}Inbox.md` } : { [key]: clean },
+      );
+      toast.success('Folder updated');
+    } catch (error) {
+      toast.error('Could not change the folder', error);
+    }
+  };
 
   const openBackupsFolder = async () => {
     try {
@@ -402,13 +398,27 @@ function DataPane() {
       <h2>Data & backup</h2>
       <div className="settings-card">
         <h3>Where your data lives</h3>
-        <p className="muted">App-owned data lives here: documents, notes, canvas layouts, flashcards, books, exams and settings. Files you opened from elsewhere stay where they are and are referenced by path.</p>
+        <p className="muted">App-managed data (canvas layouts, flashcards, books, exams and settings) lives here. Notes and captures are usually kept in folders you choose, and are referenced in place — never copied into app storage.</p>
         <div className="path-row">
           <code>{dataDir || '…'}</code>
           <button type="button" className="icon-btn" onClick={() => void copyText(dataDir).then((ok) => ok && toast.success('Path copied'))} title="Copy path">
             <Copy size={14} />
           </button>
         </div>
+        <h4>Folders you chose</h4>
+        {[
+          { label: 'New notes', value: noteFolder, key: 'noteFolder' as const },
+          { label: 'Recordings', value: recordingFolder, key: 'recordingFolder' as const },
+          { label: 'Inbox note', value: inboxNotePath, key: 'inboxNotePath' as const },
+        ].map((folder) => (
+          <div className="path-row" key={folder.key}>
+            <div>
+              <strong>{folder.label}</strong>
+              <div className="muted" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{folder.value || 'Not set — choose a folder'}</div>
+            </div>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void changeFolder(folder.key)}>Change…</button>
+          </div>
+        ))}
       </div>
       <div className="settings-card">
         <h3>Back up everything</h3>
@@ -501,7 +511,7 @@ export default function SettingsTab() {
                 {THEME_IDS.map((id) => {
                   const preview = THEME_PREVIEW[id];
                   return (
-                    <button key={id} type="button" className={cn('theme-tile', theme === id && 'theme-tile-active')} onClick={() => update({ theme: id })}>
+                    <button key={id} type="button" aria-pressed={theme === id} className={cn('theme-tile', theme === id && 'theme-tile-active')} onClick={() => update({ theme: id })}>
                       <span className="theme-swatch" style={{ background: preview.bg }}>
                         <span style={{ background: preview.card, color: preview.text }}>Aa</span>
                       </span>
@@ -525,7 +535,7 @@ export default function SettingsTab() {
                   />
                 ))}
                 <label className="accent-custom" title="Custom color">
-                  <input type="color" value={primaryColor} onChange={(event) => update({ primaryColor: event.target.value.toUpperCase() })} />
+                  <input type="color" aria-label="Custom accent color" value={primaryColor} onChange={(event) => update({ primaryColor: event.target.value.toUpperCase() })} />
                   <span className="mono">{primaryColor}</span>
                 </label>
               </div>
@@ -546,10 +556,11 @@ export default function SettingsTab() {
                 value={appScale}
                 onChange={(event) => update({ appScale: Number(event.target.value) })}
                 className="range"
+                aria-label="Interface size"
               />
               <div className="chip-row">
                 {scales.map((value) => (
-                  <button key={value} type="button" className={cn('chip', appScale === value && 'chip-active')} onClick={() => update({ appScale: value })}>
+                  <button key={value} type="button" aria-pressed={appScale === value} className={cn('chip', appScale === value && 'chip-active')} onClick={() => update({ appScale: value })}>
                     {value}%
                   </button>
                 ))}
@@ -582,7 +593,7 @@ export default function SettingsTab() {
             <div className="settings-card">
               <table className="shortcut-table">
                 <tbody>
-                  {SHORTCUTS.map((shortcut) => (
+                  {APP_SHORTCUTS.map((shortcut) => (
                     <tr key={shortcut.keys}>
                       <td>
                         <kbd>{shortcut.keys}</kbd>

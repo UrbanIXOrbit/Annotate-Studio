@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, FileText, Ghost, Layers, Globe, Loader2, NotebookPen, ZoomIn, ZoomOut } from 'lucide-react';
 import Dialog from '@/components/ui/Dialog';
 import { graphLayout, type Point } from '@/lib/link-graph';
-import { computeGraph, openGraphNode, useGraph, type GraphKind, type GraphModel } from '@/store/graph';
+import { getGraphModel, openGraphNode, useGraph, type GraphKind, type GraphModel } from '@/store/graph';
 import { openWikiLink } from '@/lib/workspace-actions';
 import { cn } from '@/lib/utils';
 
@@ -53,7 +53,7 @@ export default function GraphView() {
   const dragRef = useRef<{ id: string | null; panning: boolean; moved?: boolean; lastX: number; lastY: number } | null>(null);
   const suppressClick = useRef(false);
 
-  const model: GraphModel | null = useMemo(() => (open ? computeGraph() : null), [open, revision]);
+  const model: GraphModel | null = useMemo(() => (open ? getGraphModel() : null), [open, revision]);
 
   const layout = useMemo(() => {
     if (!model) return null;

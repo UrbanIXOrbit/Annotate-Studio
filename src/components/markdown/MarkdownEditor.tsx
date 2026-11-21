@@ -153,6 +153,7 @@ const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(fun
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const lastEmittedRef = useRef<string | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const getFilesRef = useRef(getFiles);
@@ -209,7 +210,9 @@ const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(fun
       ]),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged || update.transactions.every((tr) => tr.annotation(externalSync))) return;
-        onChangeRef.current(update.state.doc.toString());
+        const text = update.state.doc.toString();
+        lastEmittedRef.current = text;
+        onChangeRef.current(text);
       }),
       EditorState.readOnly.of(readOnly),
       theme,
@@ -229,8 +232,13 @@ const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(fun
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const current = view.state.doc.toString();
     const next = value.replace(/\r\n?/g, '\n');
+    if (lastEmittedRef.current === next) {
+      // This value came from our own onChange — no need to stringify the doc.
+      lastEmittedRef.current = null;
+      return;
+    }
+    const current = view.state.doc.toString();
     if (current === next) return;
     const head = Math.min(view.state.selection.main.head, next.length);
     view.dispatch({

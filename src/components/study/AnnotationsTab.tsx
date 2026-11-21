@@ -22,6 +22,7 @@ import {
 import { useLibrary } from '@/store/library';
 import { useApp } from '@/store/app';
 import { useAnnotations } from '@/store/annotations';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
 import type { AnnotationFile } from '@/store/annotations';
 import { useCanvas } from '@/store/canvas';
 import { toast } from '@/store/toast';
@@ -32,11 +33,13 @@ import {
   compareBooks,
   countByGroup,
   filterEntries,
+  ALL_GROUPS,
   groupByPage,
   kindLabel,
   sortEntries,
   type AnnotationEntry,
   type AnnotationKind,
+  type KindGroup,
   type BookAnnotations,
 } from '@/lib/annotations';
 import { FORMAT_META, type ExportFormat } from '@/lib/annotation-export';
@@ -107,13 +110,18 @@ function AnnotationRow({ entry, onOpen }: { entry: AnnotationEntry; onOpen: () =
 
 export default function AnnotationsTab() {
   const files = useLibrary((state) => state.files);
+  const allFiles = useLibrary((state) => state.allFiles);
+  const allWorkspaces = useWorkspaceScopes((state) => state.allWorkspaces);
   const libraryLoaded = useLibrary((state) => state.loaded);
   const canvasWorkspaces = useCanvas((state) => state.workspaces);
+  const activeWorkspaceId = useCanvas((state) => state.activeWorkspaceId);
   const externalDocs = useMemo(() =>
-    canvasWorkspaces.flatMap((workspace) => workspace.resources
-      .filter((resource) => (resource.type === 'pdf' || resource.type === 'book') && resource.isExternal && !!resource.filePath)
-      .map((resource) => ({ path: resource.filePath!, type: resource.type }))),
-  [canvasWorkspaces]);
+    canvasWorkspaces
+      .filter((workspace) => allWorkspaces || workspace.id === activeWorkspaceId)
+      .flatMap((workspace) => workspace.resources
+        .filter((resource) => (resource.type === 'pdf' || resource.type === 'book') && resource.isExternal && !!resource.filePath)
+        .map((resource) => ({ path: resource.filePath!, type: resource.type }))),
+  [canvasWorkspaces, allWorkspaces, activeWorkspaceId]);
   // External documents are not in the library scan, so stat them for a real
   // cache key — a constant key would never notice edits to the file on disk.
   const [externalMeta, setExternalMeta] = useState<Record<string, { size: number; modified_at: string }>>({});
@@ -138,11 +146,30 @@ export default function AnnotationsTab() {
   }, [externalKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setView = useApp((state) => state.setView);
-  const { books, selected, groups, query, hideEmpty, scanning, progress, revision, select, setQuery, toggleGroup, setHideEmpty, scan } = useAnnotations();
+  const workspaceId = useCanvas((state) => state.activeWorkspaceId);
+  const scope = useWorkspaceScopes((state) => state.scopes[workspaceId]);
+  const setAnnotationView = useWorkspaceScopes((state) => state.setAnnotations);
+  const { books: activeBooks, scanning, progress, revision, scan } = useAnnotations();
+  const allScopes = useWorkspaceScopes((state) => state.scopes);
+  const books = allWorkspaces
+    ? Object.assign({}, ...Object.values(allScopes).map((entry) => entry.books))
+    : activeBooks;
+  // View state is per workspace; the annotation data itself stays global.
+  const selected = scope?.annotations.selected ?? 'all';
+  const groups = scope?.annotations.groups ?? ALL_GROUPS;
+  const query = scope?.annotations.query ?? '';
+  const hideEmpty = scope?.annotations.hideEmpty ?? true;
+  const select = (value: string) => setAnnotationView(workspaceId, { selected: value });
+  const setQuery = (value: string) => setAnnotationView(workspaceId, { query: value });
+  const toggleGroup = (id: KindGroup) => setAnnotationView(workspaceId, {
+    groups: { ...groups, [id]: !groups[id] },
+  });
+  const setHideEmpty = (value: boolean) => setAnnotationView(workspaceId, { hideEmpty: value });
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
 
   const scannable = useMemo<AnnotationFile[]>(() => {
-    const inLibrary: AnnotationFile[] = files.filter((file) => file.file_type === 'Pdf' || file.file_type === 'Book');
+    const sourceFiles = allWorkspaces ? allFiles : files;
+    const inLibrary: AnnotationFile[] = sourceFiles.filter((file) => file.file_type === 'Pdf' || file.file_type === 'Book');
     const outsideWorkspace: AnnotationFile[] = externalDocs.map(({ path, type }) => ({
       id: `external:${path}`,
       name: baseName(path),
@@ -157,8 +184,11 @@ export default function AnnotationsTab() {
   }, [externalDocs, files, externalMeta]);
 
   useEffect(() => {
+    // The global view is read-only: don't scan other workspaces' files into
+    // the active workspace's annotation store.
+    if (allWorkspaces) return;
     void scan(scannable);
-  }, [scannable, revision, scan]);
+  }, [scannable, revision, scan, allWorkspaces]);
 
   const rows = useMemo(
     () =>
@@ -282,7 +312,7 @@ export default function AnnotationsTab() {
       ) : (
         <div className="annotations-layout">
           <aside className="annotations-books" aria-label="Books">
-            <button type="button" className={cn('anno-book-row', active === 'all' && 'active')} onClick={() => select('all')}>
+            <button type="button" aria-pressed={active === 'all'} className={cn('anno-book-row', active === 'all' && 'active')} onClick={() => select('all')}>
               <Highlighter size={15} />
               <span className="anno-book-name">All books</span>
               <span className="anno-count">{totalAll}</span>

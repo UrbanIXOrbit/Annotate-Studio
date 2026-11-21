@@ -11,6 +11,8 @@ export interface LinkDoc {
   path: string;
   title: string;
   markdown: string;
+  /** Parsed once at index time when available, so graph rebuilds needn't reparse. */
+  links?: string[];
 }
 
 /** An edge as stored: the linking document plus the raw link text. */
@@ -80,7 +82,7 @@ export function buildLinkIndex(docs: LinkDoc[]): LinkIndex {
   const byPath = new Map(docs.map((doc) => [doc.path, doc]));
   const raw: RawLink[] = [];
   for (const doc of docs) {
-    for (const target of extractLinks(doc.markdown)) {
+    for (const target of doc.links ?? extractLinks(doc.markdown)) {
       raw.push({ from: doc.path, target });
     }
   }

@@ -23,7 +23,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import CanvasViewport from './CanvasViewport';
-import WorkspaceSwitcher from './WorkspaceSwitcher';
+import ActivityPanel from './ActivityPanel';
 import Popover from '@/components/ui/Popover';
 import { MenuList } from '@/components/ui/ContextMenu';
 import { useActiveWorkspace, useCanvas } from '@/store/canvas';
@@ -88,8 +88,7 @@ function CanvasToolbar() {
   const canvas = useCanvas.getState;
   return (
     <div className="canvas-toolbar">
-      <WorkspaceSwitcher />
-      <div className="toolbar-divider" />
+
       <button type="button" className="toolbar-btn" onClick={() => void pickAndImport('pdf')} title="Import PDF">
         <FilePlus2 size={14} />
         <span className="toolbar-label">PDF</span>
@@ -118,6 +117,7 @@ function CanvasToolbar() {
         <Newspaper size={14} />
         <span className="toolbar-label">Article</span>
       </button>
+      <ActivityPanel asToolbarButton />
       <div className="toolbar-divider" />
       <ArrangeMenu disabled={!hasWindows} />
       <button type="button" className="toolbar-btn" onClick={() => canvas().undo()} disabled={!canUndo} title="Undo layout change (Ctrl+Z)">

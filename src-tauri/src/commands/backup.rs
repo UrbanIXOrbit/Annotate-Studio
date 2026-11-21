@@ -12,8 +12,9 @@ const MANIFEST_FILE: &str = "manifest.json";
 const EXTERNAL_PREFIX: &str = "external";
 const FORMAT_VERSION: u32 = 1;
 const MAX_SNAPSHOTS: usize = 5;
+const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 
-const DATA_FILES: [&str; 9] = [
+const DATA_FILES: [&str; 10] = [
     "flashcards.json",
     "collections.json",
     "exams_data.json",
@@ -23,6 +24,7 @@ const DATA_FILES: [&str; 9] = [
     "canvas/state.json",
     "card_qualities.json",
     "books.json",
+    "workspace-scopes.json",
 ];
 
 const DATA_DIRS: [&str; 3] = ["documents", "notes", "analytics"];
@@ -146,11 +148,17 @@ fn prepare_external(manifest: &mut serde_json::Value, include: bool) -> Vec<(Str
 }
 
 fn read_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> Result<serde_json::Value, String> {
-    let mut entry = archive
+    let entry = archive
         .by_name(MANIFEST_FILE)
         .map_err(|_| "This backup has no manifest".to_string())?;
     let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    entry
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err("Backup manifest is too large".into());
+    }
     serde_json::from_slice(&bytes).map_err(|e| format!("Could not read the backup manifest: {e}"))
 }
 
@@ -277,7 +285,7 @@ fn extract_entries(
 }
 
 fn move_into_place(staging: &Path, root: &Path, entries: &Entries) -> Result<usize, String> {
-    let mut moved = 0;
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (_, relative) in entries {
         // Copied external files go to the folder the user chose, never into storage.
         if relative.starts_with(EXTERNAL_PREFIX) { continue; }
@@ -285,11 +293,21 @@ fn move_into_place(staging: &Path, root: &Path, entries: &Entries) -> Result<usi
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::rename(staging.join(relative), &target)
-            .map_err(|e| format!("Could not restore {}: {e}", relative.display()))?;
-        moved += 1;
+        let source = staging.join(relative);
+        if let Err(error) = std::fs::rename(&source, &target) {
+            // Put already-moved files back so a failed import cannot leave
+            // half-restored data (or new orphan files) in the workspace.
+            for (original_source, original_target) in moved.into_iter().rev() {
+                if let Some(parent) = original_source.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::rename(&original_target, &original_source);
+            }
+            return Err(format!("Could not restore {}: {error}", relative.display()));
+        }
+        moved.push((source, target));
     }
-    Ok(moved)
+    Ok(moved.len())
 }
 
 fn staging_dir(root: &Path) -> PathBuf {
@@ -410,8 +428,7 @@ pub fn export_data(
 #[tauri::command(async)]
 pub fn inspect_backup(app: AppHandle, archive_path: String) -> Result<serde_json::Value, String> {
     let source = picked_path(&app, &archive_path)?;
-    let mut archive = zip::ZipArchive::new(std::fs::File::open(&source).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let (mut archive, _entries) = open_backup(&source)?;
     let manifest = read_manifest(&mut archive)?;
     let count = manifest
         .get("external_files")
@@ -514,6 +531,7 @@ mod tests {
     fn filters_archive_entries() {
         assert!(is_allowed_entry(Path::new("flashcards.json")));
         assert!(is_allowed_entry(Path::new("books.json")));
+        assert!(is_allowed_entry(Path::new("workspace-scopes.json")));
         assert!(is_allowed_entry(Path::new("manifest.json")));
         assert!(is_allowed_entry(Path::new("canvas/state.json")));
         assert!(is_allowed_entry(Path::new("documents/a.pdf")));
@@ -524,6 +542,34 @@ mod tests {
         assert!(!is_allowed_entry(Path::new("notes/.hidden")));
         assert!(!is_allowed_entry(Path::new("/etc/passwd")));
         assert!(!is_allowed_entry(Path::new("providers.json")));
+    }
+
+    #[test]
+    fn failed_move_into_place_restores_already_moved_files() {
+        let root = std::env::temp_dir().join(format!("annotate-move-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("documents")).unwrap();
+        std::fs::write(root.join("settings.json"), b"{}").unwrap();
+        std::fs::write(root.join("documents/a.txt"), b"original").unwrap();
+        let safety = root.join("safety.anos");
+        write_archive(&root, &safety, false).unwrap();
+
+        let staging = staging_dir(&root);
+        std::fs::create_dir_all(staging.join("documents")).unwrap();
+        std::fs::write(staging.join("documents/a.txt"), b"from backup").unwrap();
+        let entries: Entries = vec![
+            (0, PathBuf::from("documents/a.txt")),
+            (1, PathBuf::from("documents/missing.txt")),
+        ];
+
+        assert!(move_into_place(&staging, &root, &entries).is_err());
+        // The half-moved file went back to staging, not left in the workspace.
+        assert_eq!(std::fs::read(staging.join("documents/a.txt")).unwrap(), b"from backup");
+        assert!(!root.join("documents/a.txt").exists());
+        // The import path restores the pre-import snapshot from the safety copy.
+        assert!(restore_archive(&safety, &root).is_ok());
+        assert_eq!(std::fs::read(root.join("documents/a.txt")).unwrap(), b"original");
+        std::fs::remove_dir_all(&staging).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

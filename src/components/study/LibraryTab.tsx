@@ -33,8 +33,11 @@ import { currentNoteText, noteExportMenu } from '@/lib/note-export-actions';
 import { allTags, matchFile, parseTagInput, tagUsageCount, type CollectionCriteria, type FileMeta, type SavedCollection } from '@/lib/library-metadata';
 import { useLibrary } from '@/store/library';
 import { useSettings } from '@/store/settings';
+import { useToasts } from '@/store/toast';
+import { setCurrentWorkspace } from '@/store/workspace-context';
 import { useApp } from '@/store/app';
 import { activeWorkspace, useCanvas } from '@/store/canvas';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
 import { useSearch } from '@/store/search';
 import { useGraph } from '@/store/graph';
 import { openInboxSection } from '@/lib/scratch-actions';
@@ -50,8 +53,13 @@ import {
   renameFile,
   resourceTypeFor,
   revealInExplorer,
+  resolveNoteFolder,
 } from '@/lib/workspace-actions';
 import { cn, formatBytes, formatRelativeTime, isExternalPath, stripExtension } from '@/lib/utils';
+
+const EMPTY_FILE_META: Record<string, FileMeta> = {};
+const EMPTY_FILE_META_RECENT: Record<string, number> = {};
+const EMPTY_COLLECTIONS: SavedCollection[] = [];
 
 type Filter = 'all' | 'pdf' | 'notes' | 'images' | 'audio' | 'books' | 'videos' | 'documents';
 type Sort = 'recent' | 'modified' | 'name' | 'size';
@@ -132,12 +140,18 @@ function FileMetaEditor({
 
 export default function LibraryTab() {
   const files = useLibrary((state) => state.files);
+  const allFiles = useLibrary((state) => state.allFiles);
+  const allWorkspaces = useWorkspaceScopes((state) => state.allWorkspaces);
+  const allScopes = useWorkspaceScopes((state) => state.scopes);
   const loading = useLibrary((state) => state.loading);
   const refresh = useLibrary((state) => state.refresh);
-  const recent = useSettings((state) => state.recentFiles);
-  const fileMeta = useSettings((state) => state.fileMeta);
-  const collections = useSettings((state) => state.collections);
+  const activeWorkspaceId = useCanvas((state) => state.activeWorkspaceId);
+  const activeScope = useWorkspaceScopes((state) => state.scopes[activeWorkspaceId]);
+  const recent = activeScope?.recentFiles ?? EMPTY_FILE_META_RECENT;
+  const fileMeta = activeScope?.fileMeta ?? EMPTY_FILE_META;
+  const collections = activeScope?.collections ?? EMPTY_COLLECTIONS;
   const { toggleFileStar, setFileMeta, createCollection, updateCollection, deleteCollection, renameTagEverywhere, removeTagEverywhere } = useSettings.getState();
+  const firstRunSeen = useSettings((state) => state.firstRunSeen);
   const resources = useCanvas((state) => activeWorkspace(state).resources);
   const openSet = useMemo(() => new Set(resources.map((r) => r.filePath).filter((p): p is string => Boolean(p))), [resources]);
   const setView = useApp((state) => state.setView);
@@ -171,7 +185,8 @@ export default function LibraryTab() {
 
   const visible = useMemo(() => {
     const criteria = activeCollection ? activeCollection.criteria : currentCriteria;
-    const list = files.filter((file) => matchFile(file, fileMeta[file.path], criteria));
+    const source = allWorkspaces ? allFiles : files;
+    const list = source.filter((file) => matchFile(file, fileMeta[file.path], criteria));
     return [...list].sort((a, b) => {
       switch (sort) {
         case 'name':
@@ -184,7 +199,17 @@ export default function LibraryTab() {
           return (recent[b.path] ?? Date.parse(b.modified_at)) - (recent[a.path] ?? Date.parse(a.modified_at));
       }
     });
-  }, [files, fileMeta, currentCriteria, activeCollection, sort, recent]);
+  }, [files, allFiles, allWorkspaces, fileMeta, currentCriteria, activeCollection, sort, recent]);
+
+  const ownerNames = useMemo(() => {
+    const workspaces = useCanvas.getState().workspaces;
+    const names = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
+    const map = new Map<string, string>();
+    for (const [id, scope] of Object.entries(allScopes)) {
+      for (const path of scope.files) if (!map.has(path)) map.set(path, names.get(id) ?? 'Workspace');
+    }
+    return map;
+  }, [allScopes]);
 
   const tags = useMemo(() => allTags(fileMeta), [fileMeta]);
   const starredCount = useMemo(() => Object.values(fileMeta).filter((meta) => meta.starred).length, [fileMeta]);
@@ -217,6 +242,18 @@ export default function LibraryTab() {
   };
 
   const open = (file: StudyFile) => {
+    // In the global view, a file belongs to another workspace — switch there
+    // before opening it so the window lands on the canvas that owns it.
+    if (allWorkspaces) {
+      const owners = Object.entries(allScopes)
+        .filter(([, scope]) => scope.files.includes(file.path))
+        .map(([id]) => id);
+      const owner = owners.includes(activeWorkspaceId) ? activeWorkspaceId : owners[0];
+      if (owner && owner !== activeWorkspaceId) {
+        useCanvas.getState().switchWorkspace(owner);
+        setCurrentWorkspace(owner);
+      }
+    }
     if (!resourceTypeFor(file)) {
       requestChat({ kind: 'summarize', title: file.name, path: file.path });
       return;
@@ -248,6 +285,7 @@ export default function LibraryTab() {
   };
 
   const menuFor = (file: StudyFile): MenuEntry[] => {
+    if (allWorkspaces) return [{ label: 'View only — switch to the owning workspace to edit', disabled: true, onSelect: () => undefined }];
     const meta = fileMeta[file.path];
     const items: MenuEntry[] = [];
     if (resourceTypeFor(file)) items.push({ label: 'Open on canvas', icon: <ExternalLink size={13} />, onSelect: () => open(file) });
@@ -267,6 +305,23 @@ export default function LibraryTab() {
     }
     if (file.file_type === 'Markdown' || file.file_type === 'Text') {
       items.push('separator', ...noteExportMenu(async () => ({ title: file.name, content: await currentNoteText(file.path) }), 'Export as '));
+    }
+    const workspaces = useCanvas.getState().workspaces;
+    if (workspaces.length > 1) {
+      items.push(
+        'separator',
+        ...workspaces
+          .filter((workspace) => workspace.id !== activeWorkspaceId)
+          .map((workspace) => ({
+            label: `Move to ${workspace.name}`,
+            icon: <Layers size={13} />,
+            onSelect: () => {
+              useWorkspaceScopes.getState().moveFile(file.path, activeWorkspaceId, workspace.id);
+              void useLibrary.getState().reloadForWorkspace();
+              useToasts.getState().push({ kind: 'success', title: `Moved to ${workspace.name}` });
+            },
+          })),
+      );
     }
     items.push('separator', { label: 'View in explorer', icon: <FolderOpen size={13} />, onSelect: () => void revealInExplorer(file.path) });
     items.push(
@@ -512,11 +567,34 @@ export default function LibraryTab() {
         </div>
       )}
 
+      {!firstRunSeen && (
+        <div className="settings-card">
+          <h3>Welcome to Annotate Studio</h3>
+          <p className="muted">Your files stay where they are — the library only references them. Pick a notes folder for captures, or look at the keyboard shortcuts to get around.</p>
+          <div className="page-actions">
+            <button type="button" className="btn btn-primary" onClick={() => void resolveNoteFolder().then((folder) => { if (folder) useSettings.getState().update({ noteFolder: folder }); })}>
+              <FolderOpen size={14} /> Choose notes folder
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => window.dispatchEvent(new Event('annotate:show-shortcuts'))}>See shortcuts</button>
+            <button type="button" className="btn btn-ghost" onClick={() => useSettings.getState().dismissFirstRun()}>Got it</button>
+          </div>
+        </div>
+      )}
       {visible.length === 0 ? (
         <div className="empty-state">
           <FolderOpen size={40} strokeWidth={1.4} />
           <h2>{filtersActive || activeCollection ? 'No matching files' : 'Your library is empty'}</h2>
           <p>{filtersActive || activeCollection ? 'Try another search or filter.' : 'Import PDFs, audio, images or notes, or drop them onto the window.'}</p>
+          {!filtersActive && !activeCollection && (
+            <div className="empty-actions">
+              <button type="button" className="btn btn-primary" onClick={() => void pickAndImport('any')}>
+                <FolderOpen size={15} /> Import files
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => void createNewNote()}>
+                <BookText size={15} /> New note
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="library-grid">
@@ -535,12 +613,19 @@ export default function LibraryTab() {
                   event.preventDefault();
                   open(file);
                 }}
-                onContextMenu={(event) => openContextMenu(event, menuFor(file))}
+                onContextMenu={(event) => {
+                  if (!allWorkspaces) openContextMenu(event, menuFor(file));
+                }}
               >
                 <div className={cn('file-card-icon', meta.tone)}>{meta.icon}</div>
                 <div className="file-card-body">
                   <div className="file-card-name" dir="auto" title={file.name}>
                     {displayTitle(file)}
+                    {allWorkspaces && (
+                      <span className="library-owner-badge" title="Workspace that owns this file">
+                        {ownerNames.get(file.path) ?? 'Workspace'}
+                      </span>
+                    )}
                   </div>
                   <div className="file-card-meta">
                     <span className={cn('badge', meta.tone)}>{meta.label}</span>
@@ -576,7 +661,9 @@ export default function LibraryTab() {
                   <button
                     type="button"
                     className="icon-btn file-card-menu"
-                    onClick={(event) => openContextMenu(event, menuFor(file))}
+                    onClick={(event) => {
+                      if (!allWorkspaces) openContextMenu(event, menuFor(file));
+                    }}
                     title="More actions"
                   >
                     <MoreHorizontal size={16} />

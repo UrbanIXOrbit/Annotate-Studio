@@ -9,6 +9,8 @@ import { useCanvas, type ResourceType } from '@/store/canvas';
 import { useLibrary } from '@/store/library';
 import { useNotes } from '@/store/notes';
 import { useSettings } from '@/store/settings';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
+import { currentWorkspace } from '@/store/workspace-context';
 import { openFileOnCanvas, readDocumentText } from '@/lib/workspace-actions';
 
 export type SearchScope = 'all' | SearchKind;
@@ -43,8 +45,12 @@ function pruneCache() {
 
 function setCache(path: string, key: string, doc: SearchDoc) {
   cache.delete(path);
-  cache.set(path, { key, doc });
+  cache.set(path, { key, doc: withLower(doc) });
   pruneCache();
+}
+
+function withLower(doc: SearchDoc): SearchDoc {
+  return { ...doc, searchText: doc.text.toLowerCase(), searchMeta: (doc.meta ?? '').toLowerCase() };
 }
 
 /** Canvas windows that carry their own text (cards, web articles). */
@@ -108,14 +114,14 @@ function fileDocs(): SearchDoc[] {
   for (const [path, entry] of cache) {
     const buffer = buffers[path];
     const text = buffer && buffer.status === 'ready' ? buffer.content : entry.doc.text;
-    docs.push(text === entry.doc.text ? entry.doc : { ...entry.doc, text });
+    docs.push(text === entry.doc.text ? entry.doc : withLower({ ...entry.doc, text }));
   }
   return docs;
 }
 
 function computeHits() {
   const { query, scope } = useSearch.getState();
-  const docs = [...resourceDocs(), ...fileDocs(), ...quoteDocs()];
+  const docs = [...resourceDocs().map(withLower), ...fileDocs(), ...quoteDocs().map(withLower)];
   const filtered = scope === 'all' ? docs : docs.filter((doc) => doc.kind === scope);
   useSearch.setState({ hits: searchDocs(filtered, query) });
 }
@@ -149,7 +155,7 @@ function scanAnnotations() {
 
 function buildDoc(file: StudyFile, text: string): SearchDoc {
   const kind: SearchKind = file.file_type === 'Pdf' ? 'pdf' : file.file_type === 'Book' ? 'book' : 'note';
-  const meta = useSettings.getState().fileMeta[file.path];
+  const meta = useWorkspaceScopes.getState().get(currentWorkspace()).fileMeta[file.path];
   return {
     path: file.path,
     kind,
@@ -176,7 +182,7 @@ async function indexFile(file: StudyFile, done: number, total: number): Promise<
     // Unreadable files (gone, unsupported) are simply left out of the index.
   }
   useSearch.setState({ indexing: { done: done + 1, total } });
-  if (useSearch.getState().query.trim()) computeHits();
+  // Hits are recomputed once after the indexing pass, not once per file.
   return true;
 }
 
@@ -193,7 +199,7 @@ async function runIndex() {
   const opened = new Set(
     workspaces.flatMap((workspace) => workspace.resources.map((resource) => resource.filePath).filter((path): path is string => !!path)),
   );
-  const recent = Object.keys(useSettings.getState().recentFiles);
+  const recent = Object.keys(useWorkspaceScopes.getState().get(currentWorkspace()).recentFiles);
   const rank = (path: string) => (opened.has(path) ? 0 : recent.includes(path) ? 1 : 2);
   const ordered = [...files].sort((a, b) => rank(a.path) - rank(b.path));
 

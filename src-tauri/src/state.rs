@@ -24,6 +24,7 @@ pub struct DataPaths {
     pub legacy_card_qualities: PathBuf,
     pub analytics_dir: PathBuf,
     pub backups_dir: PathBuf,
+    pub workspace_scopes: PathBuf,
 }
 
 impl DataPaths {
@@ -40,6 +41,7 @@ impl DataPaths {
             legacy_card_qualities: workspace.join("card_qualities.json"),
             analytics_dir: workspace.join("analytics"),
             backups_dir: workspace.join("backups"),
+            workspace_scopes: workspace.join("workspace-scopes.json"),
         }
     }
 }

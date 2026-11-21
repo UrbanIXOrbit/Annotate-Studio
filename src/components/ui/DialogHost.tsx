@@ -17,12 +17,12 @@ function ConfirmBody({ request, done }: { request: ConfirmRequest; done: () => v
       width={400}
       footer={
         <>
-          <button type="button" className="btn btn-ghost" onClick={() => finish(false)}>
+          <button type="button" data-autofocus={request.danger ? true : undefined} className="btn btn-ghost" onClick={() => finish(false)}>
             {request.cancelLabel ?? 'Cancel'}
           </button>
           <button
             type="button"
-            data-autofocus
+            data-autofocus={request.danger ? undefined : true}
             className={request.danger ? 'btn btn-danger' : 'btn btn-primary'}
             onClick={() => finish(true)}
           >
@@ -108,7 +108,7 @@ function PromptBody({ request, done }: { request: PromptRequest; done: () => voi
           dir="auto"
         />
       </label>
-      {error && <p className="field-error">{error}</p>}
+      {error && <p className="field-error" role="alert" aria-live="assertive">{error}</p>}
     </Dialog>
   );
 }

@@ -6,6 +6,7 @@ import { activeWorkspace, useCanvas } from '@/store/canvas';
 import { CARD_COLORS } from '@/lib/cards';
 import { openCardSource } from '@/lib/card-actions';
 import { cn } from '@/lib/utils';
+import CardImage from './CardImage';
 
 function CardWindow({ id }: { id: string }) {
   const card = useCanvas((state) => activeWorkspace(state).resources.find((r) => r.id === id));
@@ -22,6 +23,7 @@ function CardWindow({ id }: { id: string }) {
     if (noteRef.current === savedRef.current) return;
     savedRef.current = noteRef.current;
     useCanvas.getState().updateResource(id, { note: noteRef.current }, true);
+    useCanvas.getState().recordActivity('Edited a card note', [id]);
   }, [id]);
   const commitRef = useRef(commitNote);
   commitRef.current = commitNote;
@@ -41,6 +43,13 @@ function CardWindow({ id }: { id: string }) {
         <blockquote className="card-quote" dir="auto">
           {quote}
         </blockquote>
+      )}
+      {card.imagePath && (
+        <CardImage
+          path={card.imagePath}
+          alt={`Capture from ${source?.title ?? 'PDF'}`}
+          caption={source ? `Page ${source.page} · ${source.title}` : undefined}
+        />
       )}
       <textarea
         className="card-note"

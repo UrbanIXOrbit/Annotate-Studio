@@ -1,6 +1,6 @@
 import { activeWorkspace, hiddenResourceIds, useCanvas } from '@/store/canvas';
 import { edgePanVelocity } from '@/lib/edge-pan';
-import { setLiveRect } from '@/lib/live-rects';
+import { setLiveRect, setLiveRects } from '@/lib/live-rects';
 import { planDragDelta, snapToUnit } from '@/lib/layout';
 import { useAlignmentGuides } from '@/store/guides';
 import type { Connector } from '@/lib/connectors';
@@ -79,6 +79,7 @@ export function dragWindows(options: DragWindowsOptions): () => void {
   let finished = false;
   let delta = { x: 0, y: 0 };
   let raf = 0;
+  let applyFrame = 0;
   const pointer = { x: start.x, y: start.y, shift: false, alt: false };
 
   /** Recompute where the windows go from the latest pointer, modifiers and view (the view may have panned). */
@@ -89,13 +90,23 @@ export function dragWindows(options: DragWindowsOptions): () => void {
     const plan = planDragDelta(targets, others, dx, dy, { grid: pointer.shift, free: pointer.alt }, zoom);
     delta = { x: plan.offsetX, y: plan.offsetY };
     useAlignmentGuides.getState().set(plan.guides, plan.spacing);
+    const rects: Array<[string, { x: number; y: number; width: number; height: number }]> = [];
     for (const r of targets) {
       const x = r.x + delta.x;
       const y = r.y + delta.y;
       const frame = frames.get(r.id);
       if (frame) frame.style.transform = `translate(${x}px, ${y}px)`;
-      setLiveRect(r.id, { x, y, width: r.width, height: r.height });
+      rects.push([r.id, { x, y, width: r.width, height: r.height }]);
     }
+    setLiveRects(rects);
+  };
+
+  const scheduleApply = () => {
+    if (applyFrame) return;
+    applyFrame = requestAnimationFrame(() => {
+      applyFrame = 0;
+      apply();
+    });
   };
 
   const tick = () => {
@@ -121,7 +132,7 @@ export function dragWindows(options: DragWindowsOptions): () => void {
       moved = true;
       options.onMoveStart?.();
     }
-    apply();
+    scheduleApply();
     scheduleEdgePan();
   };
 
@@ -135,7 +146,7 @@ export function dragWindows(options: DragWindowsOptions): () => void {
     if (event.key === 'Alt' || event.key === 'Shift') {
       pointer.alt = event.altKey;
       pointer.shift = event.shiftKey;
-      if (moved) apply();
+      if (moved) scheduleApply();
     }
   };
 
@@ -143,6 +154,7 @@ export function dragWindows(options: DragWindowsOptions): () => void {
     if (finished) return;
     finished = true;
     if (raf) cancelAnimationFrame(raf);
+    if (applyFrame) cancelAnimationFrame(applyFrame);
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', onUp);
     handle.removeEventListener('pointercancel', onUp);

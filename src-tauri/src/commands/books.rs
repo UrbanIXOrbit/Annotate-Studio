@@ -465,7 +465,12 @@ pub fn open_external_file_inner(path: &str) -> Result<(), String> {
 /// folder is opened instead — so a flagged-missing library entry can still be
 /// located without the reveal failing outright.
 #[tauri::command(async)]
-pub fn reveal_external_file(path: String) -> Result<(), String> {
+pub fn reveal_external_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    ensure_external_access(&app, &state, Path::new(&path))?;
     let file_path = Path::new(&path);
     let exists = file_path.exists();
     let parent = file_path

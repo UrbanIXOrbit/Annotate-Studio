@@ -7,7 +7,7 @@ import { DocumentManagerPluginPackage, useActiveDocument, useDocumentManagerCapa
 import { Viewport, ViewportPluginPackage } from '@embedpdf/plugin-viewport/react';
 import { Scroller, ScrollPluginPackage, useScroll } from '@embedpdf/plugin-scroll/react';
 import { RenderLayer, RenderPluginPackage } from '@embedpdf/plugin-render/react';
-import { InteractionManagerPluginPackage, PagePointerProvider } from '@embedpdf/plugin-interaction-manager/react';
+import { InteractionManagerPluginPackage, PagePointerProvider, useInteractionManager, useInteractionManagerCapability, usePointerHandlers } from '@embedpdf/plugin-interaction-manager/react';
 import { SelectionLayer, SelectionPluginPackage, useSelectionCapability } from '@embedpdf/plugin-selection/react';
 import { AnnotationLayer, AnnotationPluginPackage, useAnnotation, useAnnotationCapability } from '@embedpdf/plugin-annotation/react';
 import { LockModeType } from '@embedpdf/plugin-annotation';
@@ -31,6 +31,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  Crop,
   Download,
   Eraser,
   Eye,
@@ -71,10 +72,11 @@ import { clipToNewNote, clipToNote } from '@/lib/note-clip-actions';
 import { useSettings } from '@/store/settings';
 import { clampPosition, DEFAULT_ZOOM, positionFromVisibility, sanitizeZoom, type PdfZoom } from '@/lib/pdf-view';
 import { cardTitle, normalizeQuote } from '@/lib/cards';
+import { charIndicesInRects, indicesToRanges, joinSlices } from '@/lib/annotations';
 import { HIGHLIGHT_OPACITY, highlightTint } from '@/lib/pdf-highlight';
 import { scanPdfBytes } from '@/lib/annotation-scan';
 
-type Tool = 'select' | 'highlight' | 'pen' | 'marker' | 'text' | 'rectangle' | 'circle' | 'arrow' | 'eraser';
+type Tool = 'select' | 'highlight' | 'pen' | 'marker' | 'text' | 'rectangle' | 'circle' | 'arrow' | 'eraser' | 'capture';
 
 const TOOL_IDS: Record<Tool, string | null> = {
   select: null,
@@ -86,6 +88,7 @@ const TOOL_IDS: Record<Tool, string | null> = {
   circle: 'circle',
   arrow: 'lineArrow',
   eraser: null,
+  capture: null,
 };
 
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode; key: string }[] = [
@@ -95,6 +98,7 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode; key: string }[] =
   { id: 'marker', label: 'Marker (M)', icon: <PenLine size={14} />, key: 'm' },
   { id: 'text', label: 'Text (T)', icon: <Type size={14} />, key: 't' },
   { id: 'rectangle', label: 'Rectangle (R)', icon: <Square size={14} />, key: 'r' },
+  { id: 'capture', label: 'Capture area to image (C)', icon: <Crop size={14} />, key: 'c' },
   { id: 'circle', label: 'Ellipse (O)', icon: <Circle size={14} />, key: 'o' },
   { id: 'arrow', label: 'Arrow (A)', icon: <MoveUpRight size={14} />, key: 'a' },
   { id: 'eraser', label: 'Eraser (E)', icon: <Eraser size={14} />, key: 'e' },
@@ -389,6 +393,106 @@ const SAVED_TO_ENGINE_ZOOM = { 'fit-width': ZoomMode.FitWidth, 'fit-page': ZoomM
 const toEngineZoom = (zoom: PdfZoom): ZoomMode | number => (typeof zoom === 'number' ? zoom : SAVED_TO_ENGINE_ZOOM[zoom]);
 const toSavedZoom = (level: unknown): PdfZoom => sanitizeZoom(level);
 
+type CaptureMode = 'image' | 'text' | 'both';
+
+interface PageArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pageIndex?: number;
+}
+
+/** Rectangle selection using EmbedPDF's own pointer coordinates, so it tracks
+ * the cursor exactly like the Rectangle annotation tool (zoom/rotation aware). */
+function CaptureLayer({
+  documentId,
+  pageIndex,
+  onSelect,
+}: {
+  documentId: string;
+  pageIndex: number;
+  onSelect: (area: PageArea, size: { width: number; height: number }) => void;
+}) {
+  const documentState = useDocumentState(documentId);
+  const { register } = usePointerHandlers({ documentId, pageIndex, modeId: 'capture' });
+  const [rect, setRect] = useState<PageArea | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const size = documentState?.document?.pages?.[pageIndex]?.size ?? { width: 0, height: 0 };
+
+  useEffect(() => {
+    const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value));
+    return register({
+      onPointerDown(pos) {
+        const point = { x: clamp(pos.x, size.width), y: clamp(pos.y, size.height) };
+        start.current = point;
+        setRect({ ...point, width: 0, height: 0 });
+      },
+      onPointerMove(pos) {
+        if (!start.current) return;
+        const point = { x: clamp(pos.x, size.width), y: clamp(pos.y, size.height) };
+        const origin = start.current;
+        setRect({
+          x: Math.min(origin.x, point.x),
+          y: Math.min(origin.y, point.y),
+          width: Math.abs(point.x - origin.x),
+          height: Math.abs(point.y - origin.y),
+        });
+      },
+      onPointerUp(pos) {
+        if (!start.current) return;
+        const point = { x: clamp(pos.x, size.width), y: clamp(pos.y, size.height) };
+        const origin = start.current;
+        start.current = null;
+        const area = {
+          x: Math.min(origin.x, point.x),
+          y: Math.min(origin.y, point.y),
+          width: Math.abs(point.x - origin.x),
+          height: Math.abs(point.y - origin.y),
+        };
+        setRect(null);
+        if (area.width > 1 && area.height > 1) onSelect({ ...area, pageIndex }, size);
+      },
+      onPointerCancel() {
+        start.current = null;
+        setRect(null);
+      },
+    });
+  }, [register, onSelect, size.width, size.height]);
+
+  useEffect(() => {
+    start.current = null;
+    setRect(null);
+  }, [pageIndex]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        start.current = null;
+        setRect(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  if (!rect) return null;
+  const percent = (value: number, total: number) => (total > 0 ? `${(value / total) * 100}%` : '0%');
+  return (
+    <div
+      className="pdf-capture-rect"
+      style={{
+        left: percent(rect.x, size.width),
+        top: percent(rect.y, size.height),
+        width: percent(rect.width, size.width),
+        height: percent(rect.height, size.height),
+      }}
+    >
+      <span className="pdf-capture-size">{Math.round(rect.width)} × {Math.round(rect.height)} pt</span>
+    </div>
+  );
+}
+
 function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal }: Omit<PdfWindowProps, 'bytes'> & { documentId: string; isExternal: boolean }) {
   // Where you were in this book last time. Read once: it only matters while the window opens.
   const savedViewRef = useRef(useCanvas.getState().pdfViews[path]);
@@ -433,6 +537,12 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
   useEffect(() => {
     annotationScope?.setActiveTool(TOOL_IDS[tool]);
   }, [annotationScope, tool]);
+
+  useEffect(() => {
+    // Tools are exclusive: leaving select/highlight clears any active text
+    // selection so the capture rectangle cannot overlap a highlight gesture.
+    if (tool !== 'select' && tool !== 'highlight') selection?.clear(documentId);
+  }, [tool, selection, documentId]);
 
   useEffect(() => {
     if (!annotationCapability) return;
@@ -956,11 +1066,126 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
     [annotationScope, annotationToCanvas, annotationToNote, annotationNoteOpen],
   );
 
-  const drawingTool = tool !== 'select' && tool !== 'eraser' && tool !== 'highlight' && tool !== 'text';
+  const drawingTool = tool !== 'select' && tool !== 'eraser' && tool !== 'highlight' && tool !== 'text' && tool !== 'capture';
+
+  const [captureModeReady, setCaptureModeReady] = useState(false);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('image');
+  const manager = useDocumentManagerCapability()?.provides;
+
+  /** Extract text inside a page rectangle using the same geometry the annotator uses. */
+  const areaText = useCallback(
+    async (area: PageArea): Promise<string> => {
+      const doc = manager?.getDocument(documentId);
+      const page = doc?.pages[area.pageIndex ?? 0];
+      if (!doc || !page) return '';
+      try {
+        const engine = await getPdfEngine();
+        const { runs } = await engine.getPageGeometry(doc, page).toPromise();
+        const ranges = indicesToRanges(
+          charIndicesInRects(runs, [{ origin: { x: area.x, y: area.y }, size: { width: area.width, height: area.height } }]),
+        );
+        const slices = ranges.map((range) => ({ pageIndex: area.pageIndex ?? 0, ...range }));
+        if (slices.length === 0) return '';
+        const parts = await engine.getTextSlices(doc, slices).toPromise();
+        return joinSlices(parts).trim();
+      } catch {
+        return '';
+      }
+    },
+    [manager, documentId],
+  );
+
+  /** Crop the precise page rectangle and add it to the canvas as a card. */
+  const captureToCanvas = useCallback(
+    async (area: PageArea, size: { width: number; height: number }) => {
+      const text = captureMode === 'image' ? '' : await areaText(area);
+      let capturedPath: string | null = null;
+      if (captureMode !== 'text') {
+        const pageEl = viewportRef.current?.querySelector<HTMLElement>(`[data-page-index="${area.pageIndex ?? 0}"]`);
+        const image = pageEl?.parentElement?.querySelector('img');
+        if (!image?.naturalWidth || !image.naturalHeight || !size.width || !size.height) {
+          if (captureMode === 'image') {
+            toast.error('Could not capture the page', 'The page image is not ready yet.');
+            return;
+          }
+        } else {
+          const sx = (area.x / size.width) * image.naturalWidth;
+          const sy = (area.y / size.height) * image.naturalHeight;
+          const sw = (area.width / size.width) * image.naturalWidth;
+          const sh = (area.height / size.height) * image.naturalHeight;
+          if (sw >= 2 && sh >= 2) {
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(sw);
+            canvas.height = Math.round(sh);
+            const context = canvas.getContext('2d');
+            if (context) {
+              context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+              const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+              if (blob) {
+                try {
+                  const file = await writeFileBytes(
+                    { dir: 'documents/captures', name: `pdf-capture-${Date.now()}.png`, unique: true },
+                    new Uint8Array(await blob.arrayBuffer()),
+                  );
+                  capturedPath = file.path;
+                } catch (error) {
+                  toast.error('Could not save the capture image', error);
+                }
+              }
+            }
+          }
+        }
+      }
+      const page = (area.pageIndex ?? 0) + 1;
+      if (!text && !capturedPath) {
+        toast.warning('Nothing captured', 'No text or image was found in that area.');
+        return;
+      }
+      const id = useCanvas.getState().addCard({
+        title: `Capture · ${stripExtension(title)} p.${page}`,
+        content: text,
+        imagePath: capturedPath ?? undefined,
+        color: highlightColor,
+        source: { filePath: path, title, page, isExternal },
+        near: resourceId,
+      });
+      useToasts.getState().push({
+        kind: 'success',
+        title: 'Capture added to canvas',
+        description: `Page ${page}`,
+        action: { label: 'Show', run: () => useCanvas.getState().focusResource(id) },
+      });
+    },
+    [captureMode, areaText, title, highlightColor, path, isExternal, resourceId],
+  );
+
+  const { provides: interactionCapability } = useInteractionManagerCapability();
+  const { provides: interaction } = useInteractionManager(documentId);
+  useEffect(() => {
+    // A mode must be registered before it can be activated.
+    if (!interactionCapability) return;
+    interactionCapability.registerMode({
+      id: 'capture',
+      scope: 'page',
+      exclusive: true,
+      cursor: 'crosshair',
+    });
+    setCaptureModeReady(true);
+  }, [interactionCapability]);
+  useEffect(() => {
+    if (!interaction) return;
+    if (tool === 'capture' && captureModeReady) interaction.activate('capture');
+    else if (interaction.getActiveMode() === 'capture') interaction.activateDefaultMode();
+  }, [interaction, tool, captureModeReady]);
 
   const renderPage = useCallback(
     (page: { pageIndex: number; width: number; height: number }) => (
       <ScaledPage key={page.pageIndex} documentId={documentId} pageIndex={page.pageIndex} dpr={dpr}>
+        <div data-page-index={page.pageIndex} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          {tool === 'capture' && (
+            <CaptureLayer documentId={documentId} pageIndex={page.pageIndex} onSelect={(area, size) => void captureToCanvas(area, size)} />
+          )}
+        </div>
         <div
           className={cn('pdf-layers', drawingTool && 'pdf-layers-locked')}
           style={
@@ -976,7 +1201,9 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
                 }
           }
         >
-          <SelectionLayer documentId={documentId} pageIndex={page.pageIndex} scale={layerScale} selectionMenu={renderSelectionMenu as never} />
+          {(tool === 'select' || tool === 'highlight') && (
+            <SelectionLayer documentId={documentId} pageIndex={page.pageIndex} scale={layerScale} selectionMenu={renderSelectionMenu as never} />
+          )}
           <AnnotationLayer
             documentId={documentId}
             pageIndex={page.pageIndex}
@@ -987,7 +1214,7 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
         </div>
       </ScaledPage>
     ),
-    [documentId, dpr, drawingTool, renderSelectionMenu, renderAnnotationMenu, layerZoom, layerScale],
+    [documentId, dpr, drawingTool, renderSelectionMenu, renderAnnotationMenu, layerZoom, layerScale, tool, captureToCanvas],
   );
 
   const currentPage = scrollState?.currentPage ?? 1;
@@ -1239,6 +1466,19 @@ function PdfWorkspace({ documentId, resourceId, path, title, active, isExternal 
             <ZoomIn size={14} />
           </button>
         </div>
+        {tool === 'capture' && (
+          <select
+            className="select select-sm"
+            value={captureMode}
+            onChange={(event) => setCaptureMode(event.target.value as CaptureMode)}
+            title="What to capture"
+            aria-label="Capture content"
+          >
+            <option value="image">Image</option>
+            <option value="text">Text</option>
+            <option value="both">Text + image</option>
+          </select>
+        )}
         <div className="pdf-toolbar-spacer" />
         <span className={cn('save-state', `save-state-${saveState}`)}>
           {saveState === 'pending' || saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Not saved' : ''}

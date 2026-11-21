@@ -12,6 +12,9 @@ import { estimateCardSize, planCardPosition } from '@/lib/cards';
 import { canvasPointer, pointerOverCanvas } from '@/lib/canvas-pointer';
 import { useLibrary } from '@/store/library';
 import { useSettings } from '@/store/settings';
+import { useApp } from '@/store/app';
+import { toast } from '@/store/toast';
+import { setCurrentWorkspace } from './workspace-context';
 import { migrateConnectors, sameConnection, type Connector, type Point, type Side } from '@/lib/connectors';
 
 export type ResourceType = 'pdf' | 'note' | 'image' | 'card' | 'book' | 'audiobook' | 'video' | 'article' | 'recorder';
@@ -61,6 +64,8 @@ export interface Resource {
   source?: CardSource;
   color?: string;
   note?: string;
+  /** Cards only: captured image stored in app-owned files, shown inline. */
+  imagePath?: string;
   x: number;
   y: number;
   width: number;
@@ -99,7 +104,7 @@ const HISTORY_LIMIT = 100;
 const DEFAULT_VIEW: CanvasView = { x: 0, y: 0, zoom: 1 };
 
 /** Bump whenever the persisted shape changes; `migrateCanvasState` reads it off the saved file. */
-export const CANVAS_STATE_VERSION = 2;
+export const CANVAS_STATE_VERSION = 3;
 
 type CanvasPayload = Record<string, unknown>;
 type CanvasMigration = (state: CanvasPayload) => CanvasPayload;
@@ -109,6 +114,7 @@ type CanvasMigration = (state: CanvasPayload) => CanvasPayload;
  * below turn it into typed workspace data. Keep each entry small and additive.
  */
 const canvasMigrations: Record<number, CanvasMigration> = {
+  2: (state) => ({ ...state, version: 3, activity: [] }),
   // Version 1 had no explicit version marker. Its shape is already understood
   // by the normalizers, so this migration only records the schema boundary.
   1: (state) => ({ ...state, version: 2 }),
@@ -161,6 +167,7 @@ export interface CardInput {
   note?: string;
   color?: string;
   source?: CardSource;
+  imagePath?: string;
   /** Resource id to place the card next to (stacks beside its source PDF). */
   near?: string;
   /** World point to centre the card on. Takes precedence over `near`. */
@@ -212,10 +219,23 @@ export interface ResourcePatch {
   afterIndex: number;
 }
 
+/** A visible, persisted record of something added to the canvas. */
+export interface ActivityEntry {
+  id: string;
+  at: number;
+  label: string;
+  resourceIds: string[];
+  workspaceId: string;
+}
+
 /** Undo/redo changes for the active workspace. */
 export interface HistorySlice {
   past: ResourcePatch[][];
   future: ResourcePatch[][];
+  activity: ActivityEntry[];
+  recordActivity: (label: string, resourceIds: string[]) => void;
+  clearActivity: () => void;
+  revealActivity: (entry: ActivityEntry) => void;
   undo: () => void;
   redo: () => void;
 }
@@ -393,6 +413,7 @@ function migrateResource(raw: unknown, index: number): Resource | null {
       : undefined;
   const color = type === 'card' && typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color) ? data.color : undefined;
   const note = type === 'card' && typeof data.note === 'string' ? data.note : undefined;
+  const imagePath = type === 'card' && typeof data.imagePath === 'string' ? data.imagePath : undefined;
   return {
     id: typeof data.id === 'string' && data.id ? data.id : uid(),
     type,
@@ -405,6 +426,7 @@ function migrateResource(raw: unknown, index: number): Resource | null {
     source,
     color,
     note,
+    imagePath,
     x: finiteOr(baseX, 80 + index * 32),
     y: finiteOr(baseY, 80 + index * 32),
     width: Math.max(min.width, finiteOr(baseW, defaults.width)),
@@ -459,6 +481,7 @@ export function migrateCanvasState(raw: unknown): {
   activeWorkspaceId: string;
   pdfViews: Record<string, PdfViewState>;
   bookViews: Record<string, BookViewState>;
+  activity: ActivityEntry[];
 } {
   let data = (raw && typeof raw === 'object' ? raw : {}) as CanvasPayload;
   let version = typeof data.version === 'number' ? data.version : 1;
@@ -496,7 +519,20 @@ export function migrateCanvasState(raw: unknown): {
   if (workspaces.length === 0) workspaces = [newWorkspace('Default Workspace', 'default')];
   const requested = typeof data.activeWorkspaceId === 'string' ? data.activeWorkspaceId : '';
   const activeWorkspaceId = workspaces.some((w) => w.id === requested) ? requested : workspaces[0].id;
-  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, normalizeViewPath), bookViews: migrateBookViews(data.bookViews, normalizeViewPath) };
+  const activity: ActivityEntry[] = Array.isArray(data.activity)
+    ? data.activity
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        .filter((entry) => typeof entry.label === 'string' && Array.isArray(entry.resourceIds))
+        .slice(-200)
+        .map((entry) => ({
+          id: typeof entry.id === 'string' && entry.id ? entry.id : uid(),
+          at: typeof entry.at === 'number' && Number.isFinite(entry.at) ? entry.at : Date.now(),
+          label: String(entry.label).slice(0, 120),
+          resourceIds: (entry.resourceIds as unknown[]).filter((id): id is string => typeof id === 'string').slice(0, 50),
+          workspaceId: typeof entry.workspaceId === 'string' ? entry.workspaceId : '',
+        }))
+    : [];
+  return { workspaces, activeWorkspaceId, pdfViews: migratePdfViews(data.pdfViews, normalizeViewPath), bookViews: migrateBookViews(data.bookViews, normalizeViewPath), activity };
 }
 
 function topZ(resources: Resource[]): number {
@@ -579,6 +615,7 @@ const saver = createSaver<{
   activeWorkspaceId: string;
   pdfViews: Record<string, PdfViewState>;
   bookViews: Record<string, BookViewState>;
+  activity: ActivityEntry[];
 }>(
   (value) => saveCanvasState({ version: CANVAS_STATE_VERSION, ...value }),
   500,
@@ -643,6 +680,31 @@ function createHistorySlice({ set, get, updateActive, active }: SliceContext): H
   return {
     past: [],
     future: [],
+    activity: [],
+    recordActivity: (label, resourceIds) => {
+      const workspaceId = get().activeWorkspaceId;
+      const entry: ActivityEntry = { id: uid(), at: Date.now(), label, resourceIds: [...resourceIds], workspaceId };
+      set((state) => ({ activity: [...state.activity, entry].slice(-200) }));
+    },
+    clearActivity: () => set({ activity: [] }),
+    revealActivity: (entry) => {
+      const state = get();
+      if (entry.workspaceId && entry.workspaceId !== state.activeWorkspaceId) {
+        const index = state.workspaces.findIndex((workspace) => workspace.id === entry.workspaceId);
+        if (index >= 0) {
+          useApp.getState().setView('canvas');
+          get().switchWorkspace(entry.workspaceId);
+        }
+      }
+      const ids = entry.resourceIds.filter((id) => active().resources.some((r) => r.id === id));
+      if (ids.length === 0) {
+        if (entry.resourceIds.length > 0) toast.warning('Item no longer on the canvas', entry.label);
+        return;
+      }
+      useApp.getState().setView('canvas');
+      get().focusResource(ids[ids.length - 1]);
+      if (ids.length > 1) get().fitToContent(ids);
+    },
     undo: () => {
       const { past, future, selectedId } = get();
       if (past.length === 0) return;
@@ -709,11 +771,13 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         migrated = migrateCanvasState(null);
       }
       set({ ...migrated, hydrated: true, past: [], future: [], selectedId: null, selectedConnectorId: null });
+      setCurrentWorkspace(migrated.activeWorkspaceId);
     },
 
     switchWorkspace: (id) => {
       if (id === get().activeWorkspaceId || !get().workspaces.some((w) => w.id === id)) return;
       set({ activeWorkspaceId: id, selectedId: null, selectedConnectorId: null, past: [], future: [] });
+      setCurrentWorkspace(id);
     },
     createWorkspace: (name) => {
       const workspace = newWorkspace(name.trim() || 'Untitled Workspace');
@@ -725,6 +789,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         past: [],
         future: [],
       }));
+      setCurrentWorkspace(workspace.id);
     },
     renameWorkspace: (id, name) => {
       const trimmed = name.trim();
@@ -744,6 +809,8 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         past: activeWorkspaceId === id ? [] : get().past,
         future: activeWorkspaceId === id ? [] : get().future,
       });
+      setCurrentWorkspace(nextActive);
+      void import('./workspace-scopes').then((module) => module.useWorkspaceScopes.getState().forget(id)).catch(() => undefined);
     },
 
     setView: (view) => setViewInternal(view),
@@ -903,6 +970,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         isExternal: options.isExternal ?? isExternalPath(input.filePath ?? ''),
       };
       commitResources([...resources.map((r) => (r.maximized ? { ...r, maximized: false } : r)), resource]);
+      get().recordActivity(`Opened ${input.type === 'note' ? 'note' : input.type}`, [id]);
       set({ selectedId: id });
       // Everything opened on the canvas from outside the workspace shows in the
       // library, referenced at its own path — nothing is copied into app storage.
@@ -941,6 +1009,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         note: input.note,
         color: input.color,
         source: input.source,
+        imagePath: input.imagePath,
         ...position,
         ...size,
         z: topZ(resources) + 1,
@@ -948,6 +1017,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         maximized: false,
       };
       commitResources([...resources, card]);
+      get().recordActivity('Added a card', [id]);
       return id;
     },
     addConnector: (input) => {
@@ -982,6 +1052,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
       });
       if (!changed) return;
       commitResources(next);
+      get().recordActivity(`Moved ${Object.keys(positions).length} item${Object.keys(positions).length === 1 ? '' : 's'}`, Object.keys(positions));
       if (options?.reconcile) {
         const boxes = new Map(next.filter((r) => !r.minimized).map((r) => [r.id, { x: r.x, y: r.y, width: r.width, height: r.height }]));
         const groups = reconcileMembership(active().groups, boxes, new Set(Object.keys(positions)));
@@ -993,6 +1064,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
       const resources = active().resources;
       if (!resources.some((r) => closing.has(r.id))) return;
       commitResources(resources.filter((r) => !closing.has(r.id)));
+      get().recordActivity(`Removed ${ids.length} item${ids.length === 1 ? '' : 's'}`, []);
       const remaining = get().selectedIds.filter((id) => !closing.has(id));
       set({ selectedIds: remaining, selectedId: remaining.length > 0 ? remaining[remaining.length - 1] : null });
     },
@@ -1001,6 +1073,7 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
       const resources = active().resources;
       if (!resources.some((r) => chosen.has(r.id) && r.type === 'card' && r.color !== color)) return;
       commitResources(resources.map((r) => (chosen.has(r.id) && r.type === 'card' ? { ...r, color } : r)));
+      get().recordActivity(`Recoloured ${ids.length} card${ids.length === 1 ? '' : 's'}`, ids);
     },
 
     createGroup: (ids, title) => {
@@ -1017,13 +1090,20 @@ function createWorkspacesSlice({ set, get, active, updateActive, commitResources
         collapsed: false,
       };
       updateActive((w) => ({ ...w, groups: [...removeMembers(w.groups, members), group] }));
+      get().recordActivity(`Grouped ${members.length} items`, members);
       return group.id;
     },
-    ungroup: (groupId) => updateActive((w) => ({ ...w, groups: w.groups.filter((group) => group.id !== groupId) })),
+    ungroup: (groupId) => {
+      const group = active().groups.find((candidate) => candidate.id === groupId);
+      updateActive((w) => ({ ...w, groups: w.groups.filter((group) => group.id !== groupId) }));
+      if (group) get().recordActivity(`Ungrouped ${group.title}`, group.members);
+    },
     renameGroup: (groupId, title) => {
       const clean = title.trim().slice(0, 80);
       if (!clean) return;
       updateActive((w) => ({ ...w, groups: w.groups.map((group) => (group.id === groupId ? { ...group, title: clean } : group)) }));
+      const group = active().groups.find((candidate) => candidate.id === groupId);
+      if (group) get().recordActivity(`Renamed group to ${clean}`, group.members);
     },
     setGroupColor: (groupId, color) => updateActive((w) => ({ ...w, groups: w.groups.map((group) => (group.id === groupId ? { ...group, color } : group)) })),
     toggleGroupCollapsed: (groupId) => {
@@ -1279,7 +1359,8 @@ useCanvas.subscribe((state, previous) => {
     state.workspaces === previous.workspaces &&
     state.activeWorkspaceId === previous.activeWorkspaceId &&
     state.pdfViews === previous.pdfViews &&
-    state.bookViews === previous.bookViews
+    state.bookViews === previous.bookViews &&
+    state.activity === previous.activity
   )
     return;
   saver.schedule({
@@ -1287,6 +1368,7 @@ useCanvas.subscribe((state, previous) => {
     activeWorkspaceId: state.activeWorkspaceId,
     pdfViews: state.pdfViews,
     bookViews: state.bookViews,
+    activity: state.activity,
   });
 });
 

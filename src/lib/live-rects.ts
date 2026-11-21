@@ -24,6 +24,13 @@ export function setLiveRect(id: string, rect: Box | null): void {
   emit();
 }
 
+/** Update many rectangles with a single notification (one per drag frame). */
+export function setLiveRects(entries: Array<[string, Box]>): void {
+  if (entries.length === 0) return;
+  for (const [id, rect] of entries) live.set(id, rect);
+  emit();
+}
+
 export function getLiveRect(id: string): Box | undefined {
   return live.get(id);
 }

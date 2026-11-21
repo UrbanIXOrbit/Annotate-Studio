@@ -10,12 +10,14 @@ import { VIEW_KEYS } from '@/lib/view-shortcuts';
 import { migrateInlineNotes, registerExternalResources } from '@/lib/workspace-actions';
 import { useSearch } from '@/store/search';
 import { useApp } from '@/store/app';
-import { useCanvas } from '@/store/canvas';
 import { isDue, isNewCard, useFlashcards } from '@/store/flashcards';
 import { useLibrary } from '@/store/library';
 import { usePomodoro, type PomodoroPhase } from '@/store/pomodoro';
 import { useProviders } from '@/store/providers';
 import { useSettings } from '@/store/settings';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
+import { useAnnotations } from '@/store/annotations';
+import { useCanvas } from '@/store/canvas';
 import { toast } from '@/store/toast';
 
 const PHASE_LABEL: Record<PomodoroPhase, string> = {
@@ -28,16 +30,33 @@ let startup: Promise<void> | null = null;
 
 function startApp(): Promise<void> {
   startup ??= (async () => {
-    await useSettings.getState().hydrate();
-    await Promise.all([useCanvas.getState().hydrate(), useLibrary.getState().refresh()]);
-    await migrateInlineNotes();
-    await registerExternalResources();
-    void useFlashcards.getState().hydrate();
-    void useProviders.getState().refresh();
-    usePomodoro.getState().syncDuration();
-    void getStudyStats()
-      .then((stats) => usePomodoro.getState().seedCompletedToday(stats.today_pomodoro_sessions))
-      .catch(() => undefined);
+    // One failed initialisation step must not skip all the others: surface it
+    // and continue so the rest of the app still becomes usable.
+    const step = async (label: string, task: () => Promise<void> | void) => {
+      try {
+        await task();
+      } catch (error) {
+        toast.error(`Could not ${label}`, error);
+      }
+    };
+    await step('load settings', () => useSettings.getState().hydrate());
+    await step('load workspace views', async () => {
+      await useWorkspaceScopes.getState().hydrate();
+      const id = useCanvas.getState().activeWorkspaceId;
+      useAnnotations.getState().adoptBooks(useWorkspaceScopes.getState().scopes[id]?.books ?? {});
+    });
+    await step('load the workspace', async () => {
+      await Promise.all([useCanvas.getState().hydrate(), useLibrary.getState().refresh()]);
+    });
+    await step('migrate inline notes', () => migrateInlineNotes());
+    await step('register external resources', () => registerExternalResources());
+    await step('load flashcards', () => useFlashcards.getState().hydrate());
+    await step('load AI providers', async () => { await useProviders.getState().refresh(); });
+    await step('sync the timer', () => usePomodoro.getState().syncDuration());
+    await step('load study stats', async () => {
+      const stats = await getStudyStats();
+      usePomodoro.getState().seedCompletedToday(stats.today_pomodoro_sessions);
+    });
   })();
   return startup;
 }
@@ -45,6 +64,30 @@ function startApp(): Promise<void> {
 export function useAppEngines() {
   useEffect(() => {
     void startApp();
+  }, []);
+
+  // Each workspace keeps its own annotation scan results.
+  useEffect(() => {
+    let previous = useCanvas.getState().activeWorkspaceId;
+    const sync = () => {
+      const id = useCanvas.getState().activeWorkspaceId;
+      if (id === previous) return;
+      previous = id;
+      const scopes = useWorkspaceScopes.getState().scopes[id];
+      useAnnotations.getState().adoptBooks(scopes?.books ?? {});
+      void useLibrary.getState().reloadForWorkspace();
+    };
+    const unsubscribe = useCanvas.subscribe(sync);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      event.preventDefault();
+      toast.error('Something went wrong', event.reason);
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    return () => window.removeEventListener('unhandledrejection', onUnhandled);
   }, []);
 
   useEffect(() => {
@@ -106,6 +149,13 @@ export function useAppEngines() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === '?' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (isModalOpen() || isEditableTarget(event.target)) return;
+        if (useApp.getState().currentView === 'books') return; // Books owns its own ? help
+        event.preventDefault();
+        window.dispatchEvent(new Event('annotate:show-shortcuts'));
+        return;
+      }
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       if (isModalOpen() || isEditableTarget(event.target)) return;
       const view = VIEW_KEYS[event.key];

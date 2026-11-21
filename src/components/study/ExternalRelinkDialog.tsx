@@ -1,43 +1,54 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { FolderOpen, Loader2, Link2, RefreshCw } from 'lucide-react';
+import { FolderOpen, Loader2, Link2, RefreshCw, Trash2 } from 'lucide-react';
 import Dialog from '@/components/ui/Dialog';
 import { useSettings } from '@/store/settings';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
+import { currentWorkspace } from '@/store/workspace-context';
 import { useLibrary } from '@/store/library';
 import { useBooks } from '@/store/books';
 import { useCanvas } from '@/store/canvas';
 import { useAnnotations } from '@/store/annotations';
 import { toast } from '@/store/toast';
-import { isTauri, statExternalFile, type StudyFile } from '@/lib/tauri-commands';
+import { isTauri, pathExists, statExternalFile, type StudyFile } from '@/lib/tauri-commands';
 import { isExternalPath, baseName, stripExtension } from '@/lib/utils';
+
+type RefKind = 'file' | 'folder';
 
 interface MissingRef {
   path: string;
   name: string;
+  kind: RefKind;
   size?: number;
   modifiedAt?: string;
 }
 
 interface Mapping {
   path: string;
-  file: StudyFile;
+  file?: StudyFile;
 }
 
-/** Every absolute path the app keeps a reference to, including saved metadata. */
-function referencedPaths(): string[] {
+/** Every absolute path the app references, including folder settings. */
+function referencedRefs(): MissingRef[] {
   const settings = useSettings.getState();
   const library = useLibrary.getState();
   const books = useBooks.getState();
   const canvas = useCanvas.getState();
-  const paths = new Set<string>();
-  const add = (path: string | undefined | null) => {
-    if (path && isExternalPath(path)) paths.add(path);
+  const found = new Map<string, MissingRef>();
+  const add = (path: string | undefined | null, kind: RefKind = 'file') => {
+    if (!path || !isExternalPath(path) || found.has(path)) return;
+    found.set(path, { path, name: baseName(path), kind });
   };
-  settings.externalFiles.forEach(add);
+  settings.externalFiles.forEach((path) => add(path));
   settings.captureNotes.forEach((note) => add(note.path));
   add(settings.inboxNotePath);
-  Object.keys(settings.fileMeta).forEach(add);
+  add(settings.noteFolder, 'folder');
+  add(settings.recordingFolder, 'folder');
+  add(settings.noteClip.lastNote);
+  const scope = useWorkspaceScopes.getState().get(currentWorkspace());
+  Object.keys(scope.recentFiles).forEach((path) => add(path));
+  Object.keys(scope.fileMeta).forEach((path) => add(path));
   library.files.forEach((file) => add(file.path));
   Object.values(books.files).forEach((file) => add(file.filePath));
   canvas.workspaces.forEach((workspace) =>
@@ -46,7 +57,7 @@ function referencedPaths(): string[] {
       add(resource.source?.filePath);
     }),
   );
-  return [...paths];
+  return [...found.values()];
 }
 
 export default function ExternalRelinkDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -60,9 +71,11 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
     setMapping({});
     try {
       const refs = await Promise.all(
-        referencedPaths().map(async (path) => {
-          const file = await statExternalFile(path).catch(() => null);
-          return file ? null : { path, name: baseName(path) };
+        referencedRefs().map(async (ref) => {
+          const exists = ref.kind === 'folder'
+            ? await pathExists(ref.path).catch(() => false)
+            : !!(await statExternalFile(ref.path).catch(() => null));
+          return exists ? null : ref;
         }),
       );
       setMissing(refs.filter((ref): ref is MissingRef => ref !== null));
@@ -81,28 +94,91 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
     const folder = await pick({ directory: true, multiple: false });
     if (!folder || Array.isArray(folder)) return;
     const next: Record<string, Mapping> = {};
-    await Promise.all(
-      missing.map(async (ref) => {
-        const candidate = `${folder.replace(/[\\/]+$/, '')}/${ref.name}`;
-        const file = await statExternalFile(candidate).catch(() => null);
-        if (file) next[ref.path] = { path: file.path, file };
-      }),
-    );
+    const fileRefs = missing.filter((ref) => ref.kind === 'file');
+    if (fileRefs.length > 0) {
+      const { readDir } = await import('@tauri-apps/plugin-fs');
+      const byName = new Map<string, string[]>();
+      let scanned = 0;
+      const sep = /\\/.test(folder) && !folder.includes('/') ? '\\' : '/';
+      const walk = async (dir: string, depth: number): Promise<void> => {
+        if (depth > 4 || scanned > 4000) return;
+        for (const entry of await readDir(dir)) {
+          scanned += 1;
+          const full = `${dir.replace(/[\\/]+$/, '')}${sep}${entry.name}`;
+          if (entry.isFile) {
+            const key = entry.name.toLowerCase();
+            byName.set(key, [...(byName.get(key) ?? []), full]);
+          } else if (entry.isDirectory) {
+            await walk(full, depth + 1);
+          }
+        }
+      };
+      try {
+        await walk(folder, 0);
+      } catch (error) {
+        toast.error('Could not read that folder', error);
+        return;
+      }
+      await Promise.all(
+        fileRefs.map(async (ref) => {
+          for (const candidate of byName.get(ref.name.toLowerCase()) ?? []) {
+            const file = await statExternalFile(candidate).catch(() => null);
+            if (!file) continue;
+            if (ref.size !== undefined && file.size !== ref.size) continue;
+            next[ref.path] = { path: file.path, file };
+            return;
+          }
+        }),
+      );
+    }
+    for (const ref of missing.filter((item) => item.kind === 'folder')) {
+      next[ref.path] = { path: folder };
+    }
     setMapping(next);
-    if (Object.keys(next).length === 0) toast.warning('No matching files', `None of the ${missing.length} files were found in that folder.`);
+    if (Object.keys(next).length === 0) {
+      toast.warning('No matching files', `None of the ${missing.length} references were found in that folder.`);
+    }
   };
 
-  const chooseFile = async (ref: MissingRef) => {
+  const chooseLocation = async (ref: MissingRef) => {
     if (!isTauri()) return;
     const { open: pick } = await import('@tauri-apps/plugin-dialog');
-    const selection = await pick({ multiple: false, defaultPath: ref.name });
+    const selection = await pick({ directory: ref.kind === 'folder', multiple: false, defaultPath: ref.name });
     if (!selection || Array.isArray(selection)) return;
+    if (ref.kind === 'folder') {
+      setMapping((current) => ({ ...current, [ref.path]: { path: selection } }));
+      return;
+    }
     const file = await statExternalFile(selection).catch(() => null);
     if (!file) {
       toast.error('Could not read that file');
       return;
     }
     setMapping((current) => ({ ...current, [ref.path]: { path: file.path, file } }));
+  };
+
+  const forget = (ref: MissingRef) => {
+    const settings = useSettings.getState();
+    if (settings.externalFiles.includes(ref.path)) settings.removeExternalFile(ref.path);
+    if (settings.captureNotes.some((note) => note.path === ref.path)) {
+      settings.update({ captureNotes: settings.captureNotes.filter((note) => note.path !== ref.path) });
+    }
+    if (settings.inboxNotePath === ref.path) settings.update({ inboxNotePath: '' });
+    if (settings.noteFolder === ref.path) settings.update({ noteFolder: '' });
+    if (settings.recordingFolder === ref.path) settings.update({ recordingFolder: '' });
+    if (settings.noteClip.lastNote === ref.path) settings.updateNoteClip({ lastNote: '' });
+    settings.forgetRecent(ref.path);
+    settings.removeFileMeta(ref.path);
+    useLibrary.getState().removeExternal(ref.path);
+    useLibrary.getState().remove(ref.path);
+    useBooks.getState().forgetFilePaths([ref.path]);
+    useCanvas.getState().closeByFilePath(ref.path);
+    setMapping((current) => {
+      const next = { ...current };
+      delete next[ref.path];
+      return next;
+    });
+    setMissing((current) => current.filter((item) => item.path !== ref.path));
   };
 
   const apply = async () => {
@@ -117,21 +193,33 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
         if (settings.externalFiles.includes(oldPath)) settings.replaceExternalFile(oldPath, path);
         else settings.addExternalFile(path);
         settings.moveFileMeta(oldPath, path);
-        const library = useLibrary.getState();
-        if (library.files.some((entry) => entry.path === oldPath)) library.replaceExternal(oldPath, file);
-        else library.upsert(file);
-        useCanvas.getState().replaceFilePath(oldPath, path, stripExtension(file.name));
-        useAnnotations.getState().invalidate(path);
+        if (file) {
+          const library = useLibrary.getState();
+          if (library.files.some((entry) => entry.path === oldPath)) library.replaceExternal(oldPath, file);
+          else library.upsert(file);
+          useAnnotations.getState().invalidate(path);
+        }
+        useCanvas.getState().replaceFilePath(oldPath, path, stripExtension(file?.name ?? baseName(path)));
       }
       const captureNotes = settings.captureNotes.map((note) =>
         simple[note.path] ? { ...note, path: simple[note.path] } : note,
       );
+      const scope = useWorkspaceScopes.getState().get(currentWorkspace());
+      const recentFiles: Record<string, number> = {};
+      for (const [path, at] of Object.entries(scope.recentFiles)) recentFiles[simple[path] ?? path] = at;
+      useWorkspaceScopes.getState().set(currentWorkspace(), { recentFiles });
       settings.update({
         captureNotes,
-        inboxNotePath: simple[settings.inboxNotePath] ?? settings.inboxNotePath,
+         inboxNotePath: simple[settings.inboxNotePath] ?? settings.inboxNotePath,
+        noteFolder: simple[settings.noteFolder] ?? settings.noteFolder,
+        recordingFolder: simple[settings.recordingFolder] ?? settings.recordingFolder,
+        noteClip: {
+          ...settings.noteClip,
+          lastNote: simple[settings.noteClip.lastNote] ?? settings.noteClip.lastNote,
+        },
       });
       useBooks.getState().relinkFilePaths(simple);
-      toast.success('Files reconnected', `${entries.length} reference${entries.length === 1 ? '' : 's'} updated.`);
+      toast.success('References reconnected', `${entries.length} updated.`);
       onClose();
     } finally {
       setBusy(false);
@@ -143,7 +231,7 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
       open={open}
       onClose={onClose}
       title="Reconnect external files"
-      width={620}
+      width={680}
       footer={
         <>
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -154,7 +242,7 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
       }
     >
       <p className="muted">
-        These files are referenced where they live, not copied into the app. After a restore they may be in a different folder or on another computer.
+        Files and folders you chose stay where they are. After a restore or a move, point these references at their new location, or forget ones you no longer use.
       </p>
       <div className="settings-card">
         <div className="page-actions">
@@ -169,18 +257,25 @@ export default function ExternalRelinkDialog({ open, onClose }: { open: boolean;
       {loading ? (
         <p className="muted">Checking files…</p>
       ) : missing.length === 0 ? (
-        <p className="muted">All referenced files are available.</p>
+        <p className="muted">All referenced files and folders are available.</p>
       ) : (
         <div className="book-file-body" style={{ maxHeight: 320, overflow: 'auto' }}>
           {missing.map((ref) => (
             <div key={ref.path} className="path-row" style={{ justifyContent: 'space-between' }}>
               <div>
                 <strong>{ref.name}</strong>
-                <div className="muted" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{ref.path}</div>
+                <div className="muted" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>
+                  {ref.kind === 'folder' ? 'Folder' : 'File'} · {ref.path}
+                </div>
               </div>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void chooseFile(ref)}>
-                {mapping[ref.path] ? baseName(mapping[ref.path].path) : 'Locate…'}
-              </button>
+              <div className="page-actions">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => void chooseLocation(ref)}>
+                  {mapping[ref.path] ? baseName(mapping[ref.path].path) : 'Locate…'}
+                </button>
+                <button type="button" className="icon-btn icon-btn-sm icon-btn-danger" title="Forget this reference" onClick={() => forget(ref)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
             </div>
           ))}
         </div>

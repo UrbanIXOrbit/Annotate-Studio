@@ -134,6 +134,7 @@ export const listWorkspaceFiles = () => call<StudyFile[]>('list_workspace_files'
 export const statWorkspaceFile = (path: string) => call<StudyFile | null>('stat_workspace_file', { path });
 /** Metadata for a file at an absolute path outside the workspace, referenced in place. */
 export const statExternalFile = (path: string) => call<StudyFile | null>('stat_external_file', { path });
+export const pathExists = (path: string) => call<boolean>('path_exists', { path });
 /** Creates a note in an absolute folder on the user's device, without copying it into the workspace. */
 export const createExternalNote = (directory: string, name: string, content: string) =>
   call<StudyFile>('create_external_note', { directory, name, content });
@@ -181,6 +182,8 @@ export async function writeExternalFileBytes(path: string, data: Uint8Array | Ar
 }
 
 export const getDataDir = () => call<string>('get_data_dir');
+export const loadWorkspaceScopes = () => call<unknown>('load_workspace_scopes');
+export const saveWorkspaceScopes = (scopes: unknown) => call<void>('save_workspace_scopes', { scopes });
 export interface SavedExternalRecording {
   path: string;
   name: string;

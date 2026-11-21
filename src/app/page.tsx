@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import TitleBar from '@/components/layout/TitleBar';
 import Sidebar from '@/components/layout/Sidebar';
 import Toaster from '@/components/ui/Toaster';
+import HelpDialog from '@/components/ui/HelpDialog';
 import DialogHost from '@/components/ui/DialogHost';
 import ContextMenuHost from '@/components/ui/ContextMenu';
 import GlobalSearchDialog from '@/components/search/GlobalSearchDialog';
@@ -60,6 +61,7 @@ export default function Home() {
       </div>
       <Toaster />
       <DialogHost />
+      <HelpDialog />
       <GlobalSearchDialog />
       <GraphView />
       <ScratchCaptureDialog />

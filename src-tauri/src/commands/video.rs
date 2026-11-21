@@ -222,11 +222,15 @@ pub fn allow_video_asset(
 
 #[tauri::command(async)]
 pub fn open_video_in_system_player(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     is_external: bool,
 ) -> Result<(), String> {
     let full = video_path(&state.workspace, &path, is_external)?;
+    if is_external {
+        crate::external_access::ensure_external_access(&app, &state, &full)?;
+    }
     crate::commands::books::open_external_file_inner(&full.to_string_lossy())
 }
 
@@ -240,12 +244,16 @@ pub fn list_video_players() -> Vec<VideoPlayerInfo> {
 
 #[tauri::command(async)]
 pub fn open_video_with_player(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     is_external: bool,
     player_id: String,
 ) -> Result<(), String> {
     let full = video_path(&state.workspace, &path, is_external)?;
+    if is_external {
+        crate::external_access::ensure_external_access(&app, &state, &full)?;
+    }
     if player_id == "system-default" {
         return crate::commands::books::open_external_file_inner(&full.to_string_lossy());
     }

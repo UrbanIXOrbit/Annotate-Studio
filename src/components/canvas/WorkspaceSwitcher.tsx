@@ -4,6 +4,8 @@ import React, { useRef, useState } from 'react';
 import { Check, ChevronDown, Layers, Pencil, Plus, Trash2 } from 'lucide-react';
 import Popover from '@/components/ui/Popover';
 import { useCanvas } from '@/store/canvas';
+import { useWorkspaceScopes } from '@/store/workspace-scopes';
+import { useLibrary } from '@/store/library';
 import { confirmDialog, promptDialog } from '@/store/dialogs';
 import { cn } from '@/lib/utils';
 
@@ -14,10 +16,25 @@ export default function WorkspaceSwitcher() {
   const anchorRef = useRef<HTMLButtonElement>(null);
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces[0];
 
-  const create = async () => {
+  const create = async (copyFiles = false) => {
     setOpen(false);
     const name = await promptDialog({ title: 'New workspace', placeholder: 'e.g. Organic Chemistry', confirmLabel: 'Create' });
-    if (name) useCanvas.getState().createWorkspace(name);
+    if (!name) return;
+    const sourceFiles = copyFiles ? useLibrary.getState().files.map((file) => file.path) : [];
+    const idBefore = useCanvas.getState().activeWorkspaceId;
+    useCanvas.getState().createWorkspace(name);
+    const id = useCanvas.getState().activeWorkspaceId;
+    if (copyFiles && id !== idBefore) {
+      const scopes = useWorkspaceScopes.getState();
+      const source = scopes.get(idBefore);
+      scopes.set(id, {
+        seeded: true,
+        files: [...sourceFiles],
+        fileMeta: { ...source.fileMeta },
+        collections: [...source.collections],
+        recentFiles: { ...source.recentFiles },
+      });
+    }
   };
 
   const rename = async (id: string, current: string) => {
@@ -87,11 +104,17 @@ export default function WorkspaceSwitcher() {
             );
           })}
           <div className="menu-separator" />
-          <button type="button" className="menu-item" onClick={() => void create()}>
+          <button type="button" className="menu-item" onClick={() => void create(false)}>
             <span className="menu-item-icon">
               <Plus size={13} />
             </span>
             <span className="menu-item-label">New workspace</span>
+          </button>
+          <button type="button" className="menu-item" onClick={() => void create(true)} title="Create a workspace with copies of this workspace's library references">
+            <span className="menu-item-icon">
+              <Layers size={13} />
+            </span>
+            <span className="menu-item-label">New workspace with current files</span>
           </button>
         </div>
       </Popover>

@@ -15,6 +15,9 @@ export interface SearchDoc {
   text: string;
   /** Secondary searchable text (comments, source titles); matches rank lower. */
   meta?: string;
+  /** Precomputed lowercase copies, maintained by the index to avoid per-query passes. */
+  searchText?: string;
+  searchMeta?: string;
   /** Where a hit can jump back to on the canvas. */
   locator?: { page?: number; cfi?: string };
   /** Canvas resource id, for hits that focus an open window. */
@@ -101,7 +104,9 @@ export function searchDocs(docs: SearchDoc[], query: string, limit = 40): Search
   const hits: SearchHit[] = [];
   for (const doc of docs) {
     const title = doc.title.toLowerCase();
-    const body = `${doc.text}\n${doc.meta ?? ''}`.toLowerCase();
+    const body = doc.searchText !== undefined && doc.searchMeta !== undefined
+      ? `${doc.searchText}\n${doc.searchMeta}`
+      : `${doc.text}\n${doc.meta ?? ''}`.toLowerCase();
     if (!terms.every((term) => body.includes(term) || title.includes(term))) continue;
 
     let score = 1;
@@ -114,7 +119,8 @@ export function searchDocs(docs: SearchDoc[], query: string, limit = 40): Search
     if (doc.locator?.page || doc.locator?.cfi) score += 2; // jumpable hits first
 
     // Snippet comes from the body; fall back to meta text when the match is only there.
-    const snippetFrom = terms.some((term) => doc.text.toLowerCase().includes(term)) ? doc.text : (doc.meta ?? doc.text);
+    const lowerText = doc.searchText ?? doc.text.toLowerCase();
+    const snippetFrom = terms.some((term) => lowerText.includes(term)) ? doc.text : (doc.meta ?? doc.text);
     const { snippet, highlight } = buildSnippet(snippetFrom, terms);
     hits.push({
       path: doc.path,

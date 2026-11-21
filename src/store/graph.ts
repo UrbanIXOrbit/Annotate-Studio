@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   buildLinkIndex,
+  extractLinks,
   resolveLinks,
   type LinkDoc,
   type ResolvedLinks,
@@ -64,7 +65,7 @@ interface GraphState {
 
 /* ---------- Index machinery (same pattern as the search store) ---------- */
 
-const cache = new Map<string, { key: string; doc: LinkDoc }>();
+const cache = new Map<string, { key: string; doc: LinkDoc; links: string[] }>();
 const MAX_CACHED = 500;
 let chain: Promise<void> = Promise.resolve();
 let indexed = false;
@@ -79,7 +80,7 @@ function pruneCache() {
 
 function setCache(path: string, key: string, doc: LinkDoc) {
   cache.delete(path);
-  cache.set(path, { key, doc });
+  cache.set(path, { key, doc, links: extractLinks(doc.markdown) });
   pruneCache();
 }
 
@@ -140,7 +141,9 @@ function ensureIndex() {
 function docFor(path: string, markdown: string): LinkDoc {
   const buffer = useNotes.getState().buffers[path];
   const text = buffer && buffer.status === 'ready' ? buffer.content : markdown;
-  return { path, title: cache.get(path)?.doc.title ?? path, markdown: text };
+  const entry = cache.get(path);
+  const links = entry && entry.doc.markdown === text ? entry.links : undefined;
+  return { path, title: entry?.doc.title ?? path, markdown: text, links };
 }
 
 /** Cards and articles across all workspaces, keyed as resource nodes. */
@@ -189,6 +192,23 @@ function kindForFile(file: StudyFile): GraphKind {
  * query time against the library, so renames stay correct without any
  * content rewrite. Pure computation over store state — safe inside useMemo.
  */
+let modelCache: { key: string; model: GraphModel } | null = null;
+
+/** One graph computation per revision/workspace, shared by all note windows. */
+export function getGraphModel(): GraphModel {
+  const state = useGraph.getState();
+  const canvas = useCanvas.getState();
+  const key = `${state.revision}|${canvas.activeWorkspaceId}|${canvas.workspaces}`;
+  if (modelCache?.key === key) return modelCache.model;
+  const model = computeGraph();
+  modelCache = { key, model };
+  return model;
+}
+
+export function invalidateGraphModel(): void {
+  modelCache = null;
+}
+
 export function computeGraph(): GraphModel {
   ensureIndex();
   const files = useLibrary.getState().files;

@@ -202,6 +202,20 @@ pub fn stat_external_file(
     Ok(describe_absolute(&full))
 }
 
+/// Whether a user-chosen file or folder still exists. Used by the re-link UI,
+/// which also handles folder settings that `stat_external_file` cannot describe.
+#[tauri::command(async)]
+pub fn path_exists(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> bool {
+    let full = PathBuf::from(path.trim());
+    if !full.is_absolute() { return false; }
+    if ensure_external_access(&app, &state, &full).is_err() { return false; }
+    full.exists()
+}
+
 /// Creates a note in an arbitrary absolute folder, without copying or moving anything
 /// into the workspace. The note lives where the user pointed and is referenced there.
 #[tauri::command(async)]
@@ -416,8 +430,14 @@ pub fn import_files(
             Err(err) => errors.push(err),
         }
     }
-    if imported.is_empty() && !errors.is_empty() {
-        return Err(errors.join("\n"));
+    if !errors.is_empty() {
+        // Surface partial failures so the UI never reports full success.
+        return Err(format!(
+            "Imported {} of {} files. Failures: {}",
+            imported.len(),
+            imported.len() + errors.len(),
+            errors.join("; ")
+        ));
     }
     Ok(imported)
 }

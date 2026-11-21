@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { loadExams, saveExams } from '@/lib/tauri-commands';
 import { createSaver } from '@/lib/persist';
 import { uid } from '@/lib/utils';
+import { gradeExam, isAnswerCorrect } from '@/lib/exam-grading';
+
+export { gradeExam, isAnswerCorrect } from '@/lib/exam-grading';
 
 export type QuestionType = 'multiple-choice' | 'verbal';
 
@@ -54,24 +57,6 @@ interface ExamStore {
   updateQuestion: (examId: string, questionId: string, patch: Partial<ExamQuestion>) => void;
   gradeQuestion: (examId: string, questionId: string, patch: Pick<ExamQuestion, 'verdict' | 'feedback'>) => void;
   deleteExam: (id: string) => void;
-}
-
-export function isAnswerCorrect(question: ExamQuestion): boolean {
-  if (question.verdict) return question.verdict === 'correct';
-  const answer = question.userAnswer?.trim();
-  if (!answer) return false;
-  if (question.type === 'multiple-choice') return answer === question.correctAnswer.trim();
-  return normalizeAnswer(answer) === normalizeAnswer(question.correctAnswer);
-}
-
-function normalizeAnswer(value: string): string {
-  return value.toLowerCase().replace(/[\s.,;:!?'"()-]+/g, ' ').trim();
-}
-
-export function gradeExam(questions: ExamQuestion[]) {
-  const total = questions.length;
-  const score = questions.filter(isAnswerCorrect).length;
-  return { score, total, percentage: total === 0 ? 0 : Math.round((score / total) * 100) };
 }
 
 export function blankQuestion(type: QuestionType): ExamQuestion {

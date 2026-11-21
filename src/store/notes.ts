@@ -281,14 +281,15 @@ export const useNotes = create<NotesStore>((set, get) => {
         return;
       }
       // Keep the editor version: adopt the current disk state as the baseline
-      // and allow the queued save to proceed.
-      let diskContent = buffer.diskContent;
+      // in ONE read. If that read fails, stay in conflict — save() would read
+      // again and could either re-raise the conflict or clobber unknown bytes.
+      let diskContent: string;
       try {
         const disk = isExternalPath(path) ? await readExternalNote(path) : await readNote(path);
         diskContent = normalizeNewlines(disk.content);
-      } catch {
-        // If the disk copy cannot be read, keep the old baseline; the actual
-        // write will still fail safely rather than clobber unknown bytes.
+      } catch (error) {
+        patch(path, { error: `Could not read the note on disk: ${error instanceof Error ? error.message : String(error)}` });
+        return;
       }
       patch(path, { conflict: false, error: null, diskContent });
       await get().save(path);

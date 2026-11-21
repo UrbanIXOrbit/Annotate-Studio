@@ -7,6 +7,7 @@ import {
   createExternalNote,
   errorMessage,
   readExternalFileBytes,
+  statExternalFile,
   writeExternalFileBytes,
 } from './tauri-commands';
 import { appendCapture, captureNoteName, withLineEndings } from './scratch-note';
@@ -91,7 +92,22 @@ export async function captureToNote(path: string, text: string): Promise<string 
       return path;
     }
 
-    // 3. New note: create it beside where it was meant to live, then fill it.
+    // 3. New note — but only when the file really is absent. readNoteIfPresent
+    // treats any read failure as "missing"; creating here would orphan a note
+    // that merely could not be read (locked, permission denied, sync in flight).
+    try {
+      if (await statExternalFile(path)) {
+        useToasts.getState().push({
+          kind: 'error',
+          title: 'Could not read the capture note',
+          description: 'The note exists but is not readable right now. Nothing was changed.',
+        });
+        return null;
+      }
+    } catch (error) {
+      useToasts.getState().push({ kind: 'error', title: 'Could not check the capture note', description: errorMessage(error) });
+      return null;
+    }
     const { directory } = splitPath(path);
     if (!directory) return null;
     const title = stripExtension(baseName(path));
